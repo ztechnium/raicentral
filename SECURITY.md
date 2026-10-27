@@ -29,9 +29,7 @@ The Compose file and `.env.example` ship with local-only passwords (`rai_passwor
 
 ## Scope
 
-This policy covers the control plane in this repository, including `packages/python-sdk` and `packages/typescript-sdk` as vendored here.
-
-The published client repositories may also list their own contact path:
+This policy covers the control plane in this repository. The Python and TypeScript clients are maintained in their own repositories, which are the source of truth:
 
 - Python SDK: [github.com/ztechnium/rai-python-sdk](https://github.com/ztechnium/rai-python-sdk)
 - TypeScript SDK: [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk)

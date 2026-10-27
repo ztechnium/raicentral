@@ -4,10 +4,10 @@ Integration compatibility and version requirements for RAI Control Plane.
 
 ## SDK Versions
 
-| SDK | Package | Minimum Python/Node |
-|-----|---------|---------------------|
-| Python | `rai-control-plane-sdk` | Python 3.10+ |
-| TypeScript | `@ztechnium/rai-sdk` | Node.js 18+ |
+| SDK | Package | Source | Minimum runtime |
+|-----|---------|--------|-----------------|
+| Python | `rai-control-plane-sdk` | [rai-python-sdk](https://github.com/ztechnium/rai-python-sdk) | Python 3.10+ |
+| TypeScript | `@ztechnium/rai-sdk` | [rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk) | Node.js 18+ |
 
 ## API Versioning
 

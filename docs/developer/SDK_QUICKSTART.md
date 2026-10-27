@@ -24,14 +24,26 @@ Authorization: Bearer <access-token>
 
 ## 2. Install an SDK
 
+The clients live in their own repositories. Install one of them into the agent project. Do not install the copies under `packages/` in this tree.
+
+Python, from [github.com/ztechnium/rai-python-sdk](https://github.com/ztechnium/rai-python-sdk):
+
 ```bash
-pip install -e packages/python-sdk
+pip install rai-control-plane-sdk
 ```
 
-or:
+```bash
+pip install "rai-control-plane-sdk @ git+https://github.com/ztechnium/rai-python-sdk.git"
+```
+
+TypeScript, from [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk):
 
 ```bash
-cd packages/typescript-sdk && npm install && npm run build
+npm install @ztechnium/rai-sdk
+```
+
+```bash
+npm install github:ztechnium/rai-typescript-sdk
 ```
 
 ## 3. Integrate

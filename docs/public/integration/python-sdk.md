@@ -1,51 +1,54 @@
 # Python SDK
 
-Install and use the RAI Control Plane Python SDK for runtime governance.
+The Python client is published from [github.com/ztechnium/rai-python-sdk](https://github.com/ztechnium/rai-python-sdk). That repository is the source of truth. Install it into the environment that runs your agent. Do not import the mirror under `packages/python-sdk` in this repository.
 
 ## Installation
+
+From PyPI:
 
 ```bash
 pip install rai-control-plane-sdk
 ```
 
+From the source repository:
+
+```bash
+pip install "rai-control-plane-sdk @ git+https://github.com/ztechnium/rai-python-sdk.git"
+```
+
+Python 3.10 or newer is required.
+
 ## Configuration
 
 ```python
 import os
-from rai_control_plane import RAIClient
+from rai_sdk import RAIClient
 
 client = RAIClient(
-    base_url=os.environ["RAI_BASE_URL"],
-    credential=os.environ["RAI_CREDENTIAL"],
+    os.environ["RAI_BASE_URL"],
+    api_key=os.environ["RAI_AGENT_KEY"],
+    integration_id=os.environ["RAI_INTEGRATION_ID"],
 )
 ```
 
-## Authorize Before Acting
+`api_key` is the runtime credential sent as `X-RAI-Agent-Key`. `integration_id` is the SDK integration created for this instance.
 
-Always call `authorize` before performing a consequential action:
+## Authorize before acting
 
 ```python
-result = client.authorize(
-    tool_name="update_crm",
-    parameters={
-        "record_id": "deal-123",
-        "field": "stage",
-        "value": "closed_won",
-    },
+client.heartbeat()
+session = client.start_session(channel="application")
+session.observe_input("Create an order")
+decision = session.authorize_action(
+    tool="create_order",
+    parameters={"sku": "abc", "qty": 1},
 )
-
-if result.decision == "allow":
-    client.execute(tool_name="update_crm", parameters={...})
-elif result.decision == "require_approval":
-    print(f"Pending approval: {result.approval_request_id}")
-else:
-    print(f"Denied: {result.reason}")
+if decision.allowed:
+    result = create_order()
+    decision.report_execution(client, status="SUCCEEDED")
+session.end()
 ```
 
-## Admin operations
+Do not run a consequential side effect unless `decision.allowed` is true. If RAI cannot be reached, `RAIError` with code `RAI_UNAVAILABLE` is raised and the agent should fail closed.
 
-Registry and policy management use a Bearer token from `POST /v1/auth/login`. Sign in as the bootstrap admin or as a teammate invited on this instance.
-
-## GitHub
-
-Source and examples: [rai-control-plane-sdk-python](https://github.com/ztechnium/rai-control-plane-sdk-python)
+Admin sign-in for the console and for provisioning stays on `POST /v1/auth/login`. That token is not the SDK agent key.
