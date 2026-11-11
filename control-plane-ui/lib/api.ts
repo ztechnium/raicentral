@@ -3183,3 +3183,49 @@ export function listWebhookDeliveries(limit = 50) {
     `/v1/productization/webhooks/deliveries?limit=${limit}`,
   );
 }
+
+export function listCloudGovernanceProviders() {
+  return apiGet<{ providers: Array<{ id: string; name: string; status: string }> }>(
+    "/v1/cloud-governance/providers",
+  );
+}
+
+export function listCloudConnections() {
+  return apiGet<{ connections: import("@/lib/types").CloudConnectionSummary[] }>(
+    "/v1/cloud-governance/connections",
+  );
+}
+
+export function createCloudConnection(payload: {
+  provider: string;
+  display_name: string;
+  scope_identifier: string;
+  auth_mode: string;
+  auth_config: Record<string, unknown>;
+  enforcement_enabled?: boolean;
+}) {
+  return apiPost<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    "/v1/cloud-governance/connections",
+    payload,
+  );
+}
+
+export function verifyCloudConnection(connectionId: string) {
+  return apiPost<{ connection: import("@/lib/types").CloudConnectionSummary; verify: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/verify`,
+    {},
+  );
+}
+
+export function syncCloudConnection(connectionId: string) {
+  return apiPost<{ job: Record<string, unknown>; sync_run_id: string }>(
+    `/v1/cloud-governance/connections/${connectionId}/sync`,
+    {},
+  );
+}
+
+export function getCloudConnectionAssets(connectionId: string) {
+  return apiGet<{ assets: import("@/lib/types").CloudDiscoveredAssetSummary[] }>(
+    `/v1/cloud-governance/connections/${connectionId}/assets`,
+  );
+}
