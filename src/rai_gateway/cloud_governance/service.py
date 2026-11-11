@@ -19,9 +19,15 @@ from rai_gateway.cloud_governance.domain import (
     PolicyChangeStatus,
     SyncRunStatus,
 )
+from rai_gateway.cloud_governance.evidence_helpers import record_evidence_link
 from rai_gateway.cloud_governance.onboarding import (
     cloud_shell_instructions,
     render_terraform,
+)
+from rai_gateway.cloud_governance.policy_approval import (
+    mark_approval_consumed,
+    policy_action_digest,
+    validate_approval_for_policy_apply,
 )
 from rai_gateway.cloud_governance.providers.gcp.auth import redact_auth_config_for_api
 from rai_gateway.cloud_governance.providers.gcp.connector import GcpConnector
@@ -186,6 +192,14 @@ class CloudGovernanceService:
                 "result": "ok" if result.ok else "degraded",
             },
         )
+        record_evidence_link(
+            self._db,
+            connection_id=conn.id,
+            ref_type="connection_verify",
+            ref_uri=f"cloud-connection:{conn.id}",
+            summary="IAM verification completed",
+            evidence_metadata={"ok": result.ok, "capabilities": result.capabilities},
+        )
         return {
             "connection": self.serialize_connection(conn),
             "verify": {
@@ -314,6 +328,20 @@ class CloudGovernanceService:
         )
         conn.last_sync_at = _utcnow()
         self._db.flush()
+        record_evidence_link(
+            self._db,
+            connection_id=conn.id,
+            ref_type="asset_sync",
+            ref_uri=f"cloud-sync-run:{run.id}",
+            summary="Asset discovery sync completed",
+            evidence_metadata={
+                "discovered": discovered,
+                "updated": updated,
+                "errors": errors,
+            },
+            linked_entity_type="cloud_sync_run",
+            linked_entity_id=run.id,
+        )
         return {
             "sync_run_id": str(run.id),
             "discovered": discovered,
@@ -393,6 +421,12 @@ class CloudGovernanceService:
         )
         self._db.add(row)
         self._db.flush()
+        row.optimistic_version = policy_action_digest(
+            policy_change_id=row.id,
+            connection_id=conn.id,
+            desired=desired,
+        )
+        self._db.flush()
         return row
 
     def bind_policy_change_approval(
@@ -408,6 +442,13 @@ class CloudGovernanceService:
             raise ValueError("approval request not found")
         if approval.integration_type != IntegrationType.CLOUD_GOVERNANCE.value:
             raise ValueError("approval integration_type must be cloud_governance")
+        expected = change.optimistic_version or policy_action_digest(
+            policy_change_id=change.id,
+            connection_id=change.connection_id,
+            desired=change.desired_payload,
+        )
+        if approval.action_digest != expected:
+            raise ValueError("approval digest does not match policy change")
         change.approval_request_id = approval_request_id
         change.status = PolicyChangeStatus.PENDING_APPROVAL.value
         self._db.flush()
@@ -419,6 +460,155 @@ class CloudGovernanceService:
             target={"cloud_policy_change_request_id": str(change.id)},
         )
         return change
+
+    def approval_payload_hint(self, change_id: UUID) -> dict[str, Any]:
+        change = self._require_policy_change(change_id)
+        digest = change.optimistic_version or policy_action_digest(
+            policy_change_id=change.id,
+            connection_id=change.connection_id,
+            desired=change.desired_payload,
+        )
+        return {
+            "integration_type": IntegrationType.CLOUD_GOVERNANCE.value,
+            "action_digest": digest,
+            "canonical_action_payload": {
+                "integration_type": IntegrationType.CLOUD_GOVERNANCE.value,
+                "parameters": {
+                    "policy_change_id": str(change.id),
+                    "connection_id": str(change.connection_id),
+                },
+            },
+            "instructions": (
+                "Create and approve a matching ApprovalRequest before apply. "
+                "Use the same action_digest on the approval row."
+            ),
+        }
+
+    def apply_policy_change(self, change_id: UUID, *, actor_id: str) -> CloudPolicyChangeRequest:
+        change = self._require_policy_change(change_id)
+        conn = self._require_connection(change.connection_id)
+        if not conn.enforcement_enabled:
+            raise ValueError("enforcement is not enabled on this connection")
+        if change.status not in {
+            PolicyChangeStatus.PENDING_APPROVAL.value,
+            PolicyChangeStatus.APPROVED.value,
+        }:
+            raise ValueError(f"cannot apply from status {change.status}")
+        if not change.approval_request_id:
+            raise ValueError("approval must be bound before apply")
+        approval = (
+            self._db.query(ApprovalRequest)
+            .filter(ApprovalRequest.id == change.approval_request_id)
+            .with_for_update()
+            .first()
+        )
+        if approval is None:
+            raise ValueError("approval request not found")
+        digest = change.optimistic_version or policy_action_digest(
+            policy_change_id=change.id,
+            connection_id=change.connection_id,
+            desired=change.desired_payload,
+        )
+        validate_approval_for_policy_apply(
+            approval, expected_digest=digest, policy_change_id=change.id
+        )
+        connector = _get_connector(conn.provider)
+        scope = f"projects/{conn.scope_identifier}"
+        change.status = PolicyChangeStatus.APPLYING.value
+        self._db.flush()
+        etag = (change.preview_payload or {}).get("current", {}).get("floor_settings", {})
+        etag = etag.get("etag") if isinstance(etag, dict) else None
+        apply_result = connector.apply_model_armor_change(
+            scope=scope,
+            auth_config=_auth_payload(conn),
+            desired=change.desired_payload,
+            etag=etag,
+        )
+        if not apply_result.get("applied"):
+            change.status = PolicyChangeStatus.FAILED.value
+            change.apply_result = apply_result
+            self._db.flush()
+            raise ValueError("apply failed: " + "; ".join(apply_result.get("limitations", [])))
+        change.apply_result = apply_result
+        change.status = PolicyChangeStatus.APPLIED.value
+        mark_approval_consumed(approval)
+        self._db.flush()
+        record_evidence_link(
+            self._db,
+            connection_id=conn.id,
+            ref_type="policy_apply",
+            ref_uri=f"cloud-policy-change:{change.id}",
+            summary="Model Armor change applied",
+            evidence_metadata={"apply_result": apply_result},
+            linked_entity_type="cloud_policy_change_request",
+            linked_entity_id=change.id,
+        )
+        log_admin_audit(
+            trace_id=generate_trace_id(),
+            actor_user_id=actor_id,
+            actor_role="user",
+            action="cloud_governance.policy.apply",
+            target={"cloud_policy_change_request_id": str(change.id)},
+        )
+        return change
+
+    def verify_policy_change(self, change_id: UUID, *, actor_id: str) -> dict[str, Any]:
+        change = self._require_policy_change(change_id)
+        conn = self._require_connection(change.connection_id)
+        if change.status != PolicyChangeStatus.APPLIED.value:
+            raise ValueError("policy change must be APPLIED before verify")
+        observed = self.inspect_model_armor(change.connection_id)
+        desired_floor = change.desired_payload.get("floor_settings")
+        observed_floor = observed.get("floor_settings")
+        verified = desired_floor == observed_floor if desired_floor else observed.get(
+            "supported"
+        )
+        verify_result = {
+            "verified": bool(verified),
+            "observed": observed,
+            "desired": change.desired_payload,
+        }
+        change.verify_result = verify_result
+        change.status = (
+            PolicyChangeStatus.VERIFIED.value
+            if verified
+            else PolicyChangeStatus.FAILED.value
+        )
+        self._db.flush()
+        record_evidence_link(
+            self._db,
+            connection_id=conn.id,
+            ref_type="policy_verify",
+            ref_uri=f"cloud-policy-change:{change.id}",
+            summary="Post-apply verification",
+            complete=bool(verified),
+            evidence_metadata=verify_result,
+            linked_entity_type="cloud_policy_change_request",
+            linked_entity_id=change.id,
+        )
+        log_admin_audit(
+            trace_id=generate_trace_id(),
+            actor_user_id=actor_id,
+            actor_role="user",
+            action="cloud_governance.policy.verify",
+            target={
+                "cloud_policy_change_request_id": str(change.id),
+                "verified": verified,
+            },
+        )
+        return verify_result
+
+    def enqueue_drift_check(self, connection_id: UUID, *, actor_id: str) -> dict[str, Any]:
+        conn = self._require_connection(connection_id)
+        queue = JobQueue(self._db)
+        job = queue.enqueue(
+            job_type=CloudJobType.CLOUD_DRIFT_CHECK.value,
+            payload={"connection_id": str(conn.id)},
+            idempotency_key=f"cloud-drift:{conn.id}",
+            created_by=actor_id,
+        )
+        self._db.flush()
+        return {"job": job}
 
     def disconnect(self, connection_id: UUID, *, actor_id: str) -> CloudConnection:
         conn = self._require_connection(connection_id)

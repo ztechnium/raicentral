@@ -24,7 +24,7 @@ export default function IntegrationsCatalogPage() {
     <div className="space-y-6">
       <SectionHeader
         title="Integrations"
-        description="Connect cloud providers for discovery and governance (read-only by default)."
+        subtitle="Connect cloud providers for discovery and governance (read-only by default)."
       />
       {loading && <p className="text-sm text-ink-500">Loading providers…</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}

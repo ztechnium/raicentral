@@ -52,7 +52,7 @@ export default function GcpIntegrationsPage() {
     <div className="space-y-6">
       <SectionHeader
         title="Google Cloud"
-        description="Keyless onboarding: verify permissions, discover Vertex AI resources, inspect Model Armor (read-only)."
+        subtitle="Keyless onboarding: verify permissions, discover Vertex AI resources, inspect Model Armor (read-only)."
       />
       <Panel title="Connect project">
         <div className="grid gap-3 max-w-lg">

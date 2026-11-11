@@ -2,57 +2,48 @@
 
 ## Acceptance checklist
 
-| Phase | Status |
+| Phase / Gate | Status |
 | --- | --- |
-| Phase 0 — Baseline verification | PASSED |
-| Phase 1 — Schema, RBAC, provider contracts | PASSED |
-| Phase 2 — GCP authentication and onboarding | PASSED (mocked); AWAITING LIVE VERIFICATION |
-| Phase 3 — Resource discovery and synchronization | PASSED (mocked); AWAITING LIVE VERIFICATION |
-| Phase 4 — Read-only governance MVP | IN PROGRESS |
-| Phase 5 — Approval-gated Model Armor enforcement | IN PROGRESS |
-| Phase 6 — Evidence and audit | NOT STARTED |
-| Phase 7 — Complete frontend experience | IN PROGRESS |
-| Phase 8 — Enterprise and release validation | NOT STARTED |
+| Gate 1 — Migrate and integration tests | PASSED (unit); integration **BLOCKED** — no local Postgres/Docker |
+| Gate 2 — Live GCP read-only POC | **AWAITING LIVE VERIFICATION** — [live-poc-runbook.md](./live-poc-runbook.md) |
+| Gate 3 — Approval-gated enforcement | PASSED (mocked unit + API code); live apply **AWAITING** |
+| Gate 4 — Evidence and drift | PASSED (code + worker paths) |
+| Gate 5 — UI, docs, CI, PR | PASSED (docs + UI); frontend build requires `pnpm install` locally |
 
-## Phase 0 — Baseline verification
-
-- **Branch:** `feature/gcp-governance-connector`
-- **Unrelated WIP stashed:** client_hooks + `.cursor` hooks (`git stash`)
-- **Alembic head before work:** `n3o4p5q6r7s8`
-- **Toolchain:** project `.venv` created; system `uv` not on PATH
-- **Findings:** no existing `cloud_governance` package; worker previously outbox-only; approval uses `consume` not `apply`; added `IntegrationType.cloud_governance`
-
-## Phase 1 — Schema, RBAC, provider contracts
-
-- **Files:** `models/cloud_governance.py`, migration `p4q5r6s7t8u9`, `cloud_governance/{domain,protocols,secrets,service,api}.py`, RBAC seed, router registration
-- **Tests:** `tests/cloud_governance/test_secrets.py`
-
-## Phase 2–3 — Auth, onboarding, discovery (mocked)
-
-- **Files:** `providers/gcp/*`, `deploy/gcp-connector/main.tf`, `workers/cloud_sync.py`, runtime worker hook
-- **Tests:** `tests/cloud_governance/test_api.py` (mocked connector; requires Postgres for integration run)
-- **Commit:** `62a754a`
-
-## Tests executed (local)
+## Gate 1 — Tests executed
 
 | Command | Result |
 | --- | --- |
-| `.venv\Scripts\python -m pytest tests/cloud_governance/test_secrets.py -q` | **PASSED** (1) |
-| `.venv\Scripts\python -m pytest tests/cloud_governance/test_api.py -q` | **BLOCKED** — no local Postgres credentials |
-| `.venv\Scripts\python -m ruff check --fix src/rai_gateway/cloud_governance` | **PASSED** |
-| `alembic heads` | **p4q5r6s7t8u9** |
+| `pytest tests/cloud_governance/test_secrets.py tests/cloud_governance/test_policy_approval.py -q` | **PASSED** (5) |
+| `pytest tests/cloud_governance/test_api.py -q` | **BLOCKED** — `TEST_DATABASE_URL` / Postgres unavailable |
+| `ruff check src/rai_gateway/cloud_governance` | **PASSED** (after --fix) |
+| `alembic heads` | `p4q5r6s7t8u9` |
 
-## Known limitations
+Set `TEST_DATABASE_URL=postgresql://rai_user:rai_password@localhost:5434/rai_gateway` and start Postgres (`docker compose up -d postgres`) to unblock integration tests.
 
-- Live GCP verification requires `pip install '.[gcp]'` and an authorized test project
-- Model Armor apply path raises until approval-gated live apply is validated
-- AWS/Azure catalog entries are `coming_soon`
+## Gate 3 — Enforcement (implemented)
 
-## Regression matrix (partial)
+- `policy_action_digest`, `validate_approval_for_policy_apply`, `mark_approval_consumed`
+- `POST /policy-changes/{id}/apply`, `/verify`, `GET .../approval-payload`
+- GCP `apply_model_armor_changes` (floor settings v1)
+- Security unit tests: `tests/cloud_governance/test_policy_approval.py`
 
-| Change | Checks |
-| --- | --- |
-| Alembic | `alembic upgrade head` in test schema |
-| RBAC | `_ensure_default_rbac_seed` in API tests |
-| Worker | `process_cloud_jobs` in API test |
-| Approval enum | existing approval tests recommended on CI |
+## Gate 4 — Evidence and drift
+
+- Evidence links on verify, sync, apply, verify
+- `POST /connections/{id}/drift-check` + worker `CLOUD_DRIFT_CHECK`
+- `cloud_governance/drift.py`
+
+## Gate 5 — Docs
+
+- [setup.md](./setup.md), [permissions.md](./permissions.md), [troubleshooting.md](./troubleshooting.md), [api.md](./api.md), [live-poc-runbook.md](./live-poc-runbook.md)
+
+## Commits
+
+- `62a754a`, `8426f62` — initial connector
+- (pending this session) — gates 3–5 completion
+
+## Production readiness
+
+- **Staging-ready after:** migrate + integration tests green + live Gate 2 POC
+- **Enforcement-ready after:** Gate 3 live apply on non-prod GCP project

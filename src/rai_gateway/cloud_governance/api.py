@@ -265,6 +265,19 @@ def preview_policy_change(
     }
 
 
+@router.get("/policy-changes/{change_id}/approval-payload")
+def policy_approval_payload(
+    change_id: UUID,
+    db: Session = Depends(get_db),
+    _user: Principal = Depends(require_permission("cloud_governance:enforce")),
+) -> dict[str, Any]:
+    svc = CloudGovernanceService(db)
+    try:
+        return svc.approval_payload_hint(change_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/policy-changes/{change_id}/bind-approval")
 def bind_policy_approval(
     change_id: UUID,
@@ -281,6 +294,58 @@ def bind_policy_approval(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"policy_change_id": str(row.id), "status": row.status}
+
+
+@router.post("/policy-changes/{change_id}/apply")
+def apply_policy_change(
+    change_id: UUID,
+    db: Session = Depends(get_db),
+    user: Principal = Depends(require_permission("cloud_governance:enforce")),
+) -> dict[str, Any]:
+    svc = CloudGovernanceService(db)
+    try:
+        row = svc.apply_policy_change(change_id, actor_id=user.user_id)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "policy_change": {
+            "id": str(row.id),
+            "status": row.status,
+            "apply_result": row.apply_result,
+        }
+    }
+
+
+@router.post("/policy-changes/{change_id}/verify")
+def verify_policy_change(
+    change_id: UUID,
+    db: Session = Depends(get_db),
+    user: Principal = Depends(require_permission("cloud_governance:enforce")),
+) -> dict[str, Any]:
+    svc = CloudGovernanceService(db)
+    try:
+        result = svc.verify_policy_change(change_id, actor_id=user.user_id)
+        db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"verify": result}
+
+
+@router.post("/connections/{connection_id}/drift-check")
+def enqueue_drift_check(
+    connection_id: UUID,
+    db: Session = Depends(get_db),
+    user: Principal = Depends(require_permission("cloud_governance:manage")),
+) -> dict[str, Any]:
+    svc = CloudGovernanceService(db)
+    try:
+        result = svc.enqueue_drift_check(connection_id, actor_id=user.user_id)
+        db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
 
 
 @router.get("/connections/{connection_id}/drift")

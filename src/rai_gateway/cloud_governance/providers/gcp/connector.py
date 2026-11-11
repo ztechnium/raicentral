@@ -18,6 +18,7 @@ from rai_gateway.cloud_governance.providers.gcp.iam_diagnostics import (
     test_project_permissions,
 )
 from rai_gateway.cloud_governance.providers.gcp.model_armor import (
+    apply_model_armor_changes,
     read_model_armor_state,
 )
 
@@ -133,7 +134,14 @@ class GcpConnector:
         desired: dict[str, Any],
         etag: str | None = None,
     ) -> dict[str, Any]:
-        _ = (scope, auth_config, desired, etag)
-        raise NotImplementedError(
-            "Model Armor apply requires approval-gated service path with live SDK writes"
+        auth_mode = auth_config.get("_auth_mode", "")
+        project_id = scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        location = desired.get("location") or auth_config.get("default_location", "us-central1")
+        creds = self._creds(auth_mode, auth_config)
+        return apply_model_armor_changes(
+            project_id=project_id,
+            location=location,
+            credentials=creds,
+            desired=desired,
+            etag=etag,
         )

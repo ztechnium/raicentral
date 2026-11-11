@@ -3229,3 +3229,39 @@ export function getCloudConnectionAssets(connectionId: string) {
     `/v1/cloud-governance/connections/${connectionId}/assets`,
   );
 }
+
+export function getCloudConnection(connectionId: string) {
+  return apiGet<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}`,
+  );
+}
+
+export function getCloudSyncRuns(connectionId: string) {
+  return apiGet<{
+    sync_runs: Array<{
+      id: string;
+      status: string;
+      assets_discovered: number;
+      assets_updated: number;
+      partial_errors?: unknown;
+    }>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/sync-runs`);
+}
+
+export function getCloudCoverage(connectionId: string) {
+  return apiGet<{ coverage: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/coverage`,
+  );
+}
+
+export function getCloudEvidence(connectionId: string) {
+  return apiGet<{
+    evidence_links: Array<{ id: string; ref_type: string; ref_uri: string }>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/evidence`);
+}
+
+export function getCloudDrift(connectionId: string) {
+  return apiGet<{ findings: Array<{ id: string; finding_type: string }> }>(
+    `/v1/cloud-governance/connections/${connectionId}/drift`,
+  );
+}
