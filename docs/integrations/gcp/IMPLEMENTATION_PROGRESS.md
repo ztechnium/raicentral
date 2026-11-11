@@ -30,7 +30,17 @@
 ## Phase 2–3 — Auth, onboarding, discovery (mocked)
 
 - **Files:** `providers/gcp/*`, `deploy/gcp-connector/main.tf`, `workers/cloud_sync.py`, runtime worker hook
-- **Tests:** `tests/cloud_governance/test_api.py` (mocked connector)
+- **Tests:** `tests/cloud_governance/test_api.py` (mocked connector; requires Postgres for integration run)
+- **Commit:** `62a754a`
+
+## Tests executed (local)
+
+| Command | Result |
+| --- | --- |
+| `.venv\Scripts\python -m pytest tests/cloud_governance/test_secrets.py -q` | **PASSED** (1) |
+| `.venv\Scripts\python -m pytest tests/cloud_governance/test_api.py -q` | **BLOCKED** — no local Postgres credentials |
+| `.venv\Scripts\python -m ruff check --fix src/rai_gateway/cloud_governance` | **PASSED** |
+| `alembic heads` | **p4q5r6s7t8u9** |
 
 ## Known limitations
 
