@@ -41,7 +41,7 @@ Set `TEST_DATABASE_URL=postgresql://rai_user:rai_password@localhost:5434/rai_gat
 ## Commits
 
 - `62a754a`, `8426f62` — initial connector
-- (pending this session) — gates 3–5 completion
+- `e0e22d9` — enforcement, evidence, drift, docs, UI
 
 ## Production readiness
 
