@@ -18,6 +18,10 @@
 | Connection wizard | | Required |
 | Link assets to AI Systems | | Required |
 
+## Scheduled sync and drift
+
+On the connection dashboard, set **Sync interval** and **Drift interval** (hours). The `rai-worker` service enqueues jobs when intervals elapse for **connected** projects.
+
 ## What RAICentral can and cannot do (v1)
 
 - **Can:** inventory Vertex-related resources via Cloud Asset Inventory (when permitted), inspect Model Armor configuration, report coverage honestly.

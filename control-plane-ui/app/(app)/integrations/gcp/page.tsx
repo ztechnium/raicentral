@@ -6,6 +6,7 @@ import { SectionHeader } from "@/components/section-header";
 import { Panel } from "@/components/registry/panel";
 import {
   createCloudConnection,
+  downloadCloudTerraform,
   listCloudConnections,
   syncCloudConnection,
   verifyCloudConnection,
@@ -19,11 +20,16 @@ export default function GcpIntegrationsPage() {
   const [serviceAccount, setServiceAccount] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState("adc_impersonation");
 
-  const refresh = () =>
-    listCloudConnections()
+  const refresh = () => {
+    setLoading(true);
+    return listCloudConnections()
       .then((res) => setConnections(res.data.connections))
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
     refresh();
@@ -37,8 +43,11 @@ export default function GcpIntegrationsPage() {
         provider: "gcp",
         display_name: displayName || projectId,
         scope_identifier: projectId,
-        auth_mode: "adc_impersonation",
-        auth_config: { service_account_email: serviceAccount },
+        auth_mode: authMode,
+        auth_config:
+          authMode === "wif_external_account"
+            ? { service_account_email: serviceAccount, external_account_config: {} }
+            : { service_account_email: serviceAccount },
         enforcement_enabled: false,
       });
       setMessage(`Connection created: ${res.data.connection.id}`);
@@ -73,6 +82,18 @@ export default function GcpIntegrationsPage() {
             />
           </label>
           <label className="text-sm">
+            Auth mode
+            <select
+              className="mt-1 w-full rounded border px-2 py-1"
+              value={authMode}
+              onChange={(e) => setAuthMode(e.target.value)}
+            >
+              <option value="adc_impersonation">ADC impersonation (staging)</option>
+              <option value="wif_external_account">WIF external account</option>
+              <option value="customer_adc">Customer ADC (dev only)</option>
+            </select>
+          </label>
+          <label className="text-sm">
             Discovery service account email
             <input
               className="mt-1 w-full rounded border px-2 py-1"
@@ -93,7 +114,9 @@ export default function GcpIntegrationsPage() {
         </div>
       </Panel>
       <Panel title="Connections">
-        {connections.length === 0 ? (
+        {loading ? (
+          <p className="text-sm text-ink-500">Loading connections…</p>
+        ) : connections.length === 0 ? (
           <p className="text-sm text-ink-500">No connections yet.</p>
         ) : (
           <ul className="space-y-3">
@@ -151,6 +174,13 @@ function ConnectionRow({
         <Link className="rounded border px-2 py-1" href={`/integrations/gcp/${conn.id}`}>
           Dashboard
         </Link>
+        <button
+          type="button"
+          className="rounded border px-2 py-1"
+          onClick={() => downloadCloudTerraform(conn.id)}
+        >
+          Terraform
+        </button>
       </div>
       {status && <p className="mt-1 text-ink-500">{status}</p>}
     </>

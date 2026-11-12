@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 
-def read_model_armor_state(*, project_id: str, location: str, credentials) -> dict[str, Any]:
+def read_model_armor_state(
+    *, project_id: str, location: str, credentials
+) -> dict[str, Any]:
     """Best-effort read of templates + floor settings for a location."""
     result: dict[str, Any] = {
         "project_id": project_id,

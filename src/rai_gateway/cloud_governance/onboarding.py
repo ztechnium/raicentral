@@ -8,10 +8,7 @@ from typing import Any
 
 def render_terraform(connection_id: str, *, project_id: str) -> str:
     template_path = (
-        Path(__file__).resolve().parents[3]
-        / "deploy"
-        / "gcp-connector"
-        / "main.tf"
+        Path(__file__).resolve().parents[3] / "deploy" / "gcp-connector" / "main.tf"
     )
     if template_path.is_file():
         return template_path.read_text(encoding="utf-8").replace(

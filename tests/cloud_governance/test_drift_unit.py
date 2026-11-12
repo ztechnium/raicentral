@@ -6,7 +6,9 @@ from rai_gateway.cloud_governance.drift import _diff_model_armor
 
 
 def test_no_baseline_no_drift():
-    assert _diff_model_armor({"note": "no_applied_baseline"}, {"templates": []}) is False
+    assert (
+        _diff_model_armor({"note": "no_applied_baseline"}, {"templates": []}) is False
+    )
 
 
 def test_detects_template_drift():

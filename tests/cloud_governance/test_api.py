@@ -76,7 +76,9 @@ def auth_headers(public_client, db_session) -> dict[str, str]:
 
 
 @patch("rai_gateway.cloud_governance.service._get_connector")
-def test_connection_lifecycle_mocked(mock_get_connector, public_client, auth_headers, db_session):
+def test_connection_lifecycle_mocked(
+    mock_get_connector, public_client, auth_headers, db_session
+):
     class FakeConnector:
         provider_id = CloudProvider.GCP.value
 
@@ -123,7 +125,9 @@ def test_connection_lifecycle_mocked(mock_get_connector, public_client, auth_hea
 
     mock_get_connector.return_value = FakeConnector()
 
-    providers = public_client.get("/v1/cloud-governance/providers", headers=auth_headers)
+    providers = public_client.get(
+        "/v1/cloud-governance/providers", headers=auth_headers
+    )
     assert providers.status_code == 200
     assert any(p["id"] == "gcp" for p in providers.json()["providers"])
 

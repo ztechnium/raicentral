@@ -39,6 +39,10 @@ class CloudConnection(Base):
     enforcement_enabled = Column(Boolean, nullable=False, default=False)
     last_verified_at = Column(DateTime(timezone=True), nullable=True)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    sync_interval_hours = Column(Integer, nullable=True)
+    drift_interval_hours = Column(Integer, nullable=True)
+    last_scheduled_sync_at = Column(DateTime(timezone=True), nullable=True)
+    last_scheduled_drift_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
@@ -141,7 +145,10 @@ class CloudPolicyChangeRequest(Base):
     desired_payload = Column(JSON, nullable=False)
     status = Column(String, nullable=False, default="preview", index=True)
     approval_request_id = Column(
-        UUID(as_uuid=True), ForeignKey("approval_requests.id"), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("approval_requests.id"),
+        nullable=True,
+        index=True,
     )
     apply_result = Column(JSON, nullable=True)
     verify_result = Column(JSON, nullable=True)

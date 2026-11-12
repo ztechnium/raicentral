@@ -11,7 +11,9 @@ from rai_gateway.cloud_governance.providers.gcp.deps import ensure_google_auth
 
 def _reject_service_account_key(auth_config: dict[str, Any]) -> None:
     if auth_config.get("type") == "service_account" and auth_config.get("private_key"):
-        raise ValueError("Service account JSON keys are not accepted; use WIF or ADC impersonation")
+        raise ValueError(
+            "Service account JSON keys are not accepted; use WIF or ADC impersonation"
+        )
 
 
 def load_credentials(auth_mode: str, auth_config: dict[str, Any], *, scopes: list[str]):
@@ -26,7 +28,9 @@ def load_credentials(auth_mode: str, auth_config: dict[str, Any], *, scopes: lis
     if mode == AuthMode.WIF_EXTERNAL_ACCOUNT:
         info = auth_config.get("external_account_config")
         if not isinstance(info, dict):
-            raise ValueError("external_account_config is required for wif_external_account")
+            raise ValueError(
+                "external_account_config is required for wif_external_account"
+            )
         creds = google.auth.load_credentials_from_dict(info, scopes=scopes)[0]
         target_sa = auth_config.get("service_account_email")
         if target_sa:
@@ -60,7 +64,12 @@ def load_credentials(auth_mode: str, auth_config: dict[str, Any], *, scopes: lis
 def redact_auth_config_for_api(auth_config: dict[str, Any]) -> dict[str, Any]:
     """Strip sensitive fields before returning config to clients."""
     redacted = dict(auth_config)
-    for key in ("private_key", "external_account_config", "access_token", "refresh_token"):
+    for key in (
+        "private_key",
+        "external_account_config",
+        "access_token",
+        "refresh_token",
+    ):
         if key in redacted:
             redacted[key] = "<redacted>"
     if "external_account_config" in auth_config and isinstance(

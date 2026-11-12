@@ -8,6 +8,13 @@ Install optional dependencies: `pip install '.[gcp]'`.
 
 Grant roles listed in [permissions.md](./permissions.md). Re-run **Verify** from the GCP wizard.
 
+## Sync job stuck or `DEAD_LETTER`
+
+- Check `background_jobs.last_error` for the connection sync job.
+- After a code fix, click **Sync** again — each run uses a new job idempotency key.
+- Ensure `rai-worker` is running (`docker compose up -d rai-worker`).
+- Manually: `docker compose exec rai-worker rai-worker --once`.
+
 ## Sync returns no assets
 
 - Enable **Cloud Asset API**.

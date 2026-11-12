@@ -36,7 +36,11 @@ class GcpConnector:
         if not gcp_libraries_available():
             return VerifyResult(
                 ok=False,
-                capabilities={"discovery": False, "model_armor_read": False, "enforce": False},
+                capabilities={
+                    "discovery": False,
+                    "model_armor_read": False,
+                    "enforce": False,
+                },
                 diagnostics=[
                     {
                         "code": "GCP_LIBS_MISSING",
@@ -52,12 +56,18 @@ class GcpConnector:
         except Exception as exc:  # noqa: BLE001
             return VerifyResult(
                 ok=False,
-                capabilities={"discovery": False, "model_armor_read": False, "enforce": False},
+                capabilities={
+                    "discovery": False,
+                    "model_armor_read": False,
+                    "enforce": False,
+                },
                 diagnostics=[{"code": "AUTH_FAILED", "message": str(exc)}],
                 health={"provider": self.provider_id, "scope": scope},
             )
 
-        project_id = scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        project_id = (
+            scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        )
         read_diag = test_project_permissions(
             project_id=project_id, credentials=creds, permissions=READ_PERMISSIONS
         )
@@ -82,7 +92,11 @@ class GcpConnector:
                 "enforce": can_enforce,
             },
             diagnostics=diagnostics,
-            health={"provider": self.provider_id, "scope": scope, "project_id": project_id},
+            health={
+                "provider": self.provider_id,
+                "scope": scope,
+                "project_id": project_id,
+            },
         )
 
     def discover_assets(
@@ -93,7 +107,9 @@ class GcpConnector:
         page_token: str | None = None,
     ) -> tuple[list[DiscoveredResource], str | None, list[str]]:
         auth_mode = auth_config.get("_auth_mode", "")
-        project_id = scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        project_id = (
+            scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        )
         creds = self._creds(auth_mode, auth_config)
         return search_vertex_assets(
             project_id=project_id,
@@ -105,7 +121,9 @@ class GcpConnector:
         self, *, scope: str, auth_config: dict[str, Any]
     ) -> dict[str, Any]:
         auth_mode = auth_config.get("_auth_mode", "")
-        project_id = scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        project_id = (
+            scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        )
         location = auth_config.get("default_location", "us-central1")
         creds = self._creds(auth_mode, auth_config)
         return read_model_armor_state(
@@ -121,8 +139,10 @@ class GcpConnector:
             "current": current,
             "desired": desired,
             "diff_summary": {
-                "templates_changed": desired.get("templates") != current.get("templates"),
-                "floor_changed": desired.get("floor_settings") != current.get("floor_settings"),
+                "templates_changed": desired.get("templates")
+                != current.get("templates"),
+                "floor_changed": desired.get("floor_settings")
+                != current.get("floor_settings"),
             },
         }
 
@@ -135,8 +155,12 @@ class GcpConnector:
         etag: str | None = None,
     ) -> dict[str, Any]:
         auth_mode = auth_config.get("_auth_mode", "")
-        project_id = scope.removeprefix("projects/") if scope.startswith("projects/") else scope
-        location = desired.get("location") or auth_config.get("default_location", "us-central1")
+        project_id = (
+            scope.removeprefix("projects/") if scope.startswith("projects/") else scope
+        )
+        location = desired.get("location") or auth_config.get(
+            "default_location", "us-central1"
+        )
         creds = self._creds(auth_mode, auth_config)
         return apply_model_armor_changes(
             project_id=project_id,

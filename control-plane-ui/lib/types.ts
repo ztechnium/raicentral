@@ -3123,6 +3123,8 @@ export interface CloudConnectionSummary {
   enforcement_enabled: boolean;
   last_verified_at?: string | null;
   last_sync_at?: string | null;
+  sync_interval_hours?: number | null;
+  drift_interval_hours?: number | null;
 }
 
 export interface CloudDiscoveredAssetSummary {

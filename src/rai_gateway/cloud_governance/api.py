@@ -28,6 +28,11 @@ class ConnectionCreateBody(BaseModel):
     enforcement_enabled: bool = False
 
 
+class ConnectionScheduleBody(BaseModel):
+    sync_interval_hours: int | None = None
+    drift_interval_hours: int | None = None
+
+
 class CorrelateBody(BaseModel):
     ai_system_id: UUID
 
@@ -93,6 +98,27 @@ def get_connection(
     conn = svc.get_connection(connection_id)
     if conn is None:
         raise HTTPException(status_code=404, detail="connection not found")
+    return {"connection": svc.serialize_connection(conn)}
+
+
+@router.patch("/connections/{connection_id}/schedule")
+def update_connection_schedule(
+    connection_id: UUID,
+    body: ConnectionScheduleBody,
+    db: Session = Depends(get_db),
+    user: Principal = Depends(require_permission("cloud_governance:manage")),
+) -> dict[str, Any]:
+    svc = CloudGovernanceService(db)
+    try:
+        conn = svc.update_connection_schedule(
+            connection_id,
+            sync_interval_hours=body.sync_interval_hours,
+            drift_interval_hours=body.drift_interval_hours,
+            actor_id=user.user_id,
+        )
+        db.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"connection": svc.serialize_connection(conn)}
 
 
@@ -356,7 +382,11 @@ def list_drift(
 ) -> dict[str, Any]:
     svc = CloudGovernanceService(db)
     findings = svc.list_drift(connection_id)
-    return {"findings": [{"id": str(f.id), "finding_type": f.finding_type} for f in findings]}
+    return {
+        "findings": [
+            {"id": str(f.id), "finding_type": f.finding_type} for f in findings
+        ]
+    }
 
 
 @router.get("/connections/{connection_id}/evidence")

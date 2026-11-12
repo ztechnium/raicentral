@@ -31,9 +31,14 @@ export default function IntegrationsCatalogPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {providers.map((provider) => (
           <Panel key={provider.id} title={provider.name}>
-            <p className="text-sm text-ink-600 mb-4 capitalize">Status: {provider.status.replace("_", " ")}</p>
+            <p className="text-sm text-ink-600 mb-4 capitalize">
+              Status: {provider.status.replace("_", " ")}
+            </p>
             {provider.status === "available" && provider.id === "gcp" ? (
-              <Link className="text-sm font-medium text-brand-600 hover:underline" href="/integrations/gcp">
+              <Link
+                className="text-sm font-medium text-brand-600 hover:underline"
+                href="/integrations/gcp"
+              >
                 Open GCP wizard →
               </Link>
             ) : (

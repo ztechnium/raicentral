@@ -3211,10 +3211,10 @@ export function createCloudConnection(payload: {
 }
 
 export function verifyCloudConnection(connectionId: string) {
-  return apiPost<{ connection: import("@/lib/types").CloudConnectionSummary; verify: Record<string, unknown> }>(
-    `/v1/cloud-governance/connections/${connectionId}/verify`,
-    {},
-  );
+  return apiPost<{
+    connection: import("@/lib/types").CloudConnectionSummary;
+    verify: Record<string, unknown>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/verify`, {});
 }
 
 export function syncCloudConnection(connectionId: string) {
@@ -3263,5 +3263,62 @@ export function getCloudEvidence(connectionId: string) {
 export function getCloudDrift(connectionId: string) {
   return apiGet<{ findings: Array<{ id: string; finding_type: string }> }>(
     `/v1/cloud-governance/connections/${connectionId}/drift`,
+  );
+}
+
+export function driftCheckCloudConnection(connectionId: string) {
+  return apiPost<{ job: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/drift-check`,
+    {},
+  );
+}
+
+export function getCloudModelArmor(connectionId: string) {
+  return apiGet<{ model_armor: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/model-armor`,
+  );
+}
+
+export function correlateCloudAsset(
+  connectionId: string,
+  assetId: string,
+  aiSystemId: string,
+) {
+  return apiPost<{ asset: import("@/lib/types").CloudDiscoveredAssetSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}/assets/${assetId}/correlate`,
+    { ai_system_id: aiSystemId },
+  );
+}
+
+export function updateCloudConnectionSchedule(
+  connectionId: string,
+  payload: { sync_interval_hours?: number | null; drift_interval_hours?: number | null },
+) {
+  return apiPatch<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}/schedule`,
+    payload,
+  );
+}
+
+export async function downloadCloudTerraform(connectionId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/v1/cloud-governance/connections/${connectionId}/onboarding/terraform`, {
+    headers: buildHeaders(),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Terraform download failed");
+  const text = await response.text();
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `gcp-connector-${connectionId}.tf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function previewCloudPolicyChange(connectionId: string, desired: Record<string, unknown>) {
+  return apiPost<{ change: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/policy-changes/preview`,
+    { desired },
   );
 }

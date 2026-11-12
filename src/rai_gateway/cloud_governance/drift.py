@@ -17,9 +17,7 @@ from rai_gateway.models.cloud_governance import (
 
 
 def run_drift_check(db: Session, connection_id: UUID) -> dict[str, Any]:
-    conn = (
-        db.query(CloudConnection).filter(CloudConnection.id == connection_id).first()
-    )
+    conn = db.query(CloudConnection).filter(CloudConnection.id == connection_id).first()
     if conn is None:
         raise ValueError("connection not found")
 
@@ -42,10 +40,9 @@ def run_drift_check(db: Session, connection_id: UUID) -> dict[str, Any]:
     observed: dict[str, Any] = CloudGovernanceService(db).inspect_model_armor(
         connection_id
     )
-    expected = (
-        (last_applied.desired_payload if last_applied else None)
-        or {"note": "no_applied_baseline"}
-    )
+    expected = (last_applied.desired_payload if last_applied else None) or {
+        "note": "no_applied_baseline"
+    }
 
     drift = _diff_model_armor(expected, observed)
     if drift:

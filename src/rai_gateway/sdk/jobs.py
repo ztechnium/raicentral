@@ -35,7 +35,11 @@ class JobQueue:
                 .first()
             )
             if existing:
-                return self._serialize(existing)
+                if existing.status == BackgroundJobStatus.DEAD_LETTER.value:
+                    existing.idempotency_key = None
+                    self._db.flush()
+                else:
+                    return self._serialize(existing)
 
         job = BackgroundJob(
             job_type=job_type,

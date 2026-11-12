@@ -122,7 +122,9 @@ def upgrade() -> None:
             sa.ForeignKey("background_jobs.id"),
             nullable=True,
         ),
-        sa.Column("run_type", sa.String(), nullable=False, server_default="asset_discovery"),
+        sa.Column(
+            "run_type", sa.String(), nullable=False, server_default="asset_discovery"
+        ),
         sa.Column("status", sa.String(), nullable=False, server_default="running"),
         sa.Column(
             "started_at",
@@ -131,7 +133,9 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("assets_discovered", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column(
+            "assets_discovered", sa.Integer(), nullable=False, server_default="0"
+        ),
         sa.Column("assets_updated", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("partial_errors", sa.JSON(), nullable=True),
         sa.Column("summary", sa.JSON(), nullable=True),
@@ -167,7 +171,9 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("target_resource", sa.String(), nullable=False),
-        sa.Column("change_kind", sa.String(), nullable=False, server_default="model_armor"),
+        sa.Column(
+            "change_kind", sa.String(), nullable=False, server_default="model_armor"
+        ),
         sa.Column("preview_payload", sa.JSON(), nullable=True),
         sa.Column("desired_payload", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(), nullable=False, server_default="preview"),

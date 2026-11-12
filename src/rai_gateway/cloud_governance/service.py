@@ -114,10 +114,19 @@ class CloudGovernanceService:
         enforcement_enabled: bool,
         created_by: str,
     ) -> CloudConnection:
+        from rai_gateway.core.config import settings
+
         if auth_mode not in {m.value for m in AuthMode}:
             raise ValueError("invalid auth_mode")
         if "private_key" in auth_config:
             raise ValueError("service account keys are not accepted")
+        if (
+            settings.environment == "production"
+            and auth_mode == AuthMode.CUSTOMER_ADC.value
+        ):
+            raise ValueError(
+                "customer_adc is not allowed in production; use WIF or adc_impersonation"
+            )
 
         conn = CloudConnection(
             provider=provider,
@@ -159,12 +168,18 @@ class CloudGovernanceService:
             "last_verified_at": conn.last_verified_at.isoformat()
             if conn.last_verified_at
             else None,
-            "last_sync_at": conn.last_sync_at.isoformat() if conn.last_sync_at else None,
+            "last_sync_at": conn.last_sync_at.isoformat()
+            if conn.last_sync_at
+            else None,
+            "sync_interval_hours": conn.sync_interval_hours,
+            "drift_interval_hours": conn.drift_interval_hours,
             "created_by": conn.created_by,
             "created_at": conn.created_at.isoformat() if conn.created_at else None,
         }
 
-    def verify_connection(self, connection_id: UUID, *, actor_id: str) -> dict[str, Any]:
+    def verify_connection(
+        self, connection_id: UUID, *, actor_id: str
+    ) -> dict[str, Any]:
         conn = self._require_connection(connection_id)
         connector = _get_connector(conn.provider)
         scope = (
@@ -212,19 +227,24 @@ class CloudGovernanceService:
     def enqueue_sync(self, connection_id: UUID, *, actor_id: str) -> dict[str, Any]:
         conn = self._require_connection(connection_id)
         queue = JobQueue(self._db)
-        job = queue.enqueue(
-            job_type=CloudJobType.CLOUD_ASSET_SYNC.value,
-            payload={"connection_id": str(conn.id)},
-            idempotency_key=f"cloud-sync:{conn.id}",
-            created_by=actor_id,
-        )
         run = CloudSyncRun(
             connection_id=conn.id,
-            background_job_id=UUID(job["id"]),
+            background_job_id=None,
             run_type="asset_discovery",
             status=SyncRunStatus.RUNNING.value,
         )
         self._db.add(run)
+        self._db.flush()
+        job = queue.enqueue(
+            job_type=CloudJobType.CLOUD_ASSET_SYNC.value,
+            payload={
+                "connection_id": str(conn.id),
+                "sync_run_id": str(run.id),
+            },
+            idempotency_key=f"cloud-sync:{conn.id}:{run.id}",
+            created_by=actor_id,
+        )
+        run.background_job_id = UUID(job["id"])
         self._db.flush()
         log_admin_audit(
             trace_id=generate_trace_id(),
@@ -235,21 +255,31 @@ class CloudGovernanceService:
         )
         return {"job": job, "sync_run_id": str(run.id)}
 
-    def run_asset_sync(self, connection_id: UUID, *, job: BackgroundJob | None = None) -> dict[str, Any]:
+    def run_asset_sync(
+        self, connection_id: UUID, *, job: BackgroundJob | None = None
+    ) -> dict[str, Any]:
         conn = self._require_connection(connection_id)
         connector = _get_connector(conn.provider)
         scope = f"projects/{conn.scope_identifier}"
         auth = _auth_payload(conn)
 
-        run = (
-            self._db.query(CloudSyncRun)
-            .filter(
-                CloudSyncRun.connection_id == conn.id,
-                CloudSyncRun.status == SyncRunStatus.RUNNING.value,
+        run: CloudSyncRun | None = None
+        if job and isinstance(job.payload, dict) and job.payload.get("sync_run_id"):
+            run = (
+                self._db.query(CloudSyncRun)
+                .filter(CloudSyncRun.id == UUID(job.payload["sync_run_id"]))
+                .first()
             )
-            .order_by(CloudSyncRun.started_at.desc())
-            .first()
-        )
+        if run is None:
+            run = (
+                self._db.query(CloudSyncRun)
+                .filter(
+                    CloudSyncRun.connection_id == conn.id,
+                    CloudSyncRun.status == SyncRunStatus.RUNNING.value,
+                )
+                .order_by(CloudSyncRun.started_at.desc())
+                .first()
+            )
         if run is None:
             run = CloudSyncRun(
                 connection_id=conn.id,
@@ -400,7 +430,9 @@ class CloudGovernanceService:
         conn = self._require_connection(connection_id)
         connector = _get_connector(conn.provider)
         scope = f"projects/{conn.scope_identifier}"
-        return connector.inspect_model_armor(scope=scope, auth_config=_auth_payload(conn))
+        return connector.inspect_model_armor(
+            scope=scope, auth_config=_auth_payload(conn)
+        )
 
     def preview_policy_change(
         self, connection_id: UUID, desired: dict[str, Any], *, actor_id: str
@@ -484,7 +516,9 @@ class CloudGovernanceService:
             ),
         }
 
-    def apply_policy_change(self, change_id: UUID, *, actor_id: str) -> CloudPolicyChangeRequest:
+    def apply_policy_change(
+        self, change_id: UUID, *, actor_id: str
+    ) -> CloudPolicyChangeRequest:
         change = self._require_policy_change(change_id)
         conn = self._require_connection(change.connection_id)
         if not conn.enforcement_enabled:
@@ -516,7 +550,9 @@ class CloudGovernanceService:
         scope = f"projects/{conn.scope_identifier}"
         change.status = PolicyChangeStatus.APPLYING.value
         self._db.flush()
-        etag = (change.preview_payload or {}).get("current", {}).get("floor_settings", {})
+        etag = (
+            (change.preview_payload or {}).get("current", {}).get("floor_settings", {})
+        )
         etag = etag.get("etag") if isinstance(etag, dict) else None
         apply_result = connector.apply_model_armor_change(
             scope=scope,
@@ -528,7 +564,9 @@ class CloudGovernanceService:
             change.status = PolicyChangeStatus.FAILED.value
             change.apply_result = apply_result
             self._db.flush()
-            raise ValueError("apply failed: " + "; ".join(apply_result.get("limitations", [])))
+            raise ValueError(
+                "apply failed: " + "; ".join(apply_result.get("limitations", []))
+            )
         change.apply_result = apply_result
         change.status = PolicyChangeStatus.APPLIED.value
         mark_approval_consumed(approval)
@@ -560,8 +598,10 @@ class CloudGovernanceService:
         observed = self.inspect_model_armor(change.connection_id)
         desired_floor = change.desired_payload.get("floor_settings")
         observed_floor = observed.get("floor_settings")
-        verified = desired_floor == observed_floor if desired_floor else observed.get(
-            "supported"
+        verified = (
+            desired_floor == observed_floor
+            if desired_floor
+            else observed.get("supported")
         )
         verify_result = {
             "verified": bool(verified),
@@ -598,17 +638,53 @@ class CloudGovernanceService:
         )
         return verify_result
 
-    def enqueue_drift_check(self, connection_id: UUID, *, actor_id: str) -> dict[str, Any]:
+    def enqueue_drift_check(
+        self, connection_id: UUID, *, actor_id: str
+    ) -> dict[str, Any]:
         conn = self._require_connection(connection_id)
         queue = JobQueue(self._db)
+        from uuid import uuid4
+
+        drift_token = uuid4()
         job = queue.enqueue(
             job_type=CloudJobType.CLOUD_DRIFT_CHECK.value,
             payload={"connection_id": str(conn.id)},
-            idempotency_key=f"cloud-drift:{conn.id}",
+            idempotency_key=f"cloud-drift:{conn.id}:{drift_token}",
             created_by=actor_id,
         )
         self._db.flush()
         return {"job": job}
+
+    def update_connection_schedule(
+        self,
+        connection_id: UUID,
+        *,
+        sync_interval_hours: int | None,
+        drift_interval_hours: int | None,
+        actor_id: str,
+    ) -> CloudConnection:
+        conn = self._require_connection(connection_id)
+        if sync_interval_hours is not None:
+            if sync_interval_hours < 0:
+                raise ValueError("sync_interval_hours must be non-negative")
+            conn.sync_interval_hours = sync_interval_hours or None
+        if drift_interval_hours is not None:
+            if drift_interval_hours < 0:
+                raise ValueError("drift_interval_hours must be non-negative")
+            conn.drift_interval_hours = drift_interval_hours or None
+        self._db.flush()
+        log_admin_audit(
+            trace_id=generate_trace_id(),
+            actor_user_id=actor_id,
+            actor_role="user",
+            action="cloud_governance.connection.schedule",
+            target={
+                "cloud_connection_id": str(conn.id),
+                "sync_interval_hours": conn.sync_interval_hours,
+                "drift_interval_hours": conn.drift_interval_hours,
+            },
+        )
+        return conn
 
     def disconnect(self, connection_id: UUID, *, actor_id: str) -> CloudConnection:
         conn = self._require_connection(connection_id)

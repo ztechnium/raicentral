@@ -10,7 +10,9 @@ from rai_gateway.cloud_governance.domain import AssetStatus
 from rai_gateway.models.cloud_governance import CloudConnection, CloudDiscoveredAsset
 
 
-def evaluate_connection_coverage(db: Session, connection: CloudConnection) -> dict[str, Any]:
+def evaluate_connection_coverage(
+    db: Session, connection: CloudConnection
+) -> dict[str, Any]:
     assets = (
         db.query(CloudDiscoveredAsset)
         .filter(CloudDiscoveredAsset.connection_id == connection.id)
