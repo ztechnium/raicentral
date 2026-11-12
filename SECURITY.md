@@ -1,6 +1,6 @@
 # Security Policy
 
-VigilRAI Community Edition is a single-organization product, powered by [Ztechnium](https://ztechnium.com).
+RaiCentral Community Edition is a single-organization product, powered by [Ztechnium](https://ztechnium.com).
 
 ## Supported versions
 

@@ -45,6 +45,7 @@ from rai_gateway.models.evidence import (
 )
 from rai_gateway.models.runtime_enforcement import RuntimeEnforcementReceipt
 from rai_gateway.runtime_enforcement.domain import (
+    GATEWAY_EXECUTED_SOURCES,
     EnforcementDecisionType,
     ExecutionSource,
     ExecutionStatus,
@@ -1214,7 +1215,7 @@ class TrajectoryService:
         status = receipt.execution_status
         source = receipt.execution_source
 
-        if source == ExecutionSource.RAI_EXECUTED.value:
+        if source in GATEWAY_EXECUTED_SOURCES:
             event_source = EvidenceSourceType.RAI_EXECUTED.value
         elif source == ExecutionSource.CLIENT_REPORTED.value:
             event_source = EvidenceSourceType.CLIENT_REPORTED.value

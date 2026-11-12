@@ -17,15 +17,21 @@ from rai_gateway.core.database import get_db
 from rai_gateway.core.observability import generate_trace_id
 from rai_gateway.core.tenant_context import TenantContext
 from rai_gateway.runtime_enforcement.domain import (
-    RuntimeActionRequest,
+    ExecutionSource,
     RuntimeActionTarget,
+)
+from rai_gateway.runtime_enforcement.gateway import RuntimeGateway
+from rai_gateway.runtime_enforcement.gateway_action import (
+    GatewayAction,
+    GatewayActionType,
+    GatewayDecision,
+    GatewayEnforcementMode,
 )
 from rai_gateway.runtime_enforcement.receipt_serializer import (
     serialize_receipt_detail,
     serialize_receipt_summary,
 )
 from rai_gateway.runtime_enforcement.repository import RuntimeEnforcementRepository
-from rai_gateway.runtime_enforcement.service import RuntimeEnforcementService
 
 router = APIRouter(prefix="/v1", tags=["runtime-enforcement"])
 
@@ -56,14 +62,21 @@ def _extract_runtime_secret(
     return None
 
 
-def _to_request(body: RuntimeActionBody) -> RuntimeActionRequest:
+def _to_gateway_action(
+    body: RuntimeActionBody, *, execution_source: ExecutionSource
+) -> GatewayAction:
+    """Transport adapter: REST body -> canonical gateway action."""
     target = None
     if body.target:
         target = RuntimeActionTarget(
             type=str(body.target.get("type", "")),
             id=body.target.get("id"),
         )
-    return RuntimeActionRequest(
+    return GatewayAction(
+        action_type=GatewayActionType.MCP_TOOL_CALL.value
+        if body.integration_type == "mcp"
+        else GatewayActionType.TOOL_CALL.value,
+        execution_source=execution_source.value,
         integration_type=body.integration_type,
         integration_id=body.integration_id,
         tool_id=body.tool_id,
@@ -76,6 +89,16 @@ def _to_request(body: RuntimeActionBody) -> RuntimeActionRequest:
         correlation_id=body.correlation_id,
         trace_id=body.trace_id,
         client_context=body.client_context,
+    )
+
+
+def _legacy_response(decision: GatewayDecision) -> JSONResponse:
+    """Render the pre-gateway wire format; fail closed if evaluation errored."""
+    result = decision.enforcement_result
+    if result is None:
+        return JSONResponse(status_code=403, content=decision.to_dict())
+    return JSONResponse(
+        status_code=200 if result.allowed else 403, content=result.to_dict()
     )
 
 
@@ -97,16 +120,15 @@ def execute_runtime_action(
             },
         )
 
-    request = _to_request(body)
-    if not request.correlation_id:
-        request.correlation_id = generate_trace_id()
+    action = _to_gateway_action(body, execution_source=ExecutionSource.RAI_EXECUTED)
+    if not action.correlation_id:
+        action.correlation_id = generate_trace_id()
 
-    result = RuntimeEnforcementService(db).enforce_and_execute(
-        request,
-        credential_secret=secret,
-    )
-    status_code = 200 if result.allowed else 403
-    return JSONResponse(status_code=status_code, content=result.to_dict())
+    # These endpoints are mandatory enforcement: always ENFORCE.
+    decision = RuntimeGateway(
+        db, mode=GatewayEnforcementMode.ENFORCE
+    ).execute_authorized_gateway_action(action, credential_secret=secret)
+    return _legacy_response(decision)
 
 
 @router.post("/runtime/actions/authorize")
@@ -127,16 +149,14 @@ def authorize_runtime_action(
             },
         )
 
-    request = _to_request(body)
-    if not request.correlation_id:
-        request.correlation_id = generate_trace_id()
+    action = _to_gateway_action(body, execution_source=ExecutionSource.SDK_HOOK)
+    if not action.correlation_id:
+        action.correlation_id = generate_trace_id()
 
-    result = RuntimeEnforcementService(db).authorize(
-        request,
-        credential_secret=secret,
-    )
-    status_code = 200 if result.allowed else 403
-    return JSONResponse(status_code=status_code, content=result.to_dict())
+    decision = RuntimeGateway(
+        db, mode=GatewayEnforcementMode.ENFORCE
+    ).authorize_gateway_action(action, credential_secret=secret)
+    return _legacy_response(decision)
 
 
 @router.get("/runtime/approvals/{approval_request_id}/status")

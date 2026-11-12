@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     object_storage_endpoint: Optional[str] = None
     oidc_jwks_url: Optional[str] = None
     fail_closed_on_rai_unavailable: bool = True
+    # Runtime gateway rollout posture: OBSERVE | WARN | ENFORCE. Unknown values
+    # are treated as ENFORCE (fail closed).
+    gateway_enforcement_mode: str = "ENFORCE"
     approval_webhooks_enabled: bool = True
     webhook_allow_private_hosts: bool = False
     webhook_allow_http: bool = False

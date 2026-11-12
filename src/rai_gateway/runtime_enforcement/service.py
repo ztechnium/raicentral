@@ -785,6 +785,7 @@ class RuntimeEnforcementService:
                 approval_consumed=approval_consumed,
             )
 
+        exec_source = request.execution_source or ExecutionSource.RAI_EXECUTED.value
         receipt = persist_canonical_receipt(
             self._repo,
             authority=authority,
@@ -806,7 +807,7 @@ class RuntimeEnforcementService:
                 "enforcement_decision": EnforcementDecisionType.ALLOW.value,
                 "execution_attempted": False,
                 "execution_status": ExecutionStatus.STARTED.value,
-                "execution_source": ExecutionSource.RAI_EXECUTED.value,
+                "execution_source": exec_source,
                 "deployment_control": DeploymentControl.PROXY_CONTROLLED.value,
                 "verification_status": VerificationStatus.VERIFIED.value,
                 "client_context": request.client_context,
@@ -883,7 +884,7 @@ class RuntimeEnforcementService:
             receipt,
             execution_attempted=True,
             execution_status=execution_status,
-            execution_source=ExecutionSource.RAI_EXECUTED.value,
+            execution_source=exec_source,
             downstream_reference=downstream.downstream_reference,
         )
         if request.idempotency_key:
@@ -908,7 +909,7 @@ class RuntimeEnforcementService:
             target={
                 "receipt_id": str(receipt.id),
                 "execution_status": execution_status,
-                "execution_source": ExecutionSource.RAI_EXECUTED.value,
+                "execution_source": exec_source,
             },
         )
 
@@ -934,7 +935,7 @@ class RuntimeEnforcementService:
             or requirement.monitoring_instruction,
             execution_attempted=True,
             execution_status=execution_status,
-            execution_source=ExecutionSource.RAI_EXECUTED.value,
+            execution_source=exec_source,
             correlation_id=correlation_id,
             trace_id=trace_id,
             receipt_id=receipt.id,
@@ -1150,6 +1151,7 @@ class RuntimeEnforcementService:
                     "enforcement_decision": EnforcementDecisionType.DENY.value,
                     "execution_attempted": False,
                     "execution_status": ExecutionStatus.NOT_ATTEMPTED.value,
+                    "execution_source": request.execution_source,
                     "deployment_control": DeploymentControl.PROXY_CONTROLLED.value,
                     "verification_status": VerificationStatus.VERIFIED.value,
                     "client_context": request.client_context,
@@ -1211,6 +1213,7 @@ class RuntimeEnforcementService:
             monitoring_instruction=monitoring_instruction,
             execution_attempted=False,
             execution_status=ExecutionStatus.NOT_ATTEMPTED.value,
+            execution_source=request.execution_source,
             correlation_id=correlation_id,
             trace_id=trace_id,
             receipt_id=receipt_id,
@@ -1339,6 +1342,7 @@ class RuntimeEnforcementService:
                 "enforcement_decision": EnforcementDecisionType.REQUIRE_APPROVAL.value,
                 "execution_attempted": False,
                 "execution_status": ExecutionStatus.NOT_ATTEMPTED.value,
+                "execution_source": request.execution_source,
                 "client_context": request.client_context,
                 "idempotency_key": request.idempotency_key,
                 "policy_decision": policy_decision,

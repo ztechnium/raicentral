@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://i.postimg.cc/bw44qfz4/d3a24c15-d593-4d0e-89ee-86d4264c00cf.png" alt="VigilRAI" width="160">
+  <img src="https://i.postimg.cc/bw44qfz4/d3a24c15-d593-4d0e-89ee-86d4264c00cf.png" alt="RaiCentral" width="160">
 </p>
 
-# VigilRAI Community Edition
+# RaiCentral Community Edition
 
 Governance for one organization, powered by [Ztechnium](https://ztechnium.com). Register the AI systems that may run, decide who is accountable, enforce policy before a tool or model action proceeds, and keep evidence of those decisions.
 
