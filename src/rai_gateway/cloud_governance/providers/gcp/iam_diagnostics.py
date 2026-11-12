@@ -28,7 +28,11 @@ def test_project_permissions(
     service = discovery.build(
         "cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False
     )
-    pid = project_id.removeprefix("projects/") if project_id.startswith("projects/") else project_id
+    pid = (
+        project_id.removeprefix("projects/")
+        if project_id.startswith("projects/")
+        else project_id
+    )
     body = {"permissions": list(permissions)}
     # discovery client expects project id only; `projects/{id}` double-prefixes the URL path
     response = service.projects().testIamPermissions(resource=pid, body=body).execute()
