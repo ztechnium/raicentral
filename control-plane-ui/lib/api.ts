@@ -3279,11 +3279,7 @@ export function getCloudModelArmor(connectionId: string) {
   );
 }
 
-export function correlateCloudAsset(
-  connectionId: string,
-  assetId: string,
-  aiSystemId: string,
-) {
+export function correlateCloudAsset(connectionId: string, assetId: string, aiSystemId: string) {
   return apiPost<{ asset: import("@/lib/types").CloudDiscoveredAssetSummary }>(
     `/v1/cloud-governance/connections/${connectionId}/assets/${assetId}/correlate`,
     { ai_system_id: aiSystemId },
@@ -3301,10 +3297,13 @@ export function updateCloudConnectionSchedule(
 }
 
 export async function downloadCloudTerraform(connectionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/v1/cloud-governance/connections/${connectionId}/onboarding/terraform`, {
-    headers: buildHeaders(),
-    cache: "no-store",
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/v1/cloud-governance/connections/${connectionId}/onboarding/terraform`,
+    {
+      headers: buildHeaders(),
+      cache: "no-store",
+    },
+  );
   if (!response.ok) throw new Error("Terraform download failed");
   const text = await response.text();
   const blob = new Blob([text], { type: "text/plain" });

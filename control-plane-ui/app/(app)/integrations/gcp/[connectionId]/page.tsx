@@ -21,7 +21,11 @@ import {
   updateCloudConnectionSchedule,
   verifyCloudConnection,
 } from "@/lib/api";
-import type { AISystemSummary, CloudConnectionSummary, CloudDiscoveredAssetSummary } from "@/lib/types";
+import type {
+  AISystemSummary,
+  CloudConnectionSummary,
+  CloudDiscoveredAssetSummary,
+} from "@/lib/types";
 
 export default function GcpConnectionDashboardPage() {
   const params = useParams();
@@ -229,9 +233,7 @@ export default function GcpConnectionDashboardPage() {
       </div>
       <Panel title="Model Armor">
         {modelArmor ? (
-          <p className="text-sm">
-            Supported: {String(modelArmor.supported ?? false)}
-          </p>
+          <p className="text-sm">Supported: {String(modelArmor.supported ?? false)}</p>
         ) : (
           <p className="text-sm text-ink-500">Loading…</p>
         )}
