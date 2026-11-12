@@ -3110,3 +3110,29 @@ export interface WebhookDeliverySummary {
   delivered_at?: string | null;
   created_at?: string | null;
 }
+
+export interface CloudConnectionSummary {
+  id: string;
+  provider: string;
+  display_name: string;
+  scope_type: string;
+  scope_identifier: string;
+  auth_mode: string;
+  status: string;
+  capabilities: Record<string, boolean>;
+  enforcement_enabled: boolean;
+  last_verified_at?: string | null;
+  last_sync_at?: string | null;
+  sync_interval_hours?: number | null;
+  drift_interval_hours?: number | null;
+}
+
+export interface CloudDiscoveredAssetSummary {
+  id: string;
+  canonical_resource_name: string;
+  asset_type: string;
+  display_name?: string | null;
+  location?: string | null;
+  status: string;
+  ai_system_id?: string | null;
+}

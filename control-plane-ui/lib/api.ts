@@ -3183,3 +3183,141 @@ export function listWebhookDeliveries(limit = 50) {
     `/v1/productization/webhooks/deliveries?limit=${limit}`,
   );
 }
+
+export function listCloudGovernanceProviders() {
+  return apiGet<{ providers: Array<{ id: string; name: string; status: string }> }>(
+    "/v1/cloud-governance/providers",
+  );
+}
+
+export function listCloudConnections() {
+  return apiGet<{ connections: import("@/lib/types").CloudConnectionSummary[] }>(
+    "/v1/cloud-governance/connections",
+  );
+}
+
+export function createCloudConnection(payload: {
+  provider: string;
+  display_name: string;
+  scope_identifier: string;
+  auth_mode: string;
+  auth_config: Record<string, unknown>;
+  enforcement_enabled?: boolean;
+}) {
+  return apiPost<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    "/v1/cloud-governance/connections",
+    payload,
+  );
+}
+
+export function verifyCloudConnection(connectionId: string) {
+  return apiPost<{
+    connection: import("@/lib/types").CloudConnectionSummary;
+    verify: Record<string, unknown>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/verify`, {});
+}
+
+export function syncCloudConnection(connectionId: string) {
+  return apiPost<{ job: Record<string, unknown>; sync_run_id: string }>(
+    `/v1/cloud-governance/connections/${connectionId}/sync`,
+    {},
+  );
+}
+
+export function getCloudConnectionAssets(connectionId: string) {
+  return apiGet<{ assets: import("@/lib/types").CloudDiscoveredAssetSummary[] }>(
+    `/v1/cloud-governance/connections/${connectionId}/assets`,
+  );
+}
+
+export function getCloudConnection(connectionId: string) {
+  return apiGet<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}`,
+  );
+}
+
+export function getCloudSyncRuns(connectionId: string) {
+  return apiGet<{
+    sync_runs: Array<{
+      id: string;
+      status: string;
+      assets_discovered: number;
+      assets_updated: number;
+      partial_errors?: unknown;
+    }>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/sync-runs`);
+}
+
+export function getCloudCoverage(connectionId: string) {
+  return apiGet<{ coverage: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/coverage`,
+  );
+}
+
+export function getCloudEvidence(connectionId: string) {
+  return apiGet<{
+    evidence_links: Array<{ id: string; ref_type: string; ref_uri: string }>;
+  }>(`/v1/cloud-governance/connections/${connectionId}/evidence`);
+}
+
+export function getCloudDrift(connectionId: string) {
+  return apiGet<{ findings: Array<{ id: string; finding_type: string }> }>(
+    `/v1/cloud-governance/connections/${connectionId}/drift`,
+  );
+}
+
+export function driftCheckCloudConnection(connectionId: string) {
+  return apiPost<{ job: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/drift-check`,
+    {},
+  );
+}
+
+export function getCloudModelArmor(connectionId: string) {
+  return apiGet<{ model_armor: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/model-armor`,
+  );
+}
+
+export function correlateCloudAsset(connectionId: string, assetId: string, aiSystemId: string) {
+  return apiPost<{ asset: import("@/lib/types").CloudDiscoveredAssetSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}/assets/${assetId}/correlate`,
+    { ai_system_id: aiSystemId },
+  );
+}
+
+export function updateCloudConnectionSchedule(
+  connectionId: string,
+  payload: { sync_interval_hours?: number | null; drift_interval_hours?: number | null },
+) {
+  return apiPatch<{ connection: import("@/lib/types").CloudConnectionSummary }>(
+    `/v1/cloud-governance/connections/${connectionId}/schedule`,
+    payload,
+  );
+}
+
+export async function downloadCloudTerraform(connectionId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/cloud-governance/connections/${connectionId}/onboarding/terraform`,
+    {
+      headers: buildHeaders(),
+      cache: "no-store",
+    },
+  );
+  if (!response.ok) throw new Error("Terraform download failed");
+  const text = await response.text();
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `gcp-connector-${connectionId}.tf`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function previewCloudPolicyChange(connectionId: string, desired: Record<string, unknown>) {
+  return apiPost<{ change: Record<string, unknown> }>(
+    `/v1/cloud-governance/connections/${connectionId}/policy-changes/preview`,
+    { desired },
+  );
+}

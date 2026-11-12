@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from rai_gateway.approval.api import router as approval_router
 from rai_gateway.auth.api import router as auth_router
 from rai_gateway.client_hooks.api import router as client_hooks_router
+from rai_gateway.cloud_governance.api import router as cloud_governance_router
 from rai_gateway.core.auth import ApiKeyContext, get_api_key_context
 from rai_gateway.core.config import settings
 from rai_gateway.core.database import SessionLocal, get_db, init_db
@@ -85,6 +86,8 @@ app.include_router(sdk_router)
 app.include_router(productization_admin_router)
 app.include_router(data_access_router)
 app.include_router(finops_router)
+if settings.enable_cloud_governance:
+    app.include_router(cloud_governance_router)
 app.include_router(lineage_router)
 app.include_router(welcome_router)
 app.include_router(health_router)

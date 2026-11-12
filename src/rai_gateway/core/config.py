@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     enable_judge: bool = False
     enable_xai: bool = True
     enable_ethics_eval: bool = True
+    enable_cloud_governance: bool = True
 
     # Security Configuration
     jwt_secret_key: str = "your-secret-key-change-in-production"
