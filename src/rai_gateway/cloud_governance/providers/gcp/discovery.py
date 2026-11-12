@@ -6,10 +6,6 @@ from rai_gateway.cloud_governance.domain import GCP_DISCOVERY_ASSET_TYPES
 from rai_gateway.cloud_governance.protocols import DiscoveredResource
 
 
-def _asset_filter() -> str:
-    return " OR ".join(f"assetType={asset_type}" for asset_type in GCP_DISCOVERY_ASSET_TYPES)
-
-
 def search_vertex_assets(
     *,
     project_id: str,
@@ -23,7 +19,7 @@ def search_vertex_assets(
     scope = f"projects/{project_id}"
     request = asset_v1.SearchAllResourcesRequest(
         scope=scope,
-        query=_asset_filter(),
+        asset_types=list(GCP_DISCOVERY_ASSET_TYPES),
         page_size=page_size,
         page_token=page_token or "",
     )

@@ -23,6 +23,14 @@ COPY src/ ./src/
 COPY examples/developer_lab/catalog.py ./examples/developer_lab/catalog.py
 RUN uv sync --frozen --no-dev
 
+# Optional [gcp] extras (not in uv.lock yet — keep in sync with pyproject.toml [project.optional-dependencies.gcp])
+RUN uv pip install \
+    "google-auth>=2.29.0" \
+    "google-api-python-client>=2.120.0" \
+    "google-cloud-asset>=3.24.0" \
+    "google-cloud-modelarmor>=0.1.0" \
+    "google-cloud-resource-manager>=1.12.0"
+
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh

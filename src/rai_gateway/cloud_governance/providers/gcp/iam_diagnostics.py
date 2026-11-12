@@ -28,12 +28,13 @@ def test_project_permissions(
     service = discovery.build(
         "cloudresourcemanager", "v1", credentials=credentials, cache_discovery=False
     )
-    name = f"projects/{project_id}"
+    pid = project_id.removeprefix("projects/") if project_id.startswith("projects/") else project_id
     body = {"permissions": list(permissions)}
-    response = service.projects().testIamPermissions(resource=name, body=body).execute()
+    # discovery client expects project id only; `projects/{id}` double-prefixes the URL path
+    response = service.projects().testIamPermissions(resource=pid, body=body).execute()
     granted = set(response.get("permissions") or [])
     return {
-        "resource": name,
+        "resource": f"projects/{pid}",
         "requested": list(permissions),
         "granted": sorted(granted),
         "missing": sorted(set(permissions) - granted),
