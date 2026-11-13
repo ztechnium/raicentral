@@ -129,6 +129,9 @@ class RuntimeEnforcementReasonCode(StrEnum):
     GATEWAY_EVALUATION_FAILED = "GATEWAY_EVALUATION_FAILED"
 
 
+# integration_type for governed LLM provider calls (resource = registered model).
+MODEL_PROVIDER_INTEGRATION = "model_provider"
+
 POLICY_EFFECT_PRECEDENCE = "DENY > REQUIRE_APPROVAL > MONITOR > ALLOW"
 
 
@@ -167,6 +170,8 @@ class RuntimeActionRequest:
     # How this action reaches its destination; recorded on the receipt.
     # None keeps the legacy per-path defaults.
     execution_source: str | None = None
+    # Registered ModelResource for provider calls (integration_type=model_provider).
+    model_id: UUID | None = None
 
 
 @dataclass

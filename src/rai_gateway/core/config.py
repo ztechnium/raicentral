@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     # Runtime gateway rollout posture: OBSERVE | WARN | ENFORCE. Unknown values
     # are treated as ENFORCE (fail closed).
     gateway_enforcement_mode: str = "ENFORCE"
+
+    # Provider proxy (infrastructure gateway) transport limits.
+    provider_gateway_max_body_bytes: int = 10 * 1024 * 1024
+    provider_gateway_max_response_bytes: int = 64 * 1024 * 1024
+    provider_gateway_connect_timeout_seconds: float = 10.0
+    provider_gateway_read_timeout_seconds: float = 120.0
+    provider_gateway_max_retries: int = 2
     approval_webhooks_enabled: bool = True
     webhook_allow_private_hosts: bool = False
     webhook_allow_http: bool = False

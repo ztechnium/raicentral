@@ -85,6 +85,7 @@ class GatewayAction:
     integration_type: str | None = None
     integration_id: UUID | None = None
     tool_id: UUID | None = None
+    model_id: UUID | None = None
     approval_request_id: UUID | None = None
     idempotency_key: str | None = None
     execution_source: str | None = None
@@ -161,6 +162,7 @@ class GatewayAction:
             ),
             integration_id=self.integration_id,
             tool_id=self.tool_id,
+            model_id=self.model_id,
             target=self.target,
             parameters=params,
             environment=self.environment,

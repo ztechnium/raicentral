@@ -108,6 +108,41 @@ class RuntimeGateway:
         """
         return self._run(action, credential_secret, mode, execute=True)
 
+    def authorize_for_execution(
+        self,
+        action: GatewayAction,
+        *,
+        credential_secret: str,
+        mode: GatewayEnforcementMode | str | None = None,
+    ) -> GatewayDecision:
+        """Govern now, let the transport perform the call, finalize afterwards.
+
+        Used by the provider proxy: the receipt is persisted (STARTED) before
+        any upstream traffic and later completed with
+        :meth:`finalize_execution` from the actual gateway-observed outcome.
+        """
+        return self._run(action, credential_secret, mode, execute=True, defer=True)
+
+    def finalize_execution(
+        self,
+        receipt_id: UUID,
+        *,
+        succeeded: bool,
+        duration_ms: int | None = None,
+        downstream_reference: str | None = None,
+        safe_result_metadata: dict | None = None,
+        execution_status: str | None = None,
+    ) -> bool:
+        """Finalize a receipt from a real gateway execution (idempotent)."""
+        return self._enforcement.finalize_gateway_execution(
+            receipt_id,
+            succeeded=succeeded,
+            duration_ms=duration_ms,
+            downstream_reference=downstream_reference,
+            safe_result_metadata=safe_result_metadata,
+            execution_status=execution_status,
+        )
+
     def _run(
         self,
         action: GatewayAction,
@@ -115,11 +150,16 @@ class RuntimeGateway:
         mode: GatewayEnforcementMode | str | None,
         *,
         execute: bool,
+        defer: bool = False,
     ) -> GatewayDecision:
         effective = resolve_gateway_mode(mode) if mode is not None else self._mode
         request = action.to_runtime_request(mode=effective)
         try:
-            if execute:
+            if defer:
+                result = self._enforcement.authorize_for_gateway_execution(
+                    request, credential_secret=credential_secret
+                )
+            elif execute:
                 result = self._enforcement.enforce_and_execute(
                     request, credential_secret=credential_secret
                 )
