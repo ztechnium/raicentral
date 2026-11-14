@@ -18,6 +18,18 @@ from rai_gateway.registry.service import RegistryService
 MODEL_NAME = "test-model-1"
 
 
+@pytest.fixture(autouse=True)
+def allow_test_upstream_hosts(monkeypatch) -> None:
+    """Let mock upstream URLs pass production outbound allowlisting in unit tests."""
+    from rai_gateway.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "provider_gateway_outbound_allowlist",
+        "upstream.test,api.openai.com",
+    )
+
+
 @pytest.fixture()
 def model_stack(db_session, test_organization) -> dict:
     registry = RegistryService(db_session)

@@ -196,5 +196,8 @@ async def test_unregistered_model_denied(
 
 def test_http_routes_mounted_on_llm_controller() -> None:
     paths = set(app.openapi()["paths"])
-    assert "/providers/openai/v1" in paths
-    assert any(p.startswith("/providers/openai/v1/") for p in paths)
+    assert "/providers/{provider_name}/{api_version}/{path}" in paths
+    openai_route = app.openapi()["paths"][
+        "/providers/{provider_name}/{api_version}/{path}"
+    ]
+    assert "post" in openai_route
