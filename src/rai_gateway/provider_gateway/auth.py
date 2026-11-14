@@ -4,9 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
+from uuid import UUID
+
+from sqlalchemy.orm import Session
 
 from rai_gateway.core.config import settings
 from rai_gateway.provider_gateway.domain import ProviderCredential
+
+
+@dataclass
+class CredentialResolveContext:
+    db: Session | None = None
+    runtime_identity_id: UUID | None = None
+    environment: str | None = None
+    model: str | None = None
 
 
 def extract_runtime_secret(headers: Mapping[str, str]) -> str | None:
@@ -35,14 +47,24 @@ class ProviderCredentialResolver(ABC):
     """
 
     @abstractmethod
-    def resolve(self, provider: str) -> ProviderCredential:
+    def resolve(
+        self,
+        provider: str,
+        *,
+        context: CredentialResolveContext | None = None,
+    ) -> ProviderCredential:
         """Return credential material or raise ProviderCredentialUnavailable."""
 
 
 class SettingsCredentialResolver(ProviderCredentialResolver):
     """Initial implementation backed by existing server settings."""
 
-    def resolve(self, provider: str) -> ProviderCredential:
+    def resolve(
+        self,
+        provider: str,
+        *,
+        context: CredentialResolveContext | None = None,
+    ) -> ProviderCredential:
         name = provider.lower()
         if name == "openai" and settings.llm_provider_api_key:
             return ProviderCredential(

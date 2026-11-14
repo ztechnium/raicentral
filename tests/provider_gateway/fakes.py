@@ -87,7 +87,7 @@ class StaticResolver(ProviderCredentialResolver):
     def __init__(self, available: bool = True) -> None:
         self.available = available
 
-    def resolve(self, provider: str) -> ProviderCredential:
+    def resolve(self, provider: str, *, context=None) -> ProviderCredential:
         if not self.available:
             raise ProviderCredentialUnavailable(provider)
         return ProviderCredential(

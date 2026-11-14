@@ -84,11 +84,31 @@ def no_adapter(path: str) -> ProviderGatewayError:
     )
 
 
-def credential_unavailable(provider: str) -> ProviderGatewayError:
+def credential_unavailable(
+    provider: str, *, decision: GatewayDecision | None = None
+) -> ProviderGatewayError:
+    rai: dict[str, Any] = {}
+    if decision and decision.receipt_id:
+        rai["receipt_id"] = str(decision.receipt_id)
     return ProviderGatewayError(
         503,
         "PROVIDER_CREDENTIAL_UNAVAILABLE",
         f"Gateway has no upstream credential for provider '{provider}'",
+        rai=rai,
+    )
+
+
+def credential_scope_denied(
+    reason: str, *, decision: GatewayDecision | None = None
+) -> ProviderGatewayError:
+    rai: dict[str, Any] = {}
+    if decision and decision.receipt_id:
+        rai["receipt_id"] = str(decision.receipt_id)
+    return ProviderGatewayError(
+        403,
+        "PROVIDER_CREDENTIAL_SCOPE_DENIED",
+        reason,
+        rai=rai,
     )
 
 

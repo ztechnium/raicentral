@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 
 class UsageConfidence(StrEnum):
@@ -38,6 +39,7 @@ class ProviderCredential:
     base_url: str
     headers: Mapping[str, str] = field(default_factory=dict)
     query_params: Mapping[str, str] = field(default_factory=dict)
+    credential_ref_id: UUID | None = None
 
     def __repr__(self) -> str:  # never leak secrets into logs
         return f"ProviderCredential(provider={self.provider!r}, base_url={self.base_url!r})"

@@ -30,11 +30,13 @@ from rai_gateway.models.registry import ModelResource
 from rai_gateway.provider_gateway import errors
 from rai_gateway.provider_gateway.adapters.base import ProviderProtocolAdapter
 from rai_gateway.provider_gateway.auth import (
+    CredentialResolveContext,
     ProviderCredentialResolver,
     ProviderCredentialUnavailable,
     SettingsCredentialResolver,
     extract_runtime_secret,
 )
+from rai_gateway.provider_gateway.credentials.ownership import ProviderCredentialScopeDenied
 from rai_gateway.provider_gateway.domain import (
     ProviderCredential,
     ProxyRequest,
@@ -153,10 +155,6 @@ class ProviderProxy:
             raise errors.no_adapter(request.path)
 
         action = self._build_action(adapter, request, db)
-        try:
-            credential = self._credentials.resolve(adapter.provider_name)
-        except ProviderCredentialUnavailable as exc:
-            raise errors.credential_unavailable(exc.provider) from exc
 
         gateway = RuntimeGateway(db, mode=self._mode)
         decision = await run_in_threadpool(
@@ -164,6 +162,25 @@ class ProviderProxy:
         )
         if not decision.allowed:
             raise _with_receipt(errors.from_decision(decision), decision)
+
+        runtime_identity_id = None
+        if decision.enforcement_result:
+            runtime_identity_id = decision.enforcement_result.runtime_identity_id
+
+        context = CredentialResolveContext(
+            db=db,
+            runtime_identity_id=runtime_identity_id,
+            environment=action.environment,
+            model=action.model,
+        )
+        try:
+            credential = self._credentials.resolve(
+                adapter.provider_name, context=context
+            )
+        except ProviderCredentialScopeDenied as exc:
+            raise errors.credential_scope_denied(exc.reason, decision=decision) from exc
+        except ProviderCredentialUnavailable as exc:
+            raise errors.credential_unavailable(exc.provider, decision=decision) from exc
 
         return await self._forward(adapter, request, credential, action, decision)
 
@@ -207,7 +224,7 @@ class ProviderProxy:
         started = time.monotonic()
 
         def meta(**kw: Any) -> dict[str, Any]:
-            return build_execution_metadata(
+            base = build_execution_metadata(
                 provider=adapter.provider_name,
                 operation=action.operation,
                 model=action.model,
@@ -216,6 +233,9 @@ class ProviderProxy:
                 streamed=streaming,
                 **kw,
             )
+            if credential.credential_ref_id:
+                base["provider_credential_ref_id"] = str(credential.credential_ref_id)
+            return base
 
         def elapsed() -> int:
             return int((time.monotonic() - started) * 1000)

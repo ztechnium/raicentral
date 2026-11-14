@@ -136,6 +136,8 @@ class Settings(BaseSettings):
     provider_gateway_connect_timeout_seconds: float = 10.0
     provider_gateway_read_timeout_seconds: float = 120.0
     provider_gateway_max_retries: int = 2
+    # When true, upstream provider keys come from credential refs + grants only.
+    provider_gateway_isolated_credentials: bool = False
     approval_webhooks_enabled: bool = True
     webhook_allow_private_hosts: bool = False
     webhook_allow_http: bool = False

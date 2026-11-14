@@ -10,6 +10,10 @@ from rai_gateway.core.config import settings
 from rai_gateway.core.database import get_db
 from rai_gateway.provider_gateway.adapters.registry import default_adapter_registry
 from rai_gateway.provider_gateway.api import handle_provider_request
+from rai_gateway.provider_gateway.auth import SettingsCredentialResolver
+from rai_gateway.provider_gateway.credentials.isolated_resolver import (
+    IsolatedProviderCredentialResolver,
+)
 from rai_gateway.provider_gateway.proxy import ProviderProxy
 
 router = APIRouter(tags=["provider-gateway"])
@@ -17,12 +21,22 @@ router = APIRouter(tags=["provider-gateway"])
 _proxy: ProviderProxy | None = None
 
 
-def get_provider_proxy() -> ProviderProxy:
+def get_provider_proxy(db: Session | None = None) -> ProviderProxy:
     global _proxy
     if _proxy is None:
+        credentials = SettingsCredentialResolver()
         _proxy = ProviderProxy(
             default_adapter_registry(),
             mode=settings.gateway_enforcement_mode,
+            credentials=credentials,
+        )
+    if (
+        settings.provider_gateway_isolated_credentials
+        and db is not None
+        and not isinstance(_proxy._credentials, IsolatedProviderCredentialResolver)
+    ):
+        _proxy._credentials = IsolatedProviderCredentialResolver(
+            db, fallback=SettingsCredentialResolver()
         )
     return _proxy
 
@@ -40,5 +54,5 @@ async def provider_gateway_route(
 ) -> Response:
     del provider_name, api_version, path
     return await handle_provider_request(
-        request, proxy=get_provider_proxy(), db=db
+        request, proxy=get_provider_proxy(db), db=db
     )
