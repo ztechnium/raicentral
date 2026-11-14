@@ -354,6 +354,21 @@ def _sse(request):
     )
 
 
+async def test_stream_concurrency_slot_held_until_relay_finishes(
+    db_session, model_stack, make_proxy
+) -> None:
+    from rai_gateway.provider_gateway.production.limits import gateway_limits
+
+    proxy, _ = make_proxy(_sse)
+    req = _req(model_stack, body={"model": model_stack["model_name"], "stream": True})
+    response = await proxy.handle(req, db=db_session)
+    assert response.stream is not None
+    assert gateway_limits.snapshot()["global_streams"] == 1
+    chunks = [c async for c in response.stream]
+    assert chunks
+    assert gateway_limits.snapshot()["global_streams"] == 0
+
+
 async def test_streaming_passthrough_and_finalize_after_completion(
     db_session, model_stack, make_proxy
 ) -> None:

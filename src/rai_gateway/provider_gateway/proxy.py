@@ -109,6 +109,15 @@ class AdapterRegistry:
         return None
 
 
+def _release_stream_slot(stream_slot: tuple[str | None, str] | None) -> None:
+    if stream_slot is None:
+        return
+    from rai_gateway.provider_gateway.production.limits import gateway_limits
+
+    runtime_key, provider = stream_slot
+    gateway_limits.release_stream(runtime_key=runtime_key, provider=provider)
+
+
 def error_response(
     exc: errors.ProviderGatewayError, *, receipt_id: str | None = None
 ) -> ProxyResponse:
@@ -175,10 +184,13 @@ class ProviderProxy:
             raise _with_receipt(errors.from_decision(decision), decision)
 
         streaming = adapter.is_streaming(request)
+        runtime_key = secret[:16] if secret else None
+        stream_slot = (
+            (runtime_key, adapter.provider_name) if streaming else None
+        )
         if streaming:
             from rai_gateway.provider_gateway.production.limits import gateway_limits
 
-            runtime_key = secret[:16] if secret else None
             slot = gateway_limits.acquire_stream(
                 runtime_key=runtime_key, provider=adapter.provider_name
             )
@@ -199,21 +211,33 @@ class ProviderProxy:
                 adapter.provider_name, context=context
             )
         except ProviderCredentialScopeDenied as exc:
+            _release_stream_slot(stream_slot)
             raise errors.credential_scope_denied(exc.reason, decision=decision) from exc
         except ProviderCredentialUnavailable as exc:
+            _release_stream_slot(stream_slot)
             raise errors.credential_unavailable(exc.provider, decision=decision) from exc
 
+        defer_stream_release = False
         try:
-            return await self._forward(
-                adapter, request, credential, action, decision, policy_ms=policy_ms
+            response = await self._forward(
+                adapter,
+                request,
+                credential,
+                action,
+                decision,
+                policy_ms=policy_ms,
+                runtime_key=runtime_key,
+                streaming=streaming,
             )
+            if streaming and response.stream is not None:
+                defer_stream_release = True
+            return response
         finally:
-            if streaming:
+            if streaming and not defer_stream_release:
                 from rai_gateway.provider_gateway.production.limits import (
                     gateway_limits,
                 )
 
-                runtime_key = secret[:16] if secret else None
                 gateway_limits.release_stream(
                     runtime_key=runtime_key, provider=adapter.provider_name
                 )
@@ -251,6 +275,9 @@ class ProviderProxy:
         action: GatewayAction,
         decision: GatewayDecision,
         policy_ms: int = 0,
+        *,
+        runtime_key: str | None = None,
+        streaming: bool = False,
     ) -> ProxyResponse:
         from rai_gateway.provider_gateway.production.finops import (
             attach_finops_metadata,
@@ -265,7 +292,11 @@ class ProviderProxy:
         )
         headers = adapter.upstream_headers(request, credential)
         params = dict(credential.query_params) or None
-        streaming = adapter.is_streaming(request)
+        if not streaming:
+            streaming = adapter.is_streaming(request)
+        stream_slot = (
+            (runtime_key, adapter.provider_name) if streaming else None
+        )
         started = time.monotonic()
 
         def meta(**kw: Any) -> dict[str, Any]:
@@ -394,26 +425,29 @@ class ProviderProxy:
             duration_ms: int,
             stream_meta: dict[str, object],
         ) -> None:
-            completed = outcome == "completed"
-            await self._finalize(
-                decision,
-                succeeded=completed,
-                duration_ms=duration_ms,
-                meta=meta(
-                    upstream_status=upstream.status_code,
-                    response_bytes=streamed,
-                    outcome=outcome,
-                    usage=usage if completed else None,
-                    stream_lifecycle=dict(stream_meta),
-                ),
-                execution_status=None
-                if completed
-                else (
-                    ExecutionStatus.UNKNOWN.value
-                    if outcome == "cancelled"
-                    else ExecutionStatus.FAILED.value
-                ),
-            )
+            try:
+                completed = outcome == "completed"
+                await self._finalize(
+                    decision,
+                    succeeded=completed,
+                    duration_ms=duration_ms,
+                    meta=meta(
+                        upstream_status=upstream.status_code,
+                        response_bytes=streamed,
+                        outcome=outcome,
+                        usage=usage if completed else None,
+                        stream_lifecycle=dict(stream_meta),
+                    ),
+                    execution_status=None
+                    if completed
+                    else (
+                        ExecutionStatus.UNKNOWN.value
+                        if outcome == "cancelled"
+                        else ExecutionStatus.FAILED.value
+                    ),
+                )
+            finally:
+                _release_stream_slot(stream_slot)
 
         return ProxyResponse(
             status_code=upstream.status_code,

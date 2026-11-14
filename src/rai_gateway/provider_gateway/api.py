@@ -7,10 +7,11 @@ no governance itself.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
+
 from fastapi import Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
-
 from rai_gateway.core.config import settings
 from rai_gateway.provider_gateway.domain import ProxyRequest, ProxyResponse
 from rai_gateway.provider_gateway.errors import body_too_large
@@ -33,13 +34,26 @@ async def read_bounded_body(request: Request, limit: int | None = None) -> bytes
     return b"".join(chunks)
 
 
-def to_starlette(response: ProxyResponse) -> Response:
+def to_starlette(
+    response: ProxyResponse,
+    *,
+    on_stream_finished: Callable[[], None] | None = None,
+) -> Response:
     headers = dict(response.headers)
     if response.receipt_id:
         headers["x-rai-receipt-id"] = response.receipt_id
     if response.stream is not None:
+
+        async def relay() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in response.stream:
+                    yield chunk
+            finally:
+                if on_stream_finished is not None:
+                    on_stream_finished()
+
         return StreamingResponse(
-            response.stream, status_code=response.status_code, headers=headers
+            relay(), status_code=response.status_code, headers=headers
         )
     return Response(
         content=response.body or b"", status_code=response.status_code, headers=headers
@@ -79,6 +93,7 @@ async def handle_provider_request(
         if isinstance(exc, ProviderGatewayError):
             return to_starlette(error_response(exc))
         raise
+    stream_pending = False
     try:
         try:
             body = await read_bounded_body(request)
@@ -96,6 +111,14 @@ async def handle_provider_request(
             body=body,
             client_host=request.client.host if request.client else None,
         )
-        return to_starlette(await proxy.handle(proxy_request, db=db))
+        proxy_response = await proxy.handle(proxy_request, db=db)
+        stream_pending = proxy_response.stream is not None
+        return to_starlette(
+            proxy_response,
+            on_stream_finished=gateway_lifecycle.end_request
+            if stream_pending
+            else None,
+        )
     finally:
-        gateway_lifecycle.end_request()
+        if not stream_pending:
+            gateway_lifecycle.end_request()
