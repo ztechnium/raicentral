@@ -19,7 +19,18 @@ RaiCentral subnet    → AI provider   = ALLOW (tcp/443)
 ```bash
 cd deploy/network-enforcement/gcp/terraform
 terraform init
-terraform plan -var project_id=YOUR_PROJECT -var region=us-central1
+terraform plan \
+  -var project_id=YOUR_PROJECT \
+  -var region=us-central1 \
+  -var gateway_container_image=REGION-docker.pkg.dev/PROJECT/rai/rai-gateway:latest \
+  -var 'gateway_database_url=postgresql://...'
+```
+
+Validate without credentials:
+
+```bash
+terraform init -backend=false
+terraform validate
 ```
 
 Wire provider credentials via **Secret Manager** and GKE Workload Identity on the gateway service account only — not on application pods.

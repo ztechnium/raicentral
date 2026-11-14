@@ -6,7 +6,7 @@ resource "google_compute_firewall" "workload_to_gateway" {
   direction = "EGRESS"
   priority  = 1000
 
-  destination_ranges = ["${var.gateway_ilb_ip}/32"]
+  destination_ranges = ["${google_compute_address.gateway_ilb.address}/32"]
   target_tags        = ["rai-workload"]
 
   allow {

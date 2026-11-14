@@ -60,3 +60,9 @@ resource "azurerm_virtual_network_peering" "spoke_hub" {
   remote_virtual_network_id = azurerm_virtual_network.hub.id
   allow_forwarded_traffic   = true
 }
+
+resource "azurerm_user_assigned_identity" "gateway" {
+  name                = "rai-gateway"
+  location            = azurerm_resource_group.rai.location
+  resource_group_name = azurerm_resource_group.rai.name
+}

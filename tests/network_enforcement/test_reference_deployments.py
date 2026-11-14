@@ -25,6 +25,7 @@ def _read(path: Path) -> str:
         "catalog/provider-destinations.yaml",
         "gcp/terraform/main.tf",
         "gcp/terraform/firewall.tf",
+        "gcp/startup/gateway-startup.sh",
         "azure/terraform/main.tf",
         "azure/terraform/nsg.tf",
         "linux/rai-gateway.service",
@@ -40,6 +41,12 @@ def test_kubernetes_policies_reference_gateway_namespace_label() -> None:
     assert "rai.ztechnium.com/role: enforcement-gateway" in workload
     gateway_ns = _read(NE / "kubernetes" / "namespace.yaml")
     assert "rai.ztechnium.com/role: enforcement-gateway" in gateway_ns
+
+
+def test_gcp_startup_script_installs_container_and_health_check() -> None:
+    script = _read(NE / "gcp" / "startup" / "gateway-startup.sh")
+    assert "docker run" in script
+    assert "/health" in script
 
 
 def test_gcp_firewall_documents_enforce_toggle() -> None:

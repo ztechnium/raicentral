@@ -55,42 +55,14 @@ resource "google_compute_router_nat" "rai" {
   }
 }
 
-# Workloads: only gateway subnet on 8000/443 as needed for health; deny general internet.
-resource "google_compute_firewall" "workload_to_gateway" {
-  name    = "rai-workload-to-gateway"
-  network = google_compute_network.rai.name
-  direction = "EGRESS"
-  destination_ranges = [var.gateway_subnet_cidr]
-  allow {
-    protocol = "tcp"
-    ports    = ["8000", "443"]
-  }
-  target_tags = ["rai-workload"]
-}
+# Workload egress rules live in firewall.tf (ILB IP + enforce toggle).
 
-resource "google_compute_firewall" "workload_deny_internet_https" {
-  name    = "rai-workload-deny-internet-https"
-  network = google_compute_network.rai.name
-  priority = 1000
-  direction = "EGRESS"
-  destination_ranges = ["0.0.0.0/0"]
-  deny {
-    protocol = "tcp"
-    ports    = ["443"]
-  }
-  target_tags = ["rai-workload"]
-}
-
-resource "google_compute_firewall" "gateway_allow_https_internet" {
-  name    = "rai-gateway-allow-https-internet"
-  network = google_compute_network.rai.name
-  direction = "EGRESS"
-  destination_ranges = ["0.0.0.0/0"]
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
-  }
-  target_service_accounts = [google_service_account.gateway.email]
+resource "google_compute_address" "gateway_ilb" {
+  name         = "rai-gateway-ilb-ip"
+  address_type = "INTERNAL"
+  purpose      = "GCE_ENDPOINT"
+  subnetwork   = google_compute_subnetwork.gateway.id
+  region       = var.region
 }
 
 resource "google_compute_region_backend_service" "gateway_ilb" {
@@ -109,8 +81,20 @@ resource "google_compute_region_health_check" "gateway" {
   name   = "rai-gateway-hc"
   region = var.region
   tcp_health_check {
-    port = 8000
+    port = var.gateway_listen_port
   }
+}
+
+resource "google_compute_forwarding_rule" "gateway_ilb" {
+  name                  = "rai-gateway-ilb-forwarding"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL"
+  backend_service       = google_compute_region_backend_service.gateway_ilb.id
+  ip_address            = google_compute_address.gateway_ilb.id
+  ip_protocol           = "TCP"
+  ports                 = [tostring(var.gateway_listen_port)]
+  network               = google_compute_network.rai.id
+  subnetwork            = google_compute_subnetwork.gateway.id
 }
 
 resource "google_compute_instance_template" "gateway" {
@@ -133,11 +117,11 @@ resource "google_compute_instance_template" "gateway" {
     scopes = ["cloud-platform"]
   }
 
-  metadata_startup_script = <<-EOT
-    #!/bin/bash
-    # Deploy gateway via container runtime — replace with your image orchestration.
-    echo "Start RaiCentral gateway container bound to :8000"
-  EOT
+  metadata = {
+    rai-gateway-image = var.gateway_container_image
+  }
+
+  metadata_startup_script = file("${path.module}/../startup/gateway-startup.sh")
 }
 
 resource "google_compute_region_instance_group_manager" "gateway" {
