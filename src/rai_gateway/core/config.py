@@ -129,6 +129,8 @@ class Settings(BaseSettings):
     # Runtime gateway rollout posture: OBSERVE | WARN | ENFORCE. Unknown values
     # are treated as ENFORCE (fail closed).
     gateway_enforcement_mode: str = "ENFORCE"
+    # Shared secret for /v1/network-observation/events collectors (flow logs, eBPF, etc.).
+    network_observation_ingest_token: Optional[str] = None
 
     # Provider proxy (infrastructure gateway) transport limits.
     provider_gateway_max_body_bytes: int = 10 * 1024 * 1024
