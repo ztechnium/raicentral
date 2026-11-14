@@ -5,7 +5,14 @@ from __future__ import annotations
 import hashlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+
+class UsageConfidence(StrEnum):
+    UNKNOWN = "unknown"
+    ESTIMATED = "estimated"
+    PROVIDER_REPORTED = "provider_reported"
 
 
 @dataclass
@@ -51,6 +58,8 @@ class ProxyResponse:
 
 @dataclass
 class UsageInfo:
+    """Normalized provider metering (ProviderUsage contract)."""
+
     provider: str | None = None
     model: str | None = None
     input_tokens: int | None = None
@@ -58,14 +67,32 @@ class UsageInfo:
     total_tokens: int | None = None
     cached_input_tokens: int | None = None
     reasoning_tokens: int | None = None
+    confidence: UsageConfidence | str = UsageConfidence.UNKNOWN
+    provider_reported: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if v is not None}
+        out: dict[str, Any] = {}
+        for k, v in self.__dict__.items():
+            if k == "provider_reported" and not v:
+                continue
+            if v is None:
+                continue
+            out[k] = v.value if isinstance(v, UsageConfidence) else v
+        return out
 
     @property
     def empty(self) -> bool:
         return not any(
             v is not None
             for k, v in self.__dict__.items()
-            if k not in {"provider", "model"}
+            if k
+            not in {
+                "provider",
+                "model",
+                "confidence",
+                "provider_reported",
+            }
         )
+
+
+ProviderUsage = UsageInfo

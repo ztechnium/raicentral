@@ -42,7 +42,7 @@ from rai_gateway.provider_gateway.domain import (
     UsageInfo,
 )
 from rai_gateway.provider_gateway.metering import build_execution_metadata
-from rai_gateway.provider_gateway.streaming import relay_stream
+from rai_gateway.provider_gateway.streaming import StreamLifecycle, relay_stream
 from rai_gateway.provider_gateway.transport import UpstreamTransport
 from rai_gateway.runtime_enforcement.domain import (
     MODEL_PROVIDER_INTEGRATION,
@@ -305,9 +305,14 @@ class ProviderProxy:
             )
 
         collector = adapter.new_stream_usage_collector()
+        stream_lifecycle = StreamLifecycle()
 
         async def on_done(
-            outcome: str, usage: UsageInfo | None, streamed: int, duration_ms: int
+            outcome: str,
+            usage: UsageInfo | None,
+            streamed: int,
+            duration_ms: int,
+            stream_meta: dict[str, object],
         ) -> None:
             completed = outcome == "completed"
             await self._finalize(
@@ -319,6 +324,7 @@ class ProviderProxy:
                     response_bytes=streamed,
                     outcome=outcome,
                     usage=usage if completed else None,
+                    stream_lifecycle=dict(stream_meta),
                 ),
                 execution_status=None
                 if completed
@@ -332,7 +338,7 @@ class ProviderProxy:
         return ProxyResponse(
             status_code=upstream.status_code,
             headers=adapter.sanitize_response_metadata(dict(upstream.headers)),
-            stream=relay_stream(upstream, collector, on_done),
+            stream=relay_stream(upstream, collector, on_done, lifecycle=stream_lifecycle),
             receipt_id=_rid(decision),
         )
 

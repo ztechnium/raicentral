@@ -11,9 +11,17 @@ from rai_gateway.provider_gateway.adapters.base import (
     ProviderProtocolAdapter,
     StreamUsageCollector,
 )
+from rai_gateway.provider_gateway.adapters.common import (
+    declared_tool_names,
+    load_json,
+    max_output_tokens,
+    normalize_usage,
+    strip_route_prefix,
+)
 from rai_gateway.provider_gateway.domain import (
     ProviderCredential,
     ProxyRequest,
+    UsageConfidence,
     UsageInfo,
 )
 from rai_gateway.runtime_enforcement.gateway_action import (
@@ -31,27 +39,8 @@ _OPERATION_BY_SUFFIX: dict[str, str] = {
 }
 
 
-def _strip_gateway_prefix(path: str) -> str:
-    if not path.startswith(ROUTE_PREFIX):
-        return path
-    suffix = path[len(ROUTE_PREFIX) :]
-    if not suffix.startswith("/"):
-        suffix = f"/{suffix}"
-    return suffix or "/"
-
-
-def _load_json(body: bytes) -> dict[str, Any]:
-    if not body:
-        return {}
-    try:
-        parsed = json.loads(body)
-    except (ValueError, TypeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
 def _operation_for_path(path: str) -> str:
-    suffix = _strip_gateway_prefix(path).lstrip("/")
+    suffix = strip_route_prefix(path, ROUTE_PREFIX).lstrip("/")
     if suffix in _OPERATION_BY_SUFFIX:
         return _OPERATION_BY_SUFFIX[suffix]
     if suffix.startswith("models/"):
@@ -63,33 +52,11 @@ def _model_from_request(path: str, body: dict[str, Any]) -> str | None:
     model = body.get("model")
     if isinstance(model, str) and model.strip():
         return model.strip()
-    match = re.match(r"models/([^/]+)$", _strip_gateway_prefix(path).lstrip("/"))
+    match = re.match(
+        r"models/([^/]+)$", strip_route_prefix(path, ROUTE_PREFIX).lstrip("/")
+    )
     if match:
         return match.group(1)
-    return None
-
-
-def _declared_tools(body: dict[str, Any]) -> list[str]:
-    names: list[str] = []
-    for entry in body.get("tools") or []:
-        if not isinstance(entry, dict):
-            continue
-        fn = entry.get("function")
-        if isinstance(fn, dict) and fn.get("name"):
-            names.append(str(fn["name"]))
-        elif entry.get("name"):
-            names.append(str(entry["name"]))
-    for entry in body.get("functions") or []:
-        if isinstance(entry, dict) and entry.get("name"):
-            names.append(str(entry["name"]))
-    return names
-
-
-def _max_output_tokens(body: dict[str, Any]) -> int | None:
-    for key in ("max_completion_tokens", "max_tokens", "max_output_tokens"):
-        value = body.get(key)
-        if isinstance(value, int) and value >= 0:
-            return value
     return None
 
 
@@ -119,9 +86,7 @@ def _usage_from_openai(
     output_details = usage.get("output_tokens_details")
     if reasoning is None and isinstance(output_details, dict):
         reasoning = output_details.get("reasoning_tokens")
-    if not any(v is not None for v in (prompt, completion, total, cached, reasoning)):
-        return None
-    return UsageInfo(
+    return normalize_usage(
         provider="openai",
         model=model,
         input_tokens=prompt if isinstance(prompt, int) else None,
@@ -129,6 +94,8 @@ def _usage_from_openai(
         total_tokens=total if isinstance(total, int) else None,
         cached_input_tokens=cached if isinstance(cached, int) else None,
         reasoning_tokens=reasoning if isinstance(reasoning, int) else None,
+        confidence=UsageConfidence.PROVIDER_REPORTED,
+        provider_reported=True,
     )
 
 
@@ -184,7 +151,7 @@ class OpenAIAdapter(ProviderProtocolAdapter):
         return request.path.startswith(ROUTE_PREFIX)
 
     def extract_governance_action(self, request: ProxyRequest) -> GatewayAction:
-        body = _load_json(request.body)
+        body = load_json(request.body)
         operation = _operation_for_path(request.path)
         model = _model_from_request(request.path, body)
         response_format = body.get("response_format")
@@ -195,17 +162,23 @@ class OpenAIAdapter(ProviderProtocolAdapter):
             provider=self.provider_name,
             operation=operation,
             model=model,
-            declared_tools=_declared_tools(body),
+            declared_tools=declared_tool_names(body),
             parameters={
                 "stream": stream,
-                "max_output_tokens": _max_output_tokens(body),
+                "max_output_tokens": max_output_tokens(body),
             },
             input_metadata={
+                "resource_mapping": {
+                    "provider": self.provider_name,
+                    "model": model,
+                    "operation": operation,
+                    "endpoint": strip_route_prefix(request.path, ROUTE_PREFIX),
+                },
                 "response_format": response_format,
                 "request_metadata_keys": sorted(metadata.keys())
                 if isinstance(metadata, dict)
                 else [],
-                "tool_count": len(_declared_tools(body)),
+                "tool_count": len(declared_tool_names(body)),
                 "stream": stream,
             },
         )
@@ -213,14 +186,14 @@ class OpenAIAdapter(ProviderProtocolAdapter):
     def upstream_url(
         self, request: ProxyRequest, credential: ProviderCredential
     ) -> str:
-        suffix = _strip_gateway_prefix(request.path)
+        suffix = strip_route_prefix(request.path, ROUTE_PREFIX)
         base = credential.base_url.rstrip("/")
         if suffix == "/":
             return base
         return f"{base}{suffix}"
 
     def is_streaming(self, request: ProxyRequest) -> bool:
-        body = _load_json(request.body)
+        body = load_json(request.body)
         return bool(body.get("stream"))
 
     def new_stream_usage_collector(self) -> StreamUsageCollector:
@@ -236,7 +209,6 @@ class OpenAIAdapter(ProviderProtocolAdapter):
         usage = response_body.get("usage")
         if isinstance(usage, dict):
             return _usage_from_openai(usage, model=model_s)
-        # Responses API may nest usage under response.usage
         nested = response_body.get("response")
         if isinstance(nested, dict):
             nested_usage = nested.get("usage")

@@ -24,6 +24,7 @@ def build_execution_metadata(
     outcome: str,
     usage: UsageInfo | None,
     error: str | None = None,
+    stream_lifecycle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     meta: dict[str, Any] = {
         "provider": provider,
@@ -38,6 +39,8 @@ def build_execution_metadata(
     }
     if error:
         meta["error"] = error
+    if stream_lifecycle:
+        meta["stream_lifecycle"] = stream_lifecycle
     if usage is not None and not usage.empty:
         merged = UsageInfo(
             provider=usage.provider or provider,
@@ -47,6 +50,13 @@ def build_execution_metadata(
             total_tokens=usage.total_tokens,
             cached_input_tokens=usage.cached_input_tokens,
             reasoning_tokens=usage.reasoning_tokens,
+            confidence=usage.confidence,
+            provider_reported=usage.provider_reported,
         )
         meta["usage"] = merged.to_dict()
+    elif streamed:
+        meta["usage"] = {
+            "confidence": "unknown",
+            "provider_reported": False,
+        }
     return meta

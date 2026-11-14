@@ -70,4 +70,31 @@ class SettingsCredentialResolver(ProviderCredentialResolver):
                     "anthropic-version": "2023-06-01",
                 },
             )
+        if name in {"google", "gemini", "google_ai"} and settings.google_ai_api_key:
+            return ProviderCredential(
+                provider="google_ai",
+                base_url=settings.google_ai_base_url,
+                headers={"x-goog-api-key": settings.google_ai_api_key},
+            )
+        if name == "vertex" and settings.gcp_project_id:
+            base = (
+                f"https://{settings.gcp_location}-aiplatform.googleapis.com/v1"
+            )
+            return ProviderCredential(
+                provider="vertex",
+                base_url=base,
+                headers={},
+            )
+        if name == "bedrock":
+            region = settings.aws_region
+            base = settings.bedrock_runtime_url or (
+                f"https://bedrock-runtime.{region}.amazonaws.com"
+            )
+            return ProviderCredential(provider="bedrock", base_url=base, headers={})
+        if name == "ollama" and settings.provider_gateway_ollama_enabled:
+            return ProviderCredential(
+                provider="ollama",
+                base_url=settings.ollama_endpoint.rstrip("/"),
+                headers={},
+            )
         raise ProviderCredentialUnavailable(provider)

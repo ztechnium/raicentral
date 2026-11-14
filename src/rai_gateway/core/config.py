@@ -46,8 +46,13 @@ class Settings(BaseSettings):
     # Anthropic (Claude)
     anthropic_api_key: Optional[str] = None
 
+    # Google AI (Gemini API)
+    google_ai_api_key: Optional[str] = None
+    google_ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # AWS Bedrock
     aws_region: str = "us-east-1"  # boto3 credentials from environment/IAM
+    bedrock_runtime_url: Optional[str] = None
 
     # Google Vertex AI
     gcp_project_id: Optional[str] = None
@@ -55,6 +60,8 @@ class Settings(BaseSettings):
 
     # Ollama (local/on-prem)
     ollama_endpoint: str = "http://localhost:11434"
+    provider_gateway_ollama_enabled: bool = False
+    provider_gateway_ollama_allowlist: str = "localhost,127.0.0.1"
 
     # Data Classification Service
     data_classification_url: Optional[str] = None
