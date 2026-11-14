@@ -1972,6 +1972,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "argon2-cffi" },
+    { name = "click" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "openpyxl" },
@@ -2007,6 +2008,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.1" },
     { name = "argon2-cffi", specifier = ">=23.1.0" },
+    { name = "click", specifier = ">=8.1.0" },
     { name = "fastapi", specifier = ">=0.104.1" },
     { name = "httpx", specifier = ">=0.25.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.1" },

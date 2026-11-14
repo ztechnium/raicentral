@@ -14,9 +14,11 @@ from rai_gateway.provider_gateway.auth import SettingsCredentialResolver
 from rai_gateway.provider_gateway.credentials.isolated_resolver import (
     IsolatedProviderCredentialResolver,
 )
+from rai_gateway.provider_gateway.production.api import router as production_router
 from rai_gateway.provider_gateway.proxy import ProviderProxy
 
 router = APIRouter(tags=["provider-gateway"])
+router.include_router(production_router)
 
 _proxy: ProviderProxy | None = None
 

@@ -42,11 +42,13 @@ dependencies = [
     "httpx>=0.25.2",
     "structlog>=23.2.0",
     "openpyxl>=3.1.5",
+    "click>=8.1.0",
 ]
 
 [project.scripts]
 rai-hook = "rai_gateway.client_hooks.bridge:main"
 rai-worker = "rai_gateway.workers.cli:main"
+rai-gateway = "rai_gateway.cli.__main__:cli"
 
 [project.urls]
 Homepage = "https://github.com/ztechnium/vigirai-ai-governance"

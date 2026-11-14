@@ -49,20 +49,53 @@ def to_starlette(response: ProxyResponse) -> Response:
 async def handle_provider_request(
     request: Request, *, proxy: ProviderProxy, db: Session
 ) -> Response:
+    from rai_gateway.provider_gateway.production.lifecycle import gateway_lifecycle
+    from rai_gateway.provider_gateway.production.limits import gateway_limits
+
+    if not gateway_lifecycle.accept_new_requests():
+        from rai_gateway.provider_gateway import errors
+
+        return to_starlette(
+            error_response(
+                errors.ProviderGatewayError(
+                    503,
+                    "GATEWAY_DRAINING",
+                    "Gateway is draining connections",
+                )
+            )
+        )
+    gateway_lifecycle.begin_request()
     try:
-        body = await read_bounded_body(request)
-    except Exception as exc:  # ProviderGatewayError only; anything else bubbles
+        limit = gateway_limits.check_headers(dict(request.headers))
+        gateway_limits.raise_if_denied(limit)
+        secret = request.headers.get("x-rai-agent-key") or ""
+        if secret:
+            rate = gateway_limits.check_rate(secret[:16])
+            gateway_limits.raise_if_denied(rate)
+    except Exception as exc:
+        gateway_lifecycle.end_request()
         from rai_gateway.provider_gateway.errors import ProviderGatewayError
 
         if isinstance(exc, ProviderGatewayError):
             return to_starlette(error_response(exc))
         raise
-    proxy_request = ProxyRequest(
-        method=request.method,
-        path=request.url.path,
-        query=request.url.query,
-        headers=dict(request.headers),
-        body=body,
-        client_host=request.client.host if request.client else None,
-    )
-    return to_starlette(await proxy.handle(proxy_request, db=db))
+    try:
+        try:
+            body = await read_bounded_body(request)
+        except Exception as exc:  # ProviderGatewayError only; anything else bubbles
+            from rai_gateway.provider_gateway.errors import ProviderGatewayError
+
+            if isinstance(exc, ProviderGatewayError):
+                return to_starlette(error_response(exc))
+            raise
+        proxy_request = ProxyRequest(
+            method=request.method,
+            path=request.url.path,
+            query=request.url.query,
+            headers=dict(request.headers),
+            body=body,
+            client_host=request.client.host if request.client else None,
+        )
+        return to_starlette(await proxy.handle(proxy_request, db=db))
+    finally:
+        gateway_lifecycle.end_request()

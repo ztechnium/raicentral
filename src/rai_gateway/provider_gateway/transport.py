@@ -37,6 +37,9 @@ class UpstreamTransport:
         max_response_bytes: int | None = None,
         backoff_seconds: float = _BACKOFF_SECONDS,
     ) -> None:
+        verify: bool | str = settings.provider_gateway_verify_tls
+        if settings.provider_gateway_ca_bundle_path:
+            verify = settings.provider_gateway_ca_bundle_path
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=settings.provider_gateway_connect_timeout_seconds,
@@ -46,6 +49,7 @@ class UpstreamTransport:
             ),
             limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
             follow_redirects=False,
+            verify=verify,
         )
         self._max_retries = (
             settings.provider_gateway_max_retries

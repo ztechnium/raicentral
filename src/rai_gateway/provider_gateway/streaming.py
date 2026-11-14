@@ -57,7 +57,15 @@ async def relay_stream(
     on_done: StreamDone,
     *,
     lifecycle: StreamLifecycle | None = None,
+    max_duration_seconds: float | None = None,
 ) -> AsyncIterator[bytes]:
+    from rai_gateway.core.config import settings
+
+    cap = (
+        max_duration_seconds
+        if max_duration_seconds is not None
+        else settings.provider_gateway_max_stream_duration_seconds
+    )
     started = time.monotonic()
     streamed = 0
     outcome = "completed"
@@ -66,6 +74,11 @@ async def relay_stream(
     first_token_at: float | None = None
     try:
         async for chunk in response.aiter_bytes():
+            if cap > 0 and (time.monotonic() - started) > cap:
+                outcome = "cancelled"
+                tracker.client_disconnect = True
+                tracker.record(StreamLifecyclePhase.STREAM_ABORTED)
+                break
             if chunk:
                 if first_token_at is None:
                     first_token_at = time.monotonic()

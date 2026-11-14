@@ -134,9 +134,22 @@ class Settings(BaseSettings):
 
     # Provider proxy (infrastructure gateway) transport limits.
     provider_gateway_max_body_bytes: int = 10 * 1024 * 1024
+    provider_gateway_max_header_bytes: int = 32 * 1024
     provider_gateway_max_response_bytes: int = 64 * 1024 * 1024
     provider_gateway_connect_timeout_seconds: float = 10.0
     provider_gateway_read_timeout_seconds: float = 120.0
+    provider_gateway_max_stream_duration_seconds: float = 600.0
+    provider_gateway_max_concurrent_streams: int = 500
+    provider_gateway_max_concurrent_per_runtime: int = 20
+    provider_gateway_max_concurrent_per_provider: int = 100
+    provider_gateway_rate_limit_per_runtime_per_minute: int = 120
+    provider_gateway_policy_cache_ttl_seconds: int = 60
+    provider_gateway_policy_cache_fast_invalidate_ttl_seconds: int = 5
+    provider_gateway_outbound_allowlist: str = ""
+    provider_gateway_verify_tls: bool = True
+    provider_gateway_ca_bundle_path: Optional[str] = None
+    provider_gateway_drain_seconds: int = 30
+    gateway_rollout_phase: str = "PROXY_OPTIONAL"
     provider_gateway_max_retries: int = 2
     # When true, upstream provider keys come from credential refs + grants only.
     provider_gateway_isolated_credentials: bool = False

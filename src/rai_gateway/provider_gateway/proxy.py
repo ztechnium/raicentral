@@ -36,7 +36,9 @@ from rai_gateway.provider_gateway.auth import (
     SettingsCredentialResolver,
     extract_runtime_secret,
 )
-from rai_gateway.provider_gateway.credentials.ownership import ProviderCredentialScopeDenied
+from rai_gateway.provider_gateway.credentials.ownership import (
+    ProviderCredentialScopeDenied,
+)
 from rai_gateway.provider_gateway.domain import (
     ProviderCredential,
     ProxyRequest,
@@ -156,12 +158,31 @@ class ProviderProxy:
 
         action = self._build_action(adapter, request, db)
 
+        policy_started = time.monotonic()
         gateway = RuntimeGateway(db, mode=self._mode)
         decision = await run_in_threadpool(
             gateway.authorize_for_execution, action, credential_secret=secret
         )
+        policy_ms = int((time.monotonic() - policy_started) * 1000)
         if not decision.allowed:
+            from rai_gateway.provider_gateway.production.metrics import gateway_metrics
+
+            gateway_metrics.record_request(
+                policy_decision_ms=policy_ms,
+                gateway_overhead_ms=policy_ms,
+                error=True,
+            )
             raise _with_receipt(errors.from_decision(decision), decision)
+
+        streaming = adapter.is_streaming(request)
+        if streaming:
+            from rai_gateway.provider_gateway.production.limits import gateway_limits
+
+            runtime_key = secret[:16] if secret else None
+            slot = gateway_limits.acquire_stream(
+                runtime_key=runtime_key, provider=adapter.provider_name
+            )
+            gateway_limits.raise_if_denied(slot)
 
         runtime_identity_id = None
         if decision.enforcement_result:
@@ -182,7 +203,20 @@ class ProviderProxy:
         except ProviderCredentialUnavailable as exc:
             raise errors.credential_unavailable(exc.provider, decision=decision) from exc
 
-        return await self._forward(adapter, request, credential, action, decision)
+        try:
+            return await self._forward(
+                adapter, request, credential, action, decision, policy_ms=policy_ms
+            )
+        finally:
+            if streaming:
+                from rai_gateway.provider_gateway.production.limits import (
+                    gateway_limits,
+                )
+
+                runtime_key = secret[:16] if secret else None
+                gateway_limits.release_stream(
+                    runtime_key=runtime_key, provider=adapter.provider_name
+                )
 
     def _build_action(
         self, adapter: ProviderProtocolAdapter, request: ProxyRequest, db: Session
@@ -216,8 +250,19 @@ class ProviderProxy:
         credential: ProviderCredential,
         action: GatewayAction,
         decision: GatewayDecision,
+        policy_ms: int = 0,
     ) -> ProxyResponse:
-        url = adapter.upstream_url(request, credential)
+        from rai_gateway.provider_gateway.production.finops import (
+            attach_finops_metadata,
+        )
+        from rai_gateway.provider_gateway.production.metrics import gateway_metrics
+        from rai_gateway.provider_gateway.production.upstream_guard import (
+            assert_safe_upstream_url,
+        )
+
+        url = assert_safe_upstream_url(
+            adapter.upstream_url(request, credential)
+        )
         headers = adapter.upstream_headers(request, credential)
         params = dict(credential.query_params) or None
         streaming = adapter.is_streaming(request)
@@ -235,7 +280,14 @@ class ProviderProxy:
             )
             if credential.credential_ref_id:
                 base["provider_credential_ref_id"] = str(credential.credential_ref_id)
-            return base
+            return attach_finops_metadata(
+                base,
+                model=action.model,
+                request_bytes=len(request.body),
+                streaming=streaming,
+                usage=kw.get("usage"),
+                succeeded=kw.get("outcome") == "completed",
+            )
 
         def elapsed() -> int:
             return int((time.monotonic() - started) * 1000)
@@ -247,16 +299,24 @@ class ProviderProxy:
                 )
                 usage = _usage_from_body(adapter, result.body)
                 ok = result.status_code < 400
+                provider_ms = elapsed()
                 await self._finalize(
                     decision,
                     succeeded=ok,
-                    duration_ms=elapsed(),
+                    duration_ms=provider_ms,
                     meta=meta(
                         upstream_status=result.status_code,
                         response_bytes=len(result.body),
                         outcome="completed" if ok else "upstream_error",
                         usage=usage if ok else None,
                     ),
+                )
+                gateway_metrics.record_request(
+                    policy_decision_ms=policy_ms,
+                    gateway_overhead_ms=max(0, policy_ms),
+                    provider_latency_ms=provider_ms,
+                    error=not ok,
+                    streamed=False,
                 )
                 return ProxyResponse(
                     status_code=result.status_code,
