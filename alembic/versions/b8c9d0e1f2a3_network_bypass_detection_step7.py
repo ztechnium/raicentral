@@ -1,7 +1,7 @@
 """network_bypass_detection_step7
 
-Revision ID: a2b3c4d5e6f7
-Revises: z1a2b3c4d5e6
+Revision ID: b8c9d0e1f2a3
+Revises: p4q5r6s7t8u9
 Create Date: 2026-11-14 00:00:00.000000
 
 Step 7 — observed connection events and runtime attestation state.
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "a2b3c4d5e6f7"
-down_revision: Union[str, None] = "z1a2b3c4d5e6"
+revision: str = "b8c9d0e1f2a3"
+down_revision: Union[str, None] = "p4q5r6s7t8u9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
