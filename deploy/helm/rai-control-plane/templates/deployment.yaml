@@ -26,6 +26,10 @@ spec:
               value: {{ .Values.env.LOG_LEVEL | quote }}
             - name: FAIL_CLOSED_ON_RAI_UNAVAILABLE
               value: {{ .Values.env.FAIL_CLOSED_ON_RAI_UNAVAILABLE | quote }}
+            - name: GATEWAY_ENFORCEMENT_MODE
+              value: {{ .Values.env.GATEWAY_ENFORCEMENT_MODE | quote }}
+            - name: PROVIDER_GATEWAY_ISOLATED_CREDENTIALS
+              value: {{ .Values.env.PROVIDER_GATEWAY_ISOLATED_CREDENTIALS | quote }}
             - name: SDK_RATE_LIMIT_PER_MINUTE
               value: {{ .Values.rateLimits.sdkPerMinute | quote }}
             - name: OBJECT_STORAGE_BACKEND

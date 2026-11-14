@@ -234,3 +234,34 @@ There is at least one tested reference deployment for:
 - Azure
 
 with direct provider bypass blocked by infrastructure configuration.
+
+---
+
+## Implementation (reference artifacts)
+
+Shipped in this repository under `deploy/network-enforcement/`:
+
+| Area | Location |
+|------|----------|
+| Provider destination catalog | `catalog/provider-destinations.yaml` |
+| Kubernetes namespaces, policies, PDB, HPA | `kubernetes/` |
+| Helm overlay | `kubernetes/values-network-enforcement.yaml` + `deploy/helm/rai-control-plane` |
+| GCP Terraform reference | `gcp/terraform/` |
+| Azure Terraform reference | `azure/terraform/` |
+| Linux / VM (systemd, Docker, nftables) | `linux/` |
+| Rollout modes & acceptance tests | `DEPLOYMENT_MODES.md`, `ACCEPTANCE_TESTS.md` |
+
+Runtime helpers: `rai_gateway.network_enforcement` (catalog classification and rollout mode). Automated parity tests: `tests/network_enforcement/`.
+
+---
+
+# Implementation (branch `feature/netwrok-geteway`)
+
+Reference artifacts ship under `deploy/network-enforcement/`:
+
+- **Kubernetes** — namespace, workload/gateway `NetworkPolicy`, PDB, HPA, Helm overlay (`kubernetes/values-network-enforcement.yaml`); optional chart templates for PDB/HPA/gateway egress in `deploy/helm/rai-control-plane/`.
+- **GCP / Azure** — Terraform examples under `gcp/terraform/` and `azure/terraform/`.
+- **Linux/VM** — systemd unit, Docker Compose, nftables skeleton under `linux/`.
+- **DNS catalog** — `catalog/provider-destinations.yaml` plus `rai_gateway.network_enforcement.classify_hostname` (validated in `tests/network_enforcement/`).
+- **Rollout modes** — documented in `deploy/network-enforcement/DEPLOYMENT_MODES.md`; gateway env `GATEWAY_ENFORCEMENT_MODE`.
+- **Acceptance tests** — checklist in `deploy/network-enforcement/ACCEPTANCE_TESTS.md`.

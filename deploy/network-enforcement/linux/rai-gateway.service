@@ -1,0 +1,21 @@
+[Unit]
+Description=RaiCentral enforcement gateway (network reference)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+Environment=GATEWAY_ENFORCEMENT_MODE=ENFORCE
+Environment=FAIL_CLOSED_ON_RAI_UNAVAILABLE=true
+Environment=PROVIDER_GATEWAY_ISOLATED_CREDENTIALS=true
+Environment=DATABASE_URL=postgresql://127.0.0.1:5432/rai_gateway
+ExecStart=/usr/bin/docker run --rm --name rai-gateway \
+  -p 127.0.0.1:8000:8000 \
+  --env-file /etc/rai/gateway.env \
+  rai-gateway:latest
+ExecStop=/usr/bin/docker stop rai-gateway
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rai-gateway
+  labels:
+    rai.ztechnium.com/role: enforcement-gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rai-workloads
+  labels:
+    rai.ztechnium.com/network-enforcement: enforce

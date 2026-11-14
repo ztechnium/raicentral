@@ -27,6 +27,14 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
 
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkEnforcement:
+  enabled: false
+  workloadEgressDenyInternet: true
+
 postgresql:
   # External managed Postgres recommended for production
   existingSecret: rai-db
@@ -46,6 +54,8 @@ rateLimits:
 env:
   LOG_LEVEL: INFO
   FAIL_CLOSED_ON_RAI_UNAVAILABLE: "true"
+  GATEWAY_ENFORCEMENT_MODE: ENFORCE
+  PROVIDER_GATEWAY_ISOLATED_CREDENTIALS: "false"
 
 ingress:
   enabled: false
