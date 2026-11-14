@@ -225,6 +225,7 @@ class ProviderProxy:
                 credential,
                 action,
                 decision,
+                db,
                 policy_ms=policy_ms,
                 runtime_key=runtime_key,
                 streaming=streaming,
@@ -274,6 +275,7 @@ class ProviderProxy:
         credential: ProviderCredential,
         action: GatewayAction,
         decision: GatewayDecision,
+        db: Session,
         policy_ms: int = 0,
         *,
         runtime_key: str | None = None,
@@ -281,15 +283,16 @@ class ProviderProxy:
     ) -> ProxyResponse:
         from rai_gateway.provider_gateway.production.finops import (
             attach_finops_metadata,
+            estimate_for_gateway_execution,
         )
         from rai_gateway.provider_gateway.production.metrics import gateway_metrics
         from rai_gateway.provider_gateway.production.upstream_guard import (
-            assert_safe_upstream_url,
+            validate_upstream_url,
         )
 
-        url = assert_safe_upstream_url(
-            adapter.upstream_url(request, credential)
-        )
+        validated = validate_upstream_url(adapter.upstream_url(request, credential))
+        url = validated.url
+        pinned_addresses = validated.pinned_addresses
         headers = adapter.upstream_headers(request, credential)
         params = dict(credential.query_params) or None
         if not streaming:
@@ -298,6 +301,13 @@ class ProviderProxy:
             (runtime_key, adapter.provider_name) if streaming else None
         )
         started = time.monotonic()
+        pre_estimate = estimate_for_gateway_execution(
+            db,
+            provider=adapter.provider_name,
+            model=action.model,
+            request_bytes=len(request.body),
+            streaming=streaming,
+        )
 
         def meta(**kw: Any) -> dict[str, Any]:
             base = build_execution_metadata(
@@ -318,6 +328,8 @@ class ProviderProxy:
                 streaming=streaming,
                 usage=kw.get("usage"),
                 succeeded=kw.get("outcome") == "completed",
+                pre_estimate=pre_estimate,
+                decision=decision,
             )
 
         def elapsed() -> int:
@@ -326,7 +338,12 @@ class ProviderProxy:
         try:
             if not streaming:
                 result = await self._transport.send(
-                    request.method, url, headers, request.body, params
+                    request.method,
+                    url,
+                    headers,
+                    request.body,
+                    params,
+                    pinned_addresses=pinned_addresses,
                 )
                 usage = _usage_from_body(adapter, result.body)
                 ok = result.status_code < 400
@@ -357,7 +374,12 @@ class ProviderProxy:
                 )
 
             upstream = await self._transport.open_stream(
-                request.method, url, headers, request.body, params
+                request.method,
+                url,
+                headers,
+                request.body,
+                params,
+                pinned_addresses=pinned_addresses,
             )
         except errors.ProviderGatewayError as exc:
             await self._finalize(

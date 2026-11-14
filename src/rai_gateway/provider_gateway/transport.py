@@ -16,6 +16,9 @@ import httpx
 
 from rai_gateway.core.config import settings
 from rai_gateway.provider_gateway import errors
+from rai_gateway.provider_gateway.production.upstream_guard import (
+    assert_resolved_addresses_match_pins,
+)
 
 _RETRY_STATUS = frozenset({429, 503})
 _BACKOFF_SECONDS = 0.2
@@ -71,9 +74,17 @@ class UpstreamTransport:
         headers: Mapping[str, str],
         content: bytes,
         params: Mapping[str, str] | None,
+        *,
+        pinned_addresses: tuple[str, ...] | None = None,
     ) -> httpx.Response:
         """Open a streamed response, retrying only before any bytes are consumed."""
         attempt = 0
+        if pinned_addresses:
+            from urllib.parse import urlparse
+
+            host = urlparse(url).hostname
+            if host:
+                assert_resolved_addresses_match_pins(host, pinned_addresses)
         while True:
             request = self._client.build_request(
                 method, url, headers=dict(headers), content=content, params=params
@@ -108,9 +119,18 @@ class UpstreamTransport:
         headers: Mapping[str, str],
         content: bytes,
         params: Mapping[str, str] | None = None,
+        *,
+        pinned_addresses: tuple[str, ...] | None = None,
     ) -> UpstreamResult:
         """Buffered request/response with a bounded response size."""
-        response = await self._open(method, url, headers, content, params)
+        response = await self._open(
+            method,
+            url,
+            headers,
+            content,
+            params,
+            pinned_addresses=pinned_addresses,
+        )
         try:
             chunks: list[bytes] = []
             size = 0
@@ -140,6 +160,15 @@ class UpstreamTransport:
         headers: Mapping[str, str],
         content: bytes,
         params: Mapping[str, str] | None = None,
+        *,
+        pinned_addresses: tuple[str, ...] | None = None,
     ) -> httpx.Response:
         """Open a streaming response. Caller owns closing it."""
-        return await self._open(method, url, headers, content, params)
+        return await self._open(
+            method,
+            url,
+            headers,
+            content,
+            params,
+            pinned_addresses=pinned_addresses,
+        )

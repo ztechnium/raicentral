@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     provider_gateway_policy_cache_ttl_seconds: int = 60
     provider_gateway_policy_cache_fast_invalidate_ttl_seconds: int = 5
     provider_gateway_outbound_allowlist: str = ""
+    # Private link / PSC host suffixes allowed when not in the public catalog.
+    provider_gateway_private_endpoint_suffixes: str = (
+        ".privatelink.azure.com,.p.googleapis.com,.private.googleapis.com"
+    )
     provider_gateway_verify_tls: bool = True
     provider_gateway_ca_bundle_path: Optional[str] = None
     provider_gateway_drain_seconds: int = 30
