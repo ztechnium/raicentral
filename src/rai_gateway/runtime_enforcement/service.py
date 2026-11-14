@@ -431,6 +431,8 @@ class RuntimeEnforcementService:
         if succeeded:
             self._settle_finops_from_report(receipt, meta)
             self._db.commit()
+        else:
+            self._release_finops_on_failed_gateway_execution(receipt, meta)
         self._project_evidence(receipt.id)
         log_admin_audit(
             trace_id=receipt.trace_id or receipt.correlation_id or generate_trace_id(),
@@ -483,6 +485,25 @@ class RuntimeEnforcementService:
                 request,
                 authority=None,
                 reason_code=self._map_authority_reason(exc.reason),
+                human_explanation=str(exc),
+                correlation_id=correlation_id,
+                trace_id=trace_id,
+                policy_decision=None,
+                action_digest=None,
+            )
+
+        try:
+            from rai_gateway.provider_gateway.production.gateway_revocation import (
+                PolicyCacheRevocationError,
+                assert_not_revoked_for_authority,
+            )
+
+            assert_not_revoked_for_authority(authority)
+        except PolicyCacheRevocationError as exc:
+            return self._deny(
+                request,
+                authority=authority,
+                reason_code=RuntimeEnforcementReasonCode.RUNTIME_IDENTITY_INELIGIBLE.value,
                 human_explanation=str(exc),
                 correlation_id=correlation_id,
                 trace_id=trace_id,
@@ -672,6 +693,12 @@ class RuntimeEnforcementService:
                 "budget_monitor": True,
                 "budget_checks": budget_overlay.get("checks")
                 or policy_dict.get("budget_checks"),
+            }
+        if budget_overlay.get("finops_reservation_id"):
+            policy_dict = {
+                **policy_dict,
+                "finops_reservation_id": budget_overlay["finops_reservation_id"],
+                "finops_estimate": budget_overlay.get("finops_estimate"),
             }
 
         try:
@@ -1900,6 +1927,32 @@ class RuntimeEnforcementService:
             for receipt in rows:
                 self._project_evidence(receipt.id)
         return len(rows)
+
+    def _release_finops_on_failed_gateway_execution(
+        self, receipt: Any, safe_meta: dict[str, Any]
+    ) -> None:
+        reservation_id = None
+        finops = safe_meta.get("finops")
+        if isinstance(finops, dict):
+            reservation_id = finops.get("reservation_id")
+        if not reservation_id and isinstance(receipt.execution_report, dict):
+            nested = receipt.execution_report.get("finops")
+            if isinstance(nested, dict):
+                reservation_id = nested.get("reservation_id")
+        if not reservation_id:
+            return
+        try:
+            from uuid import UUID
+
+            from rai_gateway.finops.service import FinOpsService
+
+            FinOpsService(self._db).release(
+                UUID(str(reservation_id)),
+                reason=safe_meta.get("outcome") or "gateway_execution_failed",
+            )
+            self._db.commit()
+        except Exception:
+            pass
 
     def _attach_finops_reservation(
         self, request: RuntimeActionRequest, receipt_id: UUID
