@@ -86,6 +86,18 @@ class VertexAIAdapter(ProviderProtocolAdapter):
     ) -> str:
         suffix = strip_route_prefix(request.path, ROUTE_PREFIX)
         base = credential.base_url.rstrip("/")
+        match = _VERTEX_RE.search(suffix)
+        if match:
+            # Pin project/location to the governed values (the client cannot redirect
+            # spend to another project) and drop any client-side version prefix, since
+            # the credential base URL already ends in /v1.
+            project = settings.gcp_project_id or match.group("project")
+            location = settings.gcp_location or match.group("location")
+            suffix = (
+                f"/projects/{project}/locations/{location}/publishers/"
+                f"{match.group('publisher')}/models/{match.group('model')}"
+                f"{suffix[match.end():]}"
+            )
         return f"{base}{suffix}"
 
     def is_streaming(self, request: ProxyRequest) -> bool:

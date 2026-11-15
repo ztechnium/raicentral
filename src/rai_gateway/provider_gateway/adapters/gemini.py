@@ -102,6 +102,13 @@ class GeminiAdapter(ProviderProtocolAdapter):
     ) -> str:
         suffix = strip_route_prefix(request.path, ROUTE_PREFIX)
         base = credential.base_url.rstrip("/")
+        # The client path already carries the API version (/v1beta/...). Avoid
+        # doubling it when the configured base URL also ends with that version.
+        version = base.rsplit("/", 1)[-1]
+        if re.fullmatch(r"v\d+(?:beta\d*|alpha\d*)?", version) and suffix.startswith(
+            f"/{version}/"
+        ):
+            base = base[: -len(version) - 1]
         return f"{base}{suffix}"
 
     def is_streaming(self, request: ProxyRequest) -> bool:

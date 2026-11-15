@@ -17,6 +17,7 @@ import {
   updateModel,
   updateTool,
 } from "@/lib/api";
+import { GATEWAY_PROVIDERS } from "@/lib/registry-constants";
 import type { MCPServerSummary, ModelResourceSummary, ResourceCatalogItem } from "@/lib/types";
 
 type McpTool = NonNullable<MCPServerSummary["tools"]>[number];
@@ -112,11 +113,21 @@ function ModelEditor({
         <StatusBadge status={model.status} />
       </div>
       <FormField label="Provider" required>
-        <Input
+        <Select
           value={form.provider}
           disabled={saving}
           onChange={(e) => setForm({ ...form, provider: e.target.value })}
-        />
+        >
+          {form.provider &&
+            !GATEWAY_PROVIDERS.some((p) => p.value === form.provider) && (
+              <option value={form.provider}>{form.provider} (not a gateway provider)</option>
+            )}
+          {GATEWAY_PROVIDERS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </Select>
       </FormField>
       <FormField label="Model Name" required>
         <Input

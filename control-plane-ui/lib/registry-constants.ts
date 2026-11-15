@@ -19,3 +19,18 @@ export const RESOURCE_TYPES = [
   { value: "model", label: "Model" },
   { value: "external_service", label: "External Service" },
 ] as const;
+
+/**
+ * Provider identifiers understood by the provider gateway adapters.
+ * `value` must equal the adapter `provider_name` so gateway requests resolve to
+ * a registered model (see provider_gateway/proxy.py resolve_model_id).
+ */
+export const GATEWAY_PROVIDERS = [
+  { value: "openai", label: "OpenAI" },
+  { value: "azure_openai", label: "Azure OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "google_ai", label: "Google AI (Gemini)" },
+  { value: "vertex", label: "Google Vertex AI" },
+  { value: "bedrock", label: "AWS Bedrock" },
+  { value: "ollama", label: "Ollama" },
+] as const;

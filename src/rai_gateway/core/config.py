@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # Google Vertex AI
     gcp_project_id: Optional[str] = None
     gcp_location: str = "us-central1"
+    # Service-account credentials the gateway uses to call Vertex AI (server-side only).
+    # Either a path (standard GOOGLE_APPLICATION_CREDENTIALS) or raw JSON in one env var.
+    # When neither is set the gateway falls back to the GCE/GKE metadata server.
+    google_application_credentials: Optional[str] = None
+    gcp_service_account_json: Optional[str] = None
 
     # Ollama (local/on-prem)
     ollama_endpoint: str = "http://localhost:11434"

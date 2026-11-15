@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from rai_gateway.core.config import settings
 from rai_gateway.provider_gateway.domain import ProviderCredential
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,14 +101,27 @@ class SettingsCredentialResolver(ProviderCredentialResolver):
                 base_url=settings.google_ai_base_url,
                 headers={"x-goog-api-key": settings.google_ai_api_key},
             )
-        if name == "vertex" and settings.gcp_project_id:
-            base = (
-                f"https://{settings.gcp_location}-aiplatform.googleapis.com/v1"
+        if name in {"vertex", "vertex_ai"} and settings.gcp_project_id:
+            from rai_gateway.provider_gateway.credentials.gcp_token import (
+                GcpTokenError,
+                gcp_token_provider,
             )
+
+            location = settings.gcp_location
+            host = (
+                "aiplatform.googleapis.com"
+                if location == "global"
+                else f"{location}-aiplatform.googleapis.com"
+            )
+            try:
+                token = gcp_token_provider.get_token()
+            except GcpTokenError as exc:
+                logger.warning("Vertex credential unavailable: %s", exc)
+                raise ProviderCredentialUnavailable("vertex") from exc
             return ProviderCredential(
                 provider="vertex",
-                base_url=base,
-                headers={},
+                base_url=f"https://{host}/v1",
+                headers={"Authorization": f"Bearer {token}"},
             )
         if name == "bedrock":
             region = settings.aws_region

@@ -9,6 +9,7 @@ import { SideDrawer } from "@/components/ui/side-drawer";
 import { FormField } from "@/components/registry/form-field";
 import { createDataSource, createExternalService, createMCPServer, createModel } from "@/lib/api";
 import { slugifyKey } from "@/lib/slugify";
+import { GATEWAY_PROVIDERS } from "@/lib/registry-constants";
 
 type CreateType = "MODEL" | "MCP" | "DATA_SOURCE" | "SERVICE";
 
@@ -207,11 +208,18 @@ export function CatalogCreateDrawer({
         {createType === "MODEL" && (
           <div className="grid gap-3">
             <FormField label="Provider" required>
-              <Input
+              <Select
                 value={modelForm.provider}
                 disabled={saving}
                 onChange={(e) => setModelForm({ ...modelForm, provider: e.target.value })}
-              />
+              >
+                <option value="">Select a provider</option>
+                {GATEWAY_PROVIDERS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </Select>
             </FormField>
             <FormField label="Model name" required>
               <Input

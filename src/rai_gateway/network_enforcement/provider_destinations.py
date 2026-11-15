@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 PROVIDER_DESTINATION_CATALOG_VERSION = "1.0.0"
+
+# Vertex AI regional endpoints are `<region>-aiplatform.googleapis.com` (a hyphen,
+# not a dot, before `aiplatform`), so they cannot be expressed as a dot-suffix.
+_VERTEX_REGIONAL_HOST = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*-aiplatform\.googleapis\.com$")
 
 _CATALOG_PATH = (
     Path(__file__).resolve().parents[3]
@@ -85,6 +90,8 @@ def load_provider_destination_catalog() -> tuple[ProviderDestination, ...]:
 def classify_hostname(hostname: str) -> str | None:
     """Map a destination hostname to a provider id, or None if not a catalog match."""
     normalized = _normalize_hostname(hostname)
+    if _VERTEX_REGIONAL_HOST.match(normalized):
+        return "VERTEX"
     for entry in load_provider_destination_catalog():
         if normalized in entry.hostnames:
             return entry.provider

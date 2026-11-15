@@ -28,12 +28,19 @@ _CATALOG = Path(__file__).resolve().parents[2] / "deploy" / "network-enforcement
         ("api.anthropic.com", "ANTHROPIC"),
         ("generativelanguage.googleapis.com", "GOOGLE_AI"),
         ("aiplatform.googleapis.com", "VERTEX"),
+        ("us-central1-aiplatform.googleapis.com", "VERTEX"),
+        ("europe-west4-aiplatform.googleapis.com", "VERTEX"),
         ("myaccount.openai.azure.com", "AZURE_OPENAI"),
         ("bedrock-runtime.us-east-1.amazonaws.com", "BEDROCK"),
     ],
 )
 def test_classify_hostname_catalog(hostname: str, provider: str) -> None:
     assert classify_hostname(hostname) == provider
+
+
+def test_classify_hostname_rejects_lookalike_vertex_hosts() -> None:
+    assert classify_hostname("evil-aiplatform.googleapis.com.attacker.io") is None
+    assert classify_hostname("us-central1-aiplatform.googleapis.com.evil.io") is None
 
 
 def test_classify_hostname_unknown() -> None:
