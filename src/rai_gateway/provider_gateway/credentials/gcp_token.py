@@ -36,6 +36,7 @@ class GcpAccessTokenProvider:
         self._lock = threading.Lock()
         self._token: str | None = None
         self._expires_at: float = 0.0
+        self._by_account: dict[str, tuple[str, float]] = {}
 
     def get_token(self) -> str:
         with self._lock:
@@ -48,6 +49,17 @@ class GcpAccessTokenProvider:
                 token, ttl = self._from_metadata_server()
             self._token = token
             self._expires_at = time.time() + ttl
+            return token
+
+    def get_token_for_info(self, info: dict[str, Any]) -> str:
+        """Token for an explicit service-account key (cached per client_email)."""
+        email = str(info.get("client_email") or "")
+        with self._lock:
+            cached = self._by_account.get(email)
+            if cached and time.time() < cached[1] - _REFRESH_SKEW_SECONDS:
+                return cached[0]
+            token, ttl = self._exchange_service_account(info)
+            self._by_account[email] = (token, time.time() + ttl)
             return token
 
     def reset(self) -> None:

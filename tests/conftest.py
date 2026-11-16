@@ -251,3 +251,15 @@ def mock_llm_provider(monkeypatch):
     )
 
     return _MockProvider()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_content_evaluator_env(monkeypatch):
+    """A developer's .env must not change which content evaluator tests see.
+
+    Tests that need an env-configured evaluator set these explicitly.
+    """
+    monkeypatch.setattr(settings, "content_evaluator_provider", None)
+    monkeypatch.setattr(settings, "content_evaluator_api_key", None)
+    monkeypatch.setattr(settings, "content_evaluator_base_url", None)
+    monkeypatch.setattr(settings, "content_evaluator_service_account_json", None)

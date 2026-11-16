@@ -137,6 +137,10 @@ class GatewayAction:
         )
         if tokens:
             params.setdefault("token_usage", tokens)
+        if self.estimated_input_tokens:
+            params.setdefault("estimated_input_tokens", self.estimated_input_tokens)
+        if self.estimated_output_tokens:
+            params.setdefault("estimated_output_tokens", self.estimated_output_tokens)
         if self.provider:
             params.setdefault("provider", self.provider)
         if self.model:

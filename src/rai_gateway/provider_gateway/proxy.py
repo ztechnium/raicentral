@@ -248,10 +248,45 @@ class ProviderProxy:
                     runtime_key=runtime_key, provider=adapter.provider_name
                 )
 
+    @staticmethod
+    def _estimate_tokens(
+        adapter: ProviderProtocolAdapter,
+        request: ProxyRequest,
+        action: GatewayAction,
+    ) -> None:
+        """Pre-call token estimate so TOKEN/COST budgets can be checked before the call.
+
+        Input: ~4 characters per token of the prompt (request bytes when the adapter
+        cannot read the prompt). Output is unknown before the call and is not reserved,
+        unless PROVIDER_GATEWAY_RESERVE_MAX_OUTPUT_TOKENS is on (then the caller's
+        max-output-tokens cap is reserved). The reservation is reconciled to the
+        provider-reported usage afterwards, so the next call sees the real total.
+        """
+        from rai_gateway.provider_gateway.adapters.common import (
+            load_json,
+            max_output_tokens,
+        )
+
+        if action.estimated_input_tokens is None:
+            try:
+                prompt = adapter.extract_prompt_text(request) or ""
+            except Exception:
+                prompt = ""
+            basis = len(prompt) if prompt else len(request.body)
+            action.estimated_input_tokens = max(1, (basis + 3) // 4)
+        if (
+            action.estimated_output_tokens is None
+            and settings.provider_gateway_reserve_max_output_tokens
+        ):
+            cap = max_output_tokens(load_json(request.body))
+            if cap:
+                action.estimated_output_tokens = cap
+
     def _build_action(
         self, adapter: ProviderProtocolAdapter, request: ProxyRequest, db: Session
     ) -> GatewayAction:
         action = adapter.extract_governance_action(request)
+        self._estimate_tokens(adapter, request, action)
         digest = request.body_sha256()
         action.integration_type = MODEL_PROVIDER_INTEGRATION
         action.provider = action.provider or adapter.provider_name

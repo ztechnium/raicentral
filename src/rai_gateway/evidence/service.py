@@ -1504,7 +1504,11 @@ class TrajectoryService:
                 ),
             )
 
-        if receipt.enforcement_decision == EnforcementDecisionType.DENY.value:
+        if (
+            receipt.enforcement_decision == EnforcementDecisionType.DENY.value
+            and not str(receipt.reason_code or "").startswith("BUDGET_")
+        ):
+            # (budget denials control cost/tokens; they are not policy findings)
             reason = receipt.reason_code or ""
             if reason.startswith("AUTHORITY") or "AUTHORITY" in reason:
                 finding_type = EvidenceFindingType.AUTHORITY_DENIAL.value

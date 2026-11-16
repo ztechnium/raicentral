@@ -30,6 +30,9 @@ class ProviderConfig:
     max_rules_per_call: int = 20
     api_key: str | None = None
     base_url: str | None = None
+    location: str | None = None
+    gcp_project_id: str | None = None
+    service_account_json: str | None = None
 
 
 @dataclass
@@ -347,19 +350,27 @@ class VertexContentEvaluator:
             gcp_token_provider,
         )
 
-        if not settings.gcp_project_id:
+        project = config.gcp_project_id or settings.gcp_project_id
+        if not project:
             raise ContentEvaluatorError(
                 EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
-                "vertex evaluator needs GCP_PROJECT_ID",
+                "vertex evaluator needs a GCP project (evaluator setting or GCP_PROJECT_ID)",
             )
         try:
-            token = gcp_token_provider.get_token()
+            if config.service_account_json:
+                try:
+                    info = json.loads(config.service_account_json)
+                except ValueError as exc:
+                    raise GcpTokenError("Evaluator service account JSON is invalid") from exc
+                token = gcp_token_provider.get_token_for_info(info)
+            else:
+                token = gcp_token_provider.get_token()
         except GcpTokenError as exc:
             raise ContentEvaluatorError(
                 EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
                 f"Vertex credential unavailable: {exc}",
             ) from exc
-        location = settings.gcp_location
+        location = config.location or settings.content_evaluator_location or "global"
         host = (
             "aiplatform.googleapis.com"
             if location == "global"
@@ -367,7 +378,7 @@ class VertexContentEvaluator:
         )
         model = config.model or "gemini-2.5-flash"
         url = (
-            f"https://{host}/v1/projects/{settings.gcp_project_id}/locations/{location}"
+            f"https://{host}/v1/projects/{project}/locations/{location}"
             f"/publishers/google/models/{model}:generateContent"
         )
         expected = {str(r["id"]) for r in request.applicable_rules}
@@ -568,6 +579,7 @@ _PROVIDERS: dict[str, ContentEvaluatorProvider] = {
     "openai": OpenAIContentEvaluator(),
     "deepseek": DeepSeekContentEvaluator(),
     "gemini": GeminiContentEvaluator(),
+    "google_ai": GeminiContentEvaluator(),
     "openai_compatible": OpenAICompatibleContentEvaluator(),
     "vertex": VertexContentEvaluator(),
 }

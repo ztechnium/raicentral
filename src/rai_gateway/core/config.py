@@ -90,6 +90,12 @@ class Settings(BaseSettings):
     content_evaluator_model: Optional[str] = None
     content_evaluator_api_key: Optional[str] = None
     content_evaluator_base_url: Optional[str] = None
+    # Vertex region for the evaluator model (Gemini 3.x models are global-only).
+    content_evaluator_location: str = "global"
+    # Optional dedicated Google project / service-account key for the evaluator
+    # (defaults to GCP_PROJECT_ID and the gateway's own service account).
+    content_evaluator_gcp_project_id: Optional[str] = None
+    content_evaluator_service_account_json: Optional[str] = None
     content_evaluator_timeout_seconds: int = 30
     content_evaluator_temperature: float = 0.0
     content_evaluator_fail_closed: bool = False
@@ -155,6 +161,10 @@ class Settings(BaseSettings):
 
     # Provider proxy (infrastructure gateway) transport limits.
     provider_gateway_max_body_bytes: int = 10 * 1024 * 1024
+    # Pre-call token budgets: also reserve the caller's max-output-tokens cap. Off by
+    # default (output is reconciled to real usage after the call); on is stricter and
+    # can deny small budgets before any usage is recorded.
+    provider_gateway_reserve_max_output_tokens: bool = False
     provider_gateway_max_header_bytes: int = 32 * 1024
     provider_gateway_max_response_bytes: int = 64 * 1024 * 1024
     provider_gateway_connect_timeout_seconds: float = 10.0

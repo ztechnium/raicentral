@@ -174,6 +174,14 @@ class ContentEvaluationService:
             or settings.content_evaluator_api_key,
             base_url=getattr(config_row, "base_url", None)
             or settings.content_evaluator_base_url,
+            location=getattr(config_row, "location", None)
+            or settings.content_evaluator_location,
+            gcp_project_id=getattr(config_row, "gcp_project_id", None)
+            or settings.content_evaluator_gcp_project_id,
+            service_account_json=getattr(
+                config_row, "service_account_json_encrypted", None
+            )
+            or settings.content_evaluator_service_account_json,
         )
         request = EvaluatorRequest(
             content=content,
@@ -213,6 +221,7 @@ class ContentEvaluationService:
                 "id": str(row.id) if row else None,
                 "status": ContentEvaluationStatus.FAILED.value,
                 "failure_type": exc.failure_type,
+                "error": exc.message[:500],
                 "evaluations": [],
                 "intervention_hints": [],
                 "provider": config_row.provider,

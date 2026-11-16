@@ -53,6 +53,10 @@ class ContentEvaluatorConfig(Base):
     api_key_encrypted = Column(Text, nullable=True)
     # Optional endpoint override (openai_compatible / openai / deepseek).
     base_url = Column(String, nullable=True)
+    # Vertex AI evaluator settings. The service-account JSON is server-side only.
+    location = Column(String, nullable=True)
+    gcp_project_id = Column(String, nullable=True)
+    service_account_json_encrypted = Column(Text, nullable=True)
     health_status = Column(String, nullable=False, default="UNAVAILABLE")
     last_success_at = Column(DateTime(timezone=True), nullable=True)
     last_error_at = Column(DateTime(timezone=True), nullable=True)

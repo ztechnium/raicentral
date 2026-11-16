@@ -155,7 +155,21 @@ class RuntimeEnforcementService:
                         amount = None
                     break
             decision = receipt.enforcement_decision or "ALLOW"
+            if decision == "DENY" and str(receipt.reason_code or "").startswith("BUDGET_"):
+                # Budgets control cost and tokens. A budget denial is not a security or
+                # policy event, so it raises no risk signals, anomalies or findings.
+                return
+            monitor_reason = None
+            budget_monitor = False
+            if getattr(receipt, "monitor", False) and decision == "ALLOW":
+                # Allowed but flagged for monitoring (tool/policy/budget MONITOR effect):
+                # the risk engine must activate a monitor so it shows in /risk/monitoring.
+                decision = "MONITOR"
+                monitor_reason = self._monitor_reason(receipt)
+                budget_monitor = monitor_reason is not None
             RiskIntelligenceService(self._db).process_enforcement_safe(
+                monitor_reason=monitor_reason,
+                budget_monitor=budget_monitor,
                 ai_system_id=receipt.ai_system_id,
                 agent_id=receipt.agent_id,
                 agent_version_id=receipt.agent_version_id,
@@ -170,6 +184,20 @@ class RuntimeEnforcementService:
         except Exception:
             # Never fail the enforcement path
             pass
+
+    @staticmethod
+    def _monitor_reason(receipt: Any) -> str | None:
+        """Human reason for a budget-triggered MONITOR, from the receipt's budget checks."""
+        policy = receipt.policy_decision if isinstance(receipt.policy_decision, dict) else {}
+        for check in policy.get("budget_checks") or []:
+            if not isinstance(check, dict) or check.get("status") != "EXCEEDED":
+                continue
+            return (
+                f"Budget MONITOR: {check.get('budget_name') or 'budget'} exceeded "
+                f"({check.get('projected_usage')}/{check.get('limit_value')} "
+                f"{check.get('metric')})"
+            )
+        return None
 
     def _risk_authorization_overlay(
         self, authority: Any, request: RuntimeActionRequest
@@ -287,6 +315,7 @@ class RuntimeEnforcementService:
                 tool_id=request.tool_id,
                 provider=estimate.get("provider"),
                 model=estimate.get("model"),
+                model_resource_id=getattr(request, "model_id", None),
                 parameters=params,
                 amount=amount,
                 token_usage=token_usage,

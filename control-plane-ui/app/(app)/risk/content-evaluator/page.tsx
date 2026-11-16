@@ -20,7 +20,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { AISystemSummary, ContentEvaluatorConfig } from "@/lib/types";
 
-type ProviderId = "mock" | "openai" | "deepseek" | "gemini";
+type ProviderId =
+  | "mock"
+  | "openai"
+  | "openai_compatible"
+  | "deepseek"
+  | "gemini"
+  | "vertex";
 
 const PROVIDERS: Array<{
   id: ProviderId;
@@ -29,6 +35,8 @@ const PROVIDERS: Array<{
   defaultModel: string;
   modelHint: string;
   needsApiKey: boolean;
+  needsBaseUrl?: boolean;
+  isVertex?: boolean;
 }> = [
   {
     id: "mock",
@@ -55,12 +63,31 @@ const PROVIDERS: Array<{
     needsApiKey: true,
   },
   {
+    id: "openai_compatible",
+    label: "OpenAI-compatible",
+    description: "Any OpenAI-style endpoint: Ollama, vLLM, LiteLLM, Groq, OpenRouter, Azure.",
+    defaultModel: "llama3.1",
+    modelHint: "The model name your endpoint serves.",
+    needsApiKey: false,
+    needsBaseUrl: true,
+  },
+  {
     id: "gemini",
-    label: "Gemini",
-    description: "Google Gemini generateContent API.",
-    defaultModel: "gemini-1.5-flash",
-    modelHint: "gemini-1.5-flash, gemini-2.0-flash",
+    label: "Gemini (Google AI Studio)",
+    description: "Google AI Gemini API with an API key (generativelanguage.googleapis.com).",
+    defaultModel: "gemini-2.5-flash",
+    modelHint: "gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash",
     needsApiKey: true,
+  },
+  {
+    id: "vertex",
+    label: "Gemini on Vertex AI",
+    description:
+      "Vertex AI with a Google service account. Uses the gateway's own account unless you paste a key.",
+    defaultModel: "gemini-3.1-flash-lite",
+    modelHint: "gemini-3.1-flash-lite (global only), gemini-2.5-flash",
+    needsApiKey: false,
+    isVertex: true,
   },
 ];
 
@@ -132,6 +159,10 @@ export default function ContentEvaluatorPage() {
   const [provider, setProvider] = useState<ProviderId>("mock");
   const [model, setModel] = useState(providerMeta("mock").defaultModel);
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [location, setLocation] = useState("global");
+  const [gcpProject, setGcpProject] = useState("");
+  const [serviceAccountJson, setServiceAccountJson] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [failClosed, setFailClosed] = useState(false);
   const [mark, setMark] = useState("0.5");
@@ -167,6 +198,10 @@ export default function ContentEvaluatorPage() {
     setTimeoutSeconds(String(cfg.timeout_seconds ?? 30));
     setMaxRules(String(cfg.max_rules_per_call ?? 20));
     setFallback(cfg.fallback_provider ?? "");
+    setBaseUrl(cfg.base_url ?? "");
+    setLocation(cfg.location ?? "global");
+    setGcpProject(cfg.gcp_project_id ?? "");
+    setServiceAccountJson("");
     setConfidenceThreshold(cfg.confidence_threshold ?? cfg.minimum_confidence_to_mark ?? 0.5);
   }, []);
 
@@ -226,6 +261,7 @@ export default function ContentEvaluatorPage() {
     setProvider(meta.id);
     setModel(meta.defaultModel);
     setApiKey("");
+    setServiceAccountJson("");
     setMessage(null);
   }
 
@@ -237,6 +273,19 @@ export default function ContentEvaluatorPage() {
     if (selected.needsApiKey && !apiKey && !config?.has_api_key) {
       setError(`API key is required for ${selected.label}.`);
       return;
+    }
+    if (selected.needsBaseUrl && !baseUrl.trim()) {
+      setError(`Base URL is required for ${selected.label}.`);
+      return;
+    }
+    if (serviceAccountJson.trim()) {
+      try {
+        const parsed = JSON.parse(serviceAccountJson) as Record<string, unknown>;
+        if (!parsed.client_email || !parsed.private_key) throw new Error("missing keys");
+      } catch {
+        setError("Service account JSON must be a valid key file with client_email and private_key.");
+        return;
+      }
     }
     const markValue = readUnitInterval(mark);
     const monitorValue = readUnitInterval(monitor);
@@ -284,9 +333,14 @@ export default function ContentEvaluatorPage() {
         minimum_confidence_to_intervene: interveneValue,
         fail_closed: failClosed,
         fallback_provider: fallback || null,
+        base_url: baseUrl.trim() || null,
+        location: selected.isVertex ? location.trim() || null : null,
+        gcp_project_id: selected.isVertex ? gcpProject.trim() || null : null,
+        service_account_json: serviceAccountJson.trim() || null,
       });
       applyConfig(res.data);
       setApiKey("");
+      setServiceAccountJson("");
       setMessage(
         enabled ? "Evaluator saved and active for this AI system." : "Evaluator saved as inactive.",
       );
@@ -473,6 +527,13 @@ export default function ContentEvaluatorPage() {
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
                   {selected.label} connection
                 </p>
+                {config?.source === "ENVIRONMENT" ? (
+                  <p className="mt-2 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
+                    CONTENT_EVALUATOR_PROVIDER is set in the gateway environment, so those
+                    variables are used instead of anything saved here. Remove the variable to
+                    use this screen.
+                  </p>
+                ) : null}
                 <div className="mt-3 grid gap-4">
                   <FormField label="Model" required hint={selected.modelHint}>
                     <Input
@@ -503,9 +564,72 @@ export default function ContentEvaluatorPage() {
                         }
                       />
                     </FormField>
-                  ) : (
+                  ) : selected.id === "mock" ? (
                     <p className="text-sm text-ink-500">Mock does not call an external provider.</p>
-                  )}
+                  ) : null}
+                  {selected.needsBaseUrl || selected.id === "openai" || selected.id === "deepseek" ? (
+                    <FormField
+                      label="Base URL"
+                      required={Boolean(selected.needsBaseUrl)}
+                      hint="OpenAI-style endpoint, e.g. http://host.docker.internal:11434/v1. Leave blank for the provider default."
+                    >
+                      <Input
+                        aria-label="Base URL"
+                        value={baseUrl}
+                        onChange={(event) => setBaseUrl(event.target.value)}
+                        placeholder="https://api.example.com/v1"
+                      />
+                    </FormField>
+                  ) : null}
+                  {selected.isVertex ? (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <FormField
+                          label="Location"
+                          hint="Gemini 3.x models are served from global only."
+                        >
+                          <Input
+                            aria-label="Location"
+                            value={location}
+                            onChange={(event) => setLocation(event.target.value)}
+                            placeholder="global"
+                          />
+                        </FormField>
+                        <FormField
+                          label="Google project ID"
+                          hint="Blank uses the gateway's GCP_PROJECT_ID."
+                        >
+                          <Input
+                            aria-label="Google project ID"
+                            value={gcpProject}
+                            onChange={(event) => setGcpProject(event.target.value)}
+                            placeholder="my-gcp-project"
+                          />
+                        </FormField>
+                      </div>
+                      <FormField
+                        label="Service account JSON"
+                        hint={
+                          config?.has_service_account
+                            ? "A key is stored. Paste a new key to replace it, or leave blank to keep it. Write-only."
+                            : "Optional. Blank uses the gateway's own service account (GCP_SERVICE_ACCOUNT_JSON). Needs roles/aiplatform.user. Write-only."
+                        }
+                      >
+                        <Textarea
+                          aria-label="Service account JSON"
+                          rows={4}
+                          value={serviceAccountJson}
+                          autoComplete="off"
+                          onChange={(event) => setServiceAccountJson(event.target.value)}
+                          placeholder={
+                            config?.has_service_account
+                              ? "•••••• stored ••••••"
+                              : '{ "type": "service_account", "client_email": "...", "private_key": "..." }'
+                          }
+                        />
+                      </FormField>
+                    </>
+                  ) : null}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <FormField label="Runtime" hint="Inactive evaluators are skipped.">
                       <Select

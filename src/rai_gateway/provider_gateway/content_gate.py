@@ -116,6 +116,7 @@ def evaluate_content_gate(
                 return result  # no evaluator for this system: nothing to enforce
             result.evaluated = True
             result.unavailable = bool(evaluation.get("fail_closed"))
+            result.evaluation = evaluation  # recorded so the failure is visible
             session.commit()
             return result
         result.evaluated = status in (
@@ -174,6 +175,26 @@ def record_evaluations(
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception("Recording content-rule risk signals failed")
+            rules = _rule_rows(session, evaluation)
+            violated = [r for r in rules if r["violated"]]
+            failed = evaluation.get("status") == "FAILED"
+            if failed:
+                verdict = "EVALUATOR_FAILED"
+                summary = (
+                    f"{content_type.title()} not evaluated: "
+                    f"{evaluation.get('error') or evaluation.get('failure_type')}"
+                )
+            elif blocked:
+                verdict = "BLOCKED"
+                names = ", ".join(r["title"] or r["rule_id"] for r in violated)
+                summary = f"{content_type.title()} blocked by Content Rule: {names}"
+            elif violated:
+                verdict = "VIOLATION_OBSERVED"
+                names = ", ".join(r["title"] or r["rule_id"] for r in violated)
+                summary = f"{content_type.title()} violated Content Rule (not blocked): {names}"
+            else:
+                verdict = "PASSED"
+                summary = f"{content_type.title()} passed {len(rules)} Content Rule(s)"
             evidence.append_event(
                 trajectory,
                 event_type=EvidenceEventType.CONTENT_EVALUATION_RESULT.value,
@@ -181,10 +202,18 @@ def record_evaluations(
                 source_reference=f"receipt:{receipt_id}:content:{content_type.lower()}",
                 payload={
                     "content_type": content_type,
+                    "decision": verdict,
+                    "summary": summary,
                     "blocked": blocked,
+                    "provider": evaluation.get("provider"),
+                    "model": evaluation.get("model"),
+                    "reasons": "; ".join(r["reason"] for r in violated if r["reason"]),
+                    "rules": rules,
                     "evaluation": {
                         "id": evaluation.get("id"),
                         "status": evaluation.get("status"),
+                        "failure_type": evaluation.get("failure_type"),
+                        "error": evaluation.get("error"),
                         "provider": evaluation.get("provider"),
                         "model": evaluation.get("model"),
                         "cached": evaluation.get("cached"),
@@ -197,10 +226,94 @@ def record_evaluations(
                 correlation_id=receipt.correlation_id,
                 content_handling_mode="METADATA_ONLY",
             )
+            if blocked:
+                _record_block(evidence, trajectory, receipt, content_type, summary, violated)
         session.commit()
     except Exception:  # noqa: BLE001
         session.rollback()
         logger.exception("Recording content evaluation evidence failed for %s", receipt_id)
+
+
+def _rule_rows(session: Session, evaluation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flat per-rule rows (title, effect, verdict, confidence) for the inspector."""
+    from rai_gateway.models.policy_engine import ContentRule
+
+    items = [e for e in (evaluation.get("evaluations") or []) if isinstance(e, dict)]
+    if not items:
+        return []
+    ids = []
+    for item in items:
+        try:
+            ids.append(UUID(str(item.get("rule_id"))))
+        except (TypeError, ValueError):
+            continue
+    meta: dict[str, Any] = {}
+    if ids:
+        for rule in session.query(ContentRule).filter(ContentRule.id.in_(ids)).all():
+            meta[str(rule.id)] = rule
+    rows = []
+    for item in items:
+        rule = meta.get(str(item.get("rule_id")))
+        rows.append(
+            {
+                "rule_id": str(item.get("rule_id")),
+                "title": getattr(rule, "title", None),
+                "effect": getattr(rule, "effect", None),
+                "violated": bool(item.get("violated")),
+                "confidence": item.get("confidence"),
+                "severity": item.get("severity"),
+                "reason": item.get("reason"),
+                "evidence_spans": item.get("evidence_spans") or [],
+            }
+        )
+    return rows
+
+
+def _record_block(
+    evidence: Any,
+    trajectory: Any,
+    receipt: Any,
+    content_type: str,
+    summary: str,
+    violated: list[dict[str, Any]],
+) -> None:
+    """A Content Rule block is a decision: show it as DENY and open a finding.
+
+    The receipt's own decision (tool/policy rules) is authoritative and immutable, so
+    the content decision is recorded as its own authoritative event.
+    """
+    from rai_gateway.evidence.domain import (
+        EvidenceEventType,
+        EvidenceFindingType,
+        EvidenceSourceType,
+        FindingSeverity,
+    )
+
+    evidence.append_event(
+        trajectory,
+        event_type=EvidenceEventType.ACTION_DENIED.value,
+        source_type=EvidenceSourceType.RAI_AUTHORITATIVE.value,
+        source_reference=f"receipt:{receipt.id}:content_decision:{content_type.lower()}",
+        payload={
+            "enforcement_decision": "DENY",
+            "reason_code": "CONTENT_POLICY_DENIED",
+            "human_explanation": summary,
+            "decided_by": "CONTENT_RULE",
+            "content_type": content_type,
+            "rule_ids": ", ".join(r["rule_id"] for r in violated),
+            "reasons": "; ".join(r["reason"] for r in violated if r["reason"]),
+        },
+        occurred_at=receipt.started_at,
+        correlation_id=receipt.correlation_id,
+        trace_id=receipt.trace_id,
+    )
+    evidence.ensure_finding(
+        trajectory,
+        finding_type=EvidenceFindingType.POLICY_DENIAL.value,
+        severity=FindingSeverity.HIGH.value,
+        title="Blocked by Content Rule",
+        description=summary,
+    )
 
 
 def observe_content(

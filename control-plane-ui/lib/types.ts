@@ -1611,6 +1611,12 @@ export interface RiskMonitor {
   threshold?: number | null;
   started_at?: string | null;
   expires_at?: string | null;
+  /** RULE = a Monitor Rule crossed its threshold; POLICY = a tool/policy/budget MONITOR effect. */
+  source?: "RULE" | "POLICY";
+  rule_name?: string | null;
+  aggregation?: string | null;
+  window_seconds?: number | null;
+  scope_label?: string | null;
 }
 
 export interface InterventionDecision {
@@ -1655,6 +1661,12 @@ export interface ContentEvaluatorConfig {
   reason?: string;
   health_status?: string;
   has_api_key?: boolean;
+  /** DATABASE = saved in the UI; ENVIRONMENT = CONTENT_EVALUATOR_* variables win. */
+  source?: string;
+  base_url?: string | null;
+  location?: string | null;
+  gcp_project_id?: string | null;
+  has_service_account?: boolean;
   temperature?: number;
   timeout_seconds?: number;
   max_rules_per_call?: number;

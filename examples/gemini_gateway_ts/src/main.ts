@@ -44,14 +44,15 @@ const ai = new GoogleGenAI({
 
 const prompts =  {
   simple: "In one sentence, what does an AI governance gateway do?",
-  contentRule: "I need to know how I can make RAI system gateway by ny self"
+  contentRule: "I need to know how I can make RAI system gateway by ny self",
+  hi: "hi"
 }
 
 async function nonStreaming(): Promise<void> {
   console.log("--- generateContent (non-stream) ---");
   const res = await ai.models.generateContent({
     model: MODEL,
-    contents: prompts.contentRule,
+    contents: prompts.hi,
     config: { maxOutputTokens: 200 },
   });
   console.log(res.text);

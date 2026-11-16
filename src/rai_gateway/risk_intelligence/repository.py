@@ -41,6 +41,10 @@ class RiskIntelligenceRepository:
         self,
         ai_system_id: UUID | None = None,
     ) -> ContentEvaluatorConfig | None:
+        """Evaluator for an AI system: CONTENT_EVALUATOR_* env first, then saved config."""
+        env = self._env_evaluator_config()
+        if env is not None:
+            return env
         if ai_system_id is not None:
             row = (
                 self._db.query(ContentEvaluatorConfig)
@@ -49,13 +53,22 @@ class RiskIntelligenceRepository:
             )
             if row:
                 return row
-        # Platform-global / default (ai_system_id IS NULL) — runtime only
-        row = (
+        # Platform-global / default (ai_system_id IS NULL) - runtime only
+        return (
             self._db.query(ContentEvaluatorConfig)
             .filter(ContentEvaluatorConfig.ai_system_id.is_(None))
             .first()
         )
-        return row or self._env_evaluator_config()
+
+    def get_saved_evaluator_config(
+        self, ai_system_id: UUID
+    ) -> ContentEvaluatorConfig | None:
+        """The UI/API-saved row only (used by the settings screen and upsert)."""
+        return (
+            self._db.query(ContentEvaluatorConfig)
+            .filter(ContentEvaluatorConfig.ai_system_id == ai_system_id)
+            .first()
+        )
 
     @staticmethod
     def _env_evaluator_config() -> ContentEvaluatorConfig | None:

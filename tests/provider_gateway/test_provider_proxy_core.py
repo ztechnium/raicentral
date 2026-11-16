@@ -572,6 +572,36 @@ async def test_enforce_mode_blocks_and_records_blocked_event(
     assert upstream.requests == []
     events = _content_events(db_session, response.receipt_id)
     assert [e.payload["blocked"] for e in events] == [True]
+    payload = events[0].payload
+    assert payload["decision"] == "BLOCKED"
+    assert "blocked by Content Rule" in payload["summary"]
+    assert payload["rules"][0]["violated"] is True and payload["rules"][0]["title"]
+
+    # the trajectory must show the block as a DENY decision plus a finding
+    from rai_gateway.evidence.domain import EvidenceEventType
+    from rai_gateway.models.evidence import EvidenceEvent, EvidenceFinding
+
+    denied = (
+        db_session.query(EvidenceEvent)
+        .filter(
+            EvidenceEvent.event_type == EvidenceEventType.ACTION_DENIED.value,
+            EvidenceEvent.source_reference.like(
+                f"receipt:{response.receipt_id}:content_decision:%"
+            ),
+        )
+        .all()
+    )
+    assert len(denied) == 1
+    assert denied[0].payload["reason_code"] == "CONTENT_POLICY_DENIED"
+    finding = (
+        db_session.query(EvidenceFinding)
+        .filter(
+            EvidenceFinding.trajectory_id == denied[0].trajectory_id,
+            EvidenceFinding.title == "Blocked by Content Rule",
+        )
+        .all()
+    )
+    assert len(finding) == 1
 
 
 async def test_off_mode_ignores_content_rules(
@@ -598,3 +628,202 @@ def test_env_configured_evaluator_is_default(db_session, monkeypatch) -> None:
     cfg = repo.get_evaluator_config(uuid4())
     assert cfg.enabled and cfg.provider == "vertex" and cfg.fail_closed
     assert cfg.model == "gemini-3.1-flash-lite"
+
+
+def test_env_evaluator_wins_over_saved_config(db_session, model_stack, monkeypatch) -> None:
+    from rai_gateway.core.config import settings
+    from rai_gateway.risk_intelligence.repository import RiskIntelligenceRepository
+
+    _content_rule_setup(db_session, model_stack)  # saves a mock row
+    repo = RiskIntelligenceRepository(db_session)
+    system_id = model_stack["system"].id
+    monkeypatch.setattr(settings, "content_evaluator_provider", None)
+    assert repo.get_evaluator_config(system_id).provider == "mock"  # saved row
+    monkeypatch.setattr(settings, "content_evaluator_provider", "vertex")
+    assert repo.get_evaluator_config(system_id).provider == "vertex"  # env first
+    assert repo.get_saved_evaluator_config(system_id).provider == "mock"
+
+
+async def test_failed_evaluator_is_recorded_not_silent(
+    db_session, model_stack, make_proxy, monkeypatch
+) -> None:
+    from rai_gateway.core.config import settings
+    from rai_gateway.risk_intelligence.providers import (
+        ContentEvaluatorError,
+        register_provider,
+    )
+
+    class _Down:
+        name = "down"
+
+        def evaluate(self, request, config):
+            raise ContentEvaluatorError("EVALUATOR_UNAVAILABLE", "upstream said 404")
+
+    register_provider("down", _Down())
+    monkeypatch.setattr(settings, "content_evaluator_provider", "down")
+    response, upstream = await _call(db_session, model_stack, make_proxy, "ENFORCE")
+    assert response.status_code == 200  # not fail-closed: call proceeds
+    events = _content_events(db_session, response.receipt_id)
+    assert len(events) == 1
+    ev = events[0].payload["evaluation"]
+    assert ev["status"] == "FAILED"
+    assert ev["failure_type"] == "EVALUATOR_UNAVAILABLE"
+    assert "404" in ev["error"]
+
+
+async def test_token_budget_blocks_once_provider_usage_exceeds_limit(
+    db_session, model_stack, make_proxy
+) -> None:
+    from rai_gateway.provider_gateway.proxy import AdapterRegistry
+    from rai_gateway.risk_intelligence.budgets import BudgetService
+
+    BudgetService(db_session).create_budget(
+        ai_system_id=model_stack["system"].id,
+        name="tokens 20",
+        scope_type="AGENT_VERSION",
+        metric="TOKEN_USAGE",
+        limit_value=20,
+        window_seconds=3600,
+        warning_threshold=0.8,
+        effect_on_exceed="DENY",
+        enabled=True,
+    )
+    db_session.commit()
+    proxy, upstream = make_proxy(_ok)  # every call reports 16 total tokens
+    proxy._adapters = AdapterRegistry([_PromptAdapter()])
+    body = {
+        "model": model_stack["model_name"],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+    statuses = []
+    for _ in range(3):
+        resp = await proxy.handle(_req(model_stack, body=body), db=db_session)
+        statuses.append(resp.status_code)
+    # 16 used after call 1, 32 after call 2 -> the third call is denied before upstream
+    assert statuses == [200, 200, 403]
+    assert len(upstream.requests) == 2
+
+
+async def test_output_cap_not_reserved_by_default_so_usage_accumulates(
+    db_session, model_stack, make_proxy
+) -> None:
+    from rai_gateway.provider_gateway.proxy import AdapterRegistry
+    from rai_gateway.risk_intelligence.budgets import BudgetService
+
+    budget = BudgetService(db_session).create_budget(
+        ai_system_id=model_stack["system"].id,
+        name="tokens 20",
+        scope_type="AGENT_VERSION",
+        metric="TOKEN_USAGE",
+        limit_value=20,
+        window_seconds=3600,
+        effect_on_exceed="DENY",
+        enabled=True,
+    )
+    db_session.commit()
+    proxy, upstream = make_proxy(_ok)  # each call reports 16 tokens
+    proxy._adapters = AdapterRegistry([_PromptAdapter()])
+    body = {
+        "model": model_stack["model_name"],
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 200,  # must NOT be reserved: it would deny the first call
+    }
+    first = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert first.status_code == 200
+    from rai_gateway.models.risk_intelligence import RuntimeBudgetWindow
+
+    db_session.expire_all()
+    windows = (
+        db_session.query(RuntimeBudgetWindow)
+        .filter(RuntimeBudgetWindow.budget_id == budget.id)
+        .all()
+    )
+    assert [w.usage_value for w in windows] == [16.0]  # the real provider usage
+
+
+async def test_budget_monitor_effect_activates_a_risk_monitor(
+    db_session, model_stack, make_proxy
+) -> None:
+    """A MONITOR budget that is exceeded must show up under /risk/monitoring."""
+    from rai_gateway.models.risk_intelligence import RiskMonitor
+    from rai_gateway.risk_intelligence.budgets import BudgetService
+
+    BudgetService(db_session).create_budget(
+        ai_system_id=model_stack["system"].id,
+        name="watch calls",
+        scope_type="AGENT_VERSION",
+        metric="ACTION_COUNT",
+        limit_value=1,
+        window_seconds=3600,
+        effect_on_exceed="MONITOR",
+        enabled=True,
+    )
+    db_session.commit()
+    proxy, _ = make_proxy(_ok)
+    body = {"model": model_stack["model_name"]}
+    first = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    second = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert first.status_code == 200 and second.status_code == 200  # monitor never blocks
+
+    monitors = (
+        db_session.query(RiskMonitor)
+        .filter(RiskMonitor.ai_system_id == model_stack["system"].id)
+        .all()
+    )
+    assert len(monitors) == 1
+    assert monitors[0].status == "ACTIVE"
+    assert "Budget MONITOR: watch calls exceeded" in monitors[0].reason
+
+
+async def test_budget_effects_create_no_findings(
+    db_session, model_stack, make_proxy
+) -> None:
+    """Budgets control cost/tokens: a MONITOR keeps a monitor but raises no finding, and a
+    DENY raises no policy-denial finding."""
+    from rai_gateway.models.evidence import EvidenceFinding
+    from rai_gateway.models.risk_intelligence import RiskMonitor, RuntimeRiskFinding
+    from rai_gateway.risk_intelligence.budgets import BudgetService
+
+    svc = BudgetService(db_session)
+    monitor_budget = svc.create_budget(
+        ai_system_id=model_stack["system"].id,
+        name="watch",
+        scope_type="AGENT_VERSION",
+        metric="ACTION_COUNT",
+        limit_value=1,
+        window_seconds=3600,
+        effect_on_exceed="MONITOR",
+        enabled=True,
+    )
+    db_session.commit()
+    proxy, _ = make_proxy(_ok)
+    body = {"model": model_stack["model_name"]}
+    for _ in range(3):
+        resp = await proxy.handle(_req(model_stack, body=body), db=db_session)
+        assert resp.status_code == 200
+    assert (
+        db_session.query(RiskMonitor)
+        .filter(RiskMonitor.ai_system_id == model_stack["system"].id)
+        .count()
+        == 1
+    )
+
+    # switch the same budget to DENY: the call is blocked, still no finding
+    monitor_budget.effect_on_exceed = "DENY"
+    db_session.commit()
+    denied = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert denied.status_code == 403
+
+    risk_findings = (
+        db_session.query(RuntimeRiskFinding)
+        .filter(RuntimeRiskFinding.ai_system_id == model_stack["system"].id)
+        .count()
+    )
+    evidence_findings = (
+        db_session.query(EvidenceFinding)
+        .filter(EvidenceFinding.title.like("%BUDGET%"))
+        .count()
+    )
+    assert risk_findings == 0
+    assert evidence_findings == 0
