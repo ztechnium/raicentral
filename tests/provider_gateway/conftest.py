@@ -72,6 +72,7 @@ def model_stack(db_session, test_organization) -> dict:
         "system": system,
         "model": model,
         "model_name": model_name,
+        "version": version,
         "secret": issued.plaintext_secret,
     }
 

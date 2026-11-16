@@ -260,6 +260,10 @@ class FinOpsService:
             )
         if row is not None:
             return row
+        if provider_key != "cursor" and currency.upper() == "USD":
+            from rai_gateway.finops.published_pricing import published_entry
+
+            return published_entry(provider_key, model)
         if provider_key != "cursor" or currency.upper() != "USD":
             return None
         if at is not None:

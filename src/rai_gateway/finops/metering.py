@@ -522,6 +522,23 @@ class RuntimeMeteringService:
         )
         if existing:
             return existing
+        if span.enforcement_receipt_id:
+            # The receipt was already settled by the caller (gateway/SDK settle path).
+            # Adopt that row instead of creating a second one (double counting and a
+            # uq_finops_settlement_metering_span violation).
+            adopted = (
+                self._db.query(UsageSettlement)
+                .filter(
+                    UsageSettlement.enforcement_receipt_id
+                    == span.enforcement_receipt_id,
+                    UsageSettlement.metering_span_id.is_(None),
+                )
+                .first()
+            )
+            if adopted is not None:
+                adopted.metering_span_id = span.id
+                self._db.flush()
+                return adopted
         settlement = UsageSettlement(
             ai_system_id=span.ai_system_id,
             agent_id=span.agent_id,

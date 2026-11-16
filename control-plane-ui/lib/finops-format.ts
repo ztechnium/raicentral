@@ -39,10 +39,15 @@ export function costStateLabel(state?: string | null) {
 
 export function formatMoney(amount: number | null | undefined, currency = "USD") {
   if (amount === null || amount === undefined || Number.isNaN(amount)) return null;
+  // Sub-cent LLM costs must not round to $0.0000: keep 3 significant digits.
+  const abs = Math.abs(amount);
+  const maximumFractionDigits =
+    abs >= 1 ? 2 : abs === 0 ? 2 : Math.min(10, Math.max(4, Math.ceil(-Math.log10(abs)) + 2));
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
-    maximumFractionDigits: amount >= 1 ? 2 : 4,
+    minimumFractionDigits: abs >= 1 || abs === 0 ? 2 : 4,
+    maximumFractionDigits,
   }).format(amount);
 }
 

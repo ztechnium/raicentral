@@ -537,6 +537,8 @@ class TrajectoryService:
         )
         if not version:
             return None
+        if isinstance(version.evidence_content_policy, dict):
+            return version.evidence_content_policy
         meta = version.configuration_snapshot or {}
         if isinstance(meta, dict):
             policy = meta.get("evidence_content_policy")
@@ -988,10 +990,96 @@ class TrajectoryService:
         # Deterministic findings from receipt state.
         self._derive_receipt_findings(trajectory, receipt)
 
+        # Metering spans/settlements are written when the gateway finalizes the receipt,
+        # which can happen before this trajectory exists. Attach them now.
+        self._attach_metering(trajectory, receipt.id)
+
         # Coverage / completeness / status.
         self.refresh_coverage(trajectory)
         self._db.flush()
         return trajectory
+
+    def record_gateway_content(
+        self,
+        receipt_id: UUID,
+        *,
+        prompt: str | None,
+        response: str | None,
+        model: str | None = None,
+        provider: str | None = None,
+    ) -> None:
+        """Persist gateway-observed prompt/response per the agent version's policy.
+
+        Nothing is stored unless the agent version opted in for that content kind, so
+        raw text is never retained by default. Secrets are scrubbed by the content
+        handling mode before persistence.
+        """
+        from rai_gateway.evidence.content_policy import resolve_content_handling
+
+        receipt = (
+            self._db.query(RuntimeEnforcementReceipt)
+            .filter(RuntimeEnforcementReceipt.id == receipt_id)
+            .first()
+        )
+        if receipt is None or receipt.agent_version_id is None:
+            return
+        policy = self._agent_content_policy(receipt.agent_version_id) or {}
+        wanted = {str(k).strip().lower() for k in policy}
+        items = (
+            (EvidenceEventType.PROMPT_OBSERVED.value, "prompt", "prompt", prompt),
+            (
+                EvidenceEventType.MODEL_RESPONSE_OBSERVED.value,
+                "model_response",
+                "output",
+                response,
+            ),
+        )
+        if not any(kind in wanted for _, kind, _, text in items if text):
+            return
+        trajectory = self.project_receipt(receipt_id)
+        if trajectory is None:
+            return
+        for event_type, kind, field, text in items:
+            if not text or kind not in wanted:
+                continue
+            mode = resolve_content_handling(event_type, agent_policy=policy).value
+            event, created = self.append_event(
+                trajectory,
+                event_type=event_type,
+                source_type=EvidenceSourceType.RAI_AUTHORITATIVE.value,
+                source_reference=f"receipt:{receipt_id}:{kind}",
+                payload={
+                    field: text,
+                    "provider": provider,
+                    "observed_model": model,
+                    "captured_by": "RAI_GATEWAY",
+                },
+                occurred_at=receipt.started_at,
+                correlation_id=receipt.correlation_id,
+                content_handling_mode=mode,
+            )
+            if created:
+                self._maybe_create_content_artifact(
+                    trajectory, event=event, event_type=event_type
+                )
+        self.refresh_coverage(trajectory)
+        self._db.flush()
+
+    def _attach_metering(self, trajectory: RuntimeTrajectory, receipt_id: UUID) -> None:
+        from rai_gateway.models.finops import UsageSettlement
+        from rai_gateway.models.metering import RuntimeMeteringSpan
+
+        for model in (RuntimeMeteringSpan, UsageSettlement):
+            self._db.query(model).filter(
+                model.enforcement_receipt_id == receipt_id,
+                model.trajectory_id.is_(None),
+            ).update(
+                {
+                    "trajectory_id": trajectory.id,
+                    "runtime_conversation_id": trajectory.runtime_conversation_id,
+                },
+                synchronize_session=False,
+            )
 
     def project_receipt_safe(self, receipt_id: UUID) -> RuntimeTrajectory | None:
         """Best-effort projection that never raises into the WP4 path."""

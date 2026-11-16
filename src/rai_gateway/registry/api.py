@@ -308,6 +308,8 @@ def _serialize_version(version) -> dict[str, Any]:
         "configuration_snapshot": version.configuration_snapshot,
         "configuration_digest": version.configuration_digest,
         "evaluation_endpoint_url": version.evaluation_endpoint_url,
+        "evidence_content_policy": version.evidence_content_policy,
+        "content_rule_mode": version.content_rule_mode,
         "risk_tier": version.risk_tier,
         "material_change_status": version.material_change_status,
         "created_at": version.created_at.isoformat() if version.created_at else None,
@@ -603,6 +605,55 @@ def update_agent_version(
             version_id,
             **body.model_dump(exclude_unset=True),
         )
+    except RegistryError as exc:
+        raise _handle_registry_error(exc) from exc
+    return _serialize_version(version)
+
+
+class ContentCapturePolicy(BaseModel):
+    """Which gateway-observed content a trajectory keeps for this agent version.
+
+    Modes: FULL, REDACTED (secrets scrubbed, text kept), HASH_ONLY, METADATA_ONLY,
+    DO_NOT_STORE. A kind left unset is not captured.
+    """
+
+    prompt: str | None = None
+    model_response: str | None = None
+
+
+@router.put("/agent-versions/{version_id}/content-capture")
+def set_agent_version_content_capture(
+    version_id: UUID,
+    body: ContentCapturePolicy,
+    svc: RegistryService = Depends(_svc),
+    tenant: TenantContext = Depends(require_permission("registry:write")),
+):
+    try:
+        version = svc.set_content_capture(
+            version_id, body.model_dump(exclude_none=True)
+        )
+    except RegistryError as exc:
+        raise _handle_registry_error(exc) from exc
+    return _serialize_version(version)
+
+
+class ContentRuleModeBody(BaseModel):
+    """OFF: ignore Content Rules. OBSERVE: evaluate after the response and record
+    findings, never block. ENFORCE: evaluate the prompt first (and non-streamed
+    responses) and block on a violated DENY rule. Unset behaves as ENFORCE."""
+
+    mode: str | None = None
+
+
+@router.put("/agent-versions/{version_id}/content-rule-mode")
+def set_agent_version_content_rule_mode(
+    version_id: UUID,
+    body: ContentRuleModeBody,
+    svc: RegistryService = Depends(_svc),
+    tenant: TenantContext = Depends(require_permission("registry:write")),
+):
+    try:
+        version = svc.set_content_rule_mode(version_id, body.mode)
     except RegistryError as exc:
         raise _handle_registry_error(exc) from exc
     return _serialize_version(version)

@@ -147,6 +147,9 @@ class ProviderProxy:
         self._mode = mode
         self._session_scope = session_scope or default_session_scope
         self._max_body = max_body_bytes or settings.provider_gateway_max_body_bytes
+        # receipt_id -> [(content_type, evaluation, blocked)] awaiting trajectory recording
+        self._pending_evals: dict[Any, list[tuple[str, dict[str, Any], bool]]] = {}
+        self._bg_tasks: set[Any] = set()
 
     async def handle(self, request: ProxyRequest, *, db: Session) -> ProxyResponse:
         try:
@@ -182,6 +185,8 @@ class ProviderProxy:
                 error=True,
             )
             raise _with_receipt(errors.from_decision(decision), decision)
+
+        await self._enforce_input_content(adapter, request, action, decision, policy_ms)
 
         streaming = adapter.is_streaming(request)
         runtime_key = secret[:16] if secret else None
@@ -358,6 +363,11 @@ class ProviderProxy:
                         outcome="completed" if ok else "upstream_error",
                         usage=usage if ok else None,
                     ),
+                    content=self._observed_content(
+                        adapter, request, action, result.body
+                    )
+                    if ok
+                    else None,
                 )
                 gateway_metrics.record_request(
                     policy_decision_ms=policy_ms,
@@ -366,6 +376,12 @@ class ProviderProxy:
                     error=not ok,
                     streamed=False,
                 )
+                if ok:
+                    blocked = await self._enforce_output_content(
+                        adapter, result.body, decision
+                    )
+                    if blocked is not None:
+                        return blocked
                 return ProxyResponse(
                     status_code=result.status_code,
                     headers=adapter.sanitize_response_metadata(result.headers),
@@ -460,6 +476,11 @@ class ProviderProxy:
                         usage=usage if completed else None,
                         stream_lifecycle=dict(stream_meta),
                     ),
+                    content=self._observed_content(
+                        adapter, request, action, None, stream_text=collector.text()
+                    )
+                    if completed
+                    else None,
                     execution_status=None
                     if completed
                     else (
@@ -486,6 +507,7 @@ class ProviderProxy:
         duration_ms: int,
         meta: dict[str, Any],
         execution_status: str | None = None,
+        content: dict[str, Any] | None = None,
     ) -> None:
         if decision.receipt_id is None:
             return
@@ -499,6 +521,9 @@ class ProviderProxy:
                     safe_result_metadata=meta,
                     execution_status=execution_status,
                 )
+            if content and (content.get("prompt") or content.get("response")):
+                _record_content(decision.receipt_id, content, self._session_scope)
+            self._record_pending_evals(decision.receipt_id)
 
         try:
             await run_in_threadpool(work)
@@ -506,9 +531,211 @@ class ProviderProxy:
             logger.exception(
                 "Failed to finalize gateway receipt %s", decision.receipt_id
             )
+        if content and (content.get("prompt") or content.get("response")):
+            mode = await self._content_mode(decision)
+            if mode == "OBSERVE" or (mode == "ENFORCE" and content.get("streamed")):
+                self._spawn_observation(decision.receipt_id, content)
+
+    def _record_pending_evals(self, receipt_id: Any) -> None:
+        from rai_gateway.provider_gateway.content_gate import record_evaluations
+
+        pending = self._pending_evals.pop(receipt_id, None)
+        if not pending:
+            return
+        try:
+            with self._session_scope() as session:
+                record_evaluations(session, receipt_id, pending)
+        except Exception:
+            logger.exception("Failed to record content evaluations for %s", receipt_id)
+
+    def _spawn_observation(self, receipt_id: Any, content: dict[str, Any]) -> None:
+        """OBSERVE: evaluate after the call is complete, off the response path."""
+        import asyncio
+
+        from rai_gateway.provider_gateway.content_gate import observe_content
+
+        def work() -> None:
+            try:
+                with self._session_scope() as session:
+                    observe_content(
+                        session,
+                        receipt_id,
+                        prompt=content.get("prompt"),
+                        response=content.get("response"),
+                        streamed=bool(content.get("streamed")),
+                    )
+            except Exception:
+                logger.exception("Content observation failed for %s", receipt_id)
+
+        task = asyncio.ensure_future(run_in_threadpool(work))
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    async def _content_mode(self, decision: GatewayDecision) -> str:
+        from rai_gateway.provider_gateway.content_gate import ENFORCE, resolve_mode
+
+        if decision.receipt_id is None:
+            return ENFORCE
+
+        def work() -> str:
+            with self._session_scope() as session:
+                return resolve_mode(session, decision.receipt_id)
+
+        return await run_in_threadpool(work)
+
+    async def _content_gate(
+        self, decision: GatewayDecision, text: str, content_type: str
+    ) -> Any:
+        from rai_gateway.provider_gateway.content_gate import (
+            ContentGateResult,
+            evaluate_content_gate,
+        )
+
+        if decision.receipt_id is None or not text:
+            return ContentGateResult()
+
+        def work() -> Any:
+            with self._session_scope() as session:
+                return evaluate_content_gate(
+                    session,
+                    decision.receipt_id,
+                    text=text,
+                    content_type=content_type,
+                )
+
+        return await run_in_threadpool(work)
+
+    @staticmethod
+    def _content_error(gate: Any, where: str) -> errors.ProviderGatewayError:
+        if gate.blocked:
+            return errors.ProviderGatewayError(
+                403,
+                "CONTENT_POLICY_DENIED",
+                f"{where} blocked by a Content Rule",
+                rai={"rule_ids": gate.rule_ids, "reasons": gate.reasons},
+            )
+        return errors.ProviderGatewayError(
+            503,
+            "CONTENT_EVALUATOR_UNAVAILABLE",
+            "Content Rules could not be evaluated and this system is fail-closed",
+        )
+
+    async def _enforce_input_content(
+        self,
+        adapter: ProviderProtocolAdapter,
+        request: ProxyRequest,
+        action: GatewayAction,
+        decision: GatewayDecision,
+        policy_ms: int,
+    ) -> None:
+        """Block the call before it reaches the provider when a DENY rule matches."""
+        prompt = adapter.extract_prompt_text(request)
+        if not prompt or await self._content_mode(decision) != "ENFORCE":
+            return
+        gate = await self._content_gate(decision, prompt, "INPUT")
+        if gate.evaluation is not None:
+            self._pending_evals.setdefault(decision.receipt_id, []).append(
+                ("INPUT", gate.evaluation, gate.blocked)
+            )
+        if not (gate.blocked or gate.unavailable):
+            return
+        exc = self._content_error(gate, "Prompt")
+        await self._finalize(
+            decision,
+            succeeded=False,
+            duration_ms=policy_ms,
+            meta=build_execution_metadata(
+                provider=adapter.provider_name,
+                operation=action.operation,
+                model=action.model,
+                body_sha256=request.body_sha256(),
+                request_bytes=len(request.body),
+                upstream_status=None,
+                response_bytes=None,
+                streamed=False,
+                outcome="content_blocked",
+                usage=None,
+                error=exc.code,
+            ),
+        )
+        raise _with_receipt(exc, decision)
+
+    async def _enforce_output_content(
+        self,
+        adapter: ProviderProtocolAdapter,
+        body: bytes,
+        decision: GatewayDecision,
+    ) -> ProxyResponse | None:
+        """Withhold a non-streaming response that violates a DENY Content Rule."""
+        try:
+            parsed = json.loads(body) if body else None
+            text = adapter.extract_response_text(parsed) if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+        if not text or await self._content_mode(decision) != "ENFORCE":
+            return None
+        gate = await self._content_gate(decision, text, "OUTPUT")
+        if gate.evaluation is not None:
+            self._pending_evals.setdefault(decision.receipt_id, []).append(
+                ("OUTPUT", gate.evaluation, gate.blocked)
+            )
+        if not (gate.blocked or gate.unavailable):
+            return None
+        await run_in_threadpool(self._record_pending_evals, decision.receipt_id)
+        return error_response(
+            _with_receipt(self._content_error(gate, "Response"), decision)
+        )
+
+    @staticmethod
+    def _observed_content(
+        adapter: ProviderProtocolAdapter,
+        request: ProxyRequest,
+        action: GatewayAction,
+        response_body: bytes | None,
+        *,
+        stream_text: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Prompt/response text held in memory only; persisted per agent-version policy."""
+        try:
+            response = stream_text
+            if response is None and response_body:
+                parsed = json.loads(response_body)
+                if isinstance(parsed, dict):
+                    response = adapter.extract_response_text(parsed)
+            prompt = adapter.extract_prompt_text(request)
+        except Exception:
+            return None
+        if not prompt and not response:
+            return None
+        return {
+            "prompt": prompt,
+            "response": response,
+            "model": action.model,
+            "provider": adapter.provider_name,
+            "streamed": stream_text is not None,
+        }
 
     async def aclose(self) -> None:
         await self._transport.aclose()
+
+
+def _record_content(receipt_id: Any, content: dict[str, Any], session_scope: Any) -> None:
+    """Best effort: keep prompt/response evidence if the agent version opted in."""
+    try:
+        from rai_gateway.evidence.service import TrajectoryService
+
+        with session_scope() as session:
+            TrajectoryService(session).record_gateway_content(
+                receipt_id,
+                prompt=content.get("prompt"),
+                response=content.get("response"),
+                model=content.get("model"),
+                provider=content.get("provider"),
+            )
+            # default_session_scope does not commit; without this the events roll back.
+            session.commit()
+    except Exception:
+        logger.exception("Failed to record gateway content evidence for %s", receipt_id)
 
 
 def _rid(decision: GatewayDecision) -> str | None:

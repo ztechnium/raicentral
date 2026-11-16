@@ -290,6 +290,47 @@ def test_monitor_max_aggregation(db_session, runtime_stack):
     assert len(triggered) >= 1
 
 
+def test_mark_and_monitor_rule_creates_active_monitor(db_session, runtime_stack):
+    system = runtime_stack["system"]
+    identity = runtime_stack["identity"]
+    risk = RiskIntelligenceService(db_session)
+    rule = risk.create_monitor_rule(
+        ai_system_id=system.id,
+        name="monitor create_order",
+        scope="RUNTIME_IDENTITY",
+        signal_type="UNUSUAL_TOOL_FREQUENCY",
+        aggregation="COUNT",
+        threshold=1,
+        window_seconds=86400,
+        tool_name="create_order",
+        effect="MARK_AND_MONITOR",
+        monitor_duration_seconds=86400,
+        enabled=True,
+    )
+
+    from rai_gateway.risk_intelligence.risk_engine import RiskEngine
+
+    RiskEngine(db_session).process_enforcement_event(
+        ai_system_id=system.id,
+        agent_id=identity.agent_id,
+        agent_version_id=identity.agent_version_id,
+        runtime_identity_id=identity.id,
+        trajectory_id=None,
+        decision="DENY",
+        tool_name="create_order",
+        tool_id=None,
+        parameters={},
+        amount=None,
+    )
+
+    active = risk.list_monitors(ai_system_id=system.id, status="ACTIVE")
+    assert any(
+        monitor["scope_id"] == str(identity.id)
+        and monitor["monitor_rule_id"] == rule["id"]
+        for monitor in active
+    )
+
+
 def test_overview_includes_budget_and_anomaly_kpis(db_session, runtime_stack):
     overview = RiskIntelligenceService(db_session).overview(runtime_stack["system"].id)
     assert "budgets_near_limit" in overview

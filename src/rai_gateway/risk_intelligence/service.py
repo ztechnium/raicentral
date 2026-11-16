@@ -88,6 +88,7 @@ class RiskIntelligenceService:
         minimum_confidence_to_intervene: float = 0.9,
         fail_closed: bool = False,
         fallback_provider: str | None = None,
+        base_url: str | None = None,
     ) -> dict[str, Any]:
         if ai_system_id is None:
             raise LookupError("AI system not found")
@@ -106,6 +107,7 @@ class RiskIntelligenceService:
             "minimum_confidence_to_intervene": minimum_confidence_to_intervene,
             "fail_closed": fail_closed,
             "fallback_provider": fallback_provider,
+            "base_url": base_url or None,
             "health_status": "HEALTHY" if enabled else "UNAVAILABLE",
         }
         if api_key is not None:
@@ -685,8 +687,10 @@ class RiskIntelligenceService:
 
     def _serialize_evaluator_config(self, row: Any) -> dict[str, Any]:
         return {
-            "id": str(row.id),
+            "id": str(row.id) if row.id else None,
             "ai_system_id": str(row.ai_system_id) if row.ai_system_id else None,
+            "source": "DATABASE" if row.id else "ENVIRONMENT",
+            "base_url": getattr(row, "base_url", None),
             "status": "ACTIVE" if row.enabled else "NOT_ACTIVE",
             "enabled": row.enabled,
             "provider": row.provider,

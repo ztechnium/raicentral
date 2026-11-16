@@ -163,3 +163,15 @@ def sse_json_lines_collector(
             return self._usage
 
     return _Collector
+
+def forward_safe_query(query: str | None) -> str:
+    """Query string to relay upstream: only ``alt=sse`` (streaming framing).
+
+    Everything else (notably ``key=``) is dropped so clients cannot inject credentials
+    or provider options through the query string.
+    """
+    for pair in (query or "").split("&"):
+        name, _, value = pair.partition("=")
+        if name == "alt" and value.lower() == "sse":
+            return "?alt=sse"
+    return ""

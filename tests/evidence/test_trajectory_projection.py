@@ -463,3 +463,134 @@ class TestContentHandling:
         assert omitted is None
         assert status.value == "OMITTED"
         assert dig2
+
+
+class TestGatewayContentCapture:
+    def _receipt(self, db_session, runtime_stack, fake_adapter):
+        r = _authorize_tool(
+            db_session,
+            runtime_stack,
+            fake_adapter,
+            tool_id=runtime_stack["submit_tool"].id,
+            execute=True,
+        )
+        assert r.receipt_id
+        return r.receipt_id
+
+    def _events(self, db_session, trajectory, event_type):
+        from rai_gateway.models.evidence import EvidenceEvent
+
+        return (
+            db_session.query(EvidenceEvent)
+            .filter(
+                EvidenceEvent.trajectory_id == trajectory.id,
+                EvidenceEvent.event_type == event_type,
+            )
+            .all()
+        )
+
+    def test_nothing_stored_without_agent_version_opt_in(
+        self, db_session, runtime_stack, fake_adapter
+    ):
+        receipt_id = self._receipt(db_session, runtime_stack, fake_adapter)
+        svc = TrajectoryService(db_session)
+        svc.record_gateway_content(receipt_id, prompt="hello", response="world")
+        db_session.commit()
+        traj = svc.project_receipt(receipt_id)
+        assert self._events(db_session, traj, EvidenceEventType.PROMPT_OBSERVED.value) == []
+
+    def test_opt_in_stores_prompt_and_response(
+        self, db_session, runtime_stack, fake_adapter
+    ):
+        from rai_gateway.models.runtime_enforcement import RuntimeEnforcementReceipt
+        from rai_gateway.registry.service import RegistryService
+
+        receipt_id = self._receipt(db_session, runtime_stack, fake_adapter)
+        receipt = (
+            db_session.query(RuntimeEnforcementReceipt)
+            .filter(RuntimeEnforcementReceipt.id == receipt_id)
+            .one()
+        )
+        RegistryService(db_session).set_content_capture(
+            receipt.agent_version_id,
+            {"prompt": "REDACTED", "model_response": "FULL"},
+        )
+        svc = TrajectoryService(db_session)
+        svc.record_gateway_content(
+            receipt_id,
+            prompt="[user] what is RAI? key=sk-abcdefghijklmnopqrstuvwxyz123456",
+            response="A governance gateway.",
+            model="gemini-3.1-flash-lite",
+        )
+        db_session.commit()
+        traj = svc.project_receipt(receipt_id)
+        prompt_ev = self._events(db_session, traj, EvidenceEventType.PROMPT_OBSERVED.value)
+        resp_ev = self._events(
+            db_session, traj, EvidenceEventType.MODEL_RESPONSE_OBSERVED.value
+        )
+        assert len(prompt_ev) == 1 and len(resp_ev) == 1
+        assert "what is RAI?" in prompt_ev[0].payload["prompt"]
+        assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in prompt_ev[0].payload["prompt"]
+        assert resp_ev[0].payload["output"] == "A governance gateway."
+        assert resp_ev[0].content_handling_mode == "FULL"
+
+    def test_invalid_mode_rejected(self, db_session, runtime_stack, fake_adapter):
+        import pytest
+
+        from rai_gateway.models.runtime_enforcement import RuntimeEnforcementReceipt
+        from rai_gateway.registry.errors import RegistryError
+        from rai_gateway.registry.service import RegistryService
+
+        receipt_id = self._receipt(db_session, runtime_stack, fake_adapter)
+        receipt = (
+            db_session.query(RuntimeEnforcementReceipt)
+            .filter(RuntimeEnforcementReceipt.id == receipt_id)
+            .one()
+        )
+        with pytest.raises(RegistryError):
+            RegistryService(db_session).set_content_capture(
+                receipt.agent_version_id, {"prompt": "EVERYTHING"}
+            )
+
+    def test_proxy_record_content_helper_persists(
+        self, db_session, runtime_stack, fake_adapter
+    ):
+        """Exercises the proxy's own helper (its import path), not the service directly."""
+        from contextlib import contextmanager
+
+        from rai_gateway.models.runtime_enforcement import RuntimeEnforcementReceipt
+        from rai_gateway.provider_gateway.proxy import _record_content
+        from rai_gateway.registry.service import RegistryService
+
+        receipt_id = self._receipt(db_session, runtime_stack, fake_adapter)
+        receipt = (
+            db_session.query(RuntimeEnforcementReceipt)
+            .filter(RuntimeEnforcementReceipt.id == receipt_id)
+            .one()
+        )
+        RegistryService(db_session).set_content_capture(
+            receipt.agent_version_id, {"prompt": "FULL", "model_response": "FULL"}
+        )
+
+        commits: list[int] = []
+
+        @contextmanager
+        def scope():
+            # Mirrors default_session_scope: it never commits on exit.
+            yield db_session
+
+        real_commit = db_session.commit
+        db_session.commit = lambda: (commits.append(1), real_commit())[1]
+
+        _record_content(
+            receipt_id,
+            {"prompt": "[user] hi", "response": "hello", "model": "m", "provider": "vertex"},
+            scope,
+        )
+        assert commits, "helper must commit; default_session_scope does not"
+        traj = TrajectoryService(db_session).project_receipt(receipt_id)
+        assert len(self._events(db_session, traj, EvidenceEventType.PROMPT_OBSERVED.value)) == 1
+        assert (
+            len(self._events(db_session, traj, EvidenceEventType.MODEL_RESPONSE_OBSERVED.value))
+            == 1
+        )

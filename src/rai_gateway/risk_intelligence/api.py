@@ -43,6 +43,7 @@ class EvaluatorConfigUpsert(BaseModel):
     minimum_confidence_to_intervene: float = 0.9
     fail_closed: bool = False
     fallback_provider: str | None = None
+    base_url: str | None = None
 
 
 class ContentEvaluateRequest(BaseModel):

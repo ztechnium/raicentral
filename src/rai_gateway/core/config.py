@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Google Vertex AI
     gcp_project_id: Optional[str] = None
     gcp_location: str = "us-central1"
+    # Default location used when the client does not send one. When true, the gateway
+    # ignores the client's `locations/<x>` and always uses gcp_location.
+    gcp_pin_location: bool = False
     # Service-account credentials the gateway uses to call Vertex AI (server-side only).
     # Either a path (standard GOOGLE_APPLICATION_CREDENTIALS) or raw JSON in one env var.
     # When neither is set the gateway falls back to the GCE/GKE metadata server.
@@ -78,6 +81,19 @@ class Settings(BaseSettings):
     # Cache Configuration
     redis_url: str = "redis://localhost:6379"
     cache_ttl_seconds: int = 3600
+
+    # Content Rule evaluator (LLM-as-judge). When CONTENT_EVALUATOR_PROVIDER is set it is
+    # the default for every AI system that has no evaluator row of its own, and
+    # CONTENT_EVALUATOR_API_KEY / _BASE_URL fill in what a row leaves blank.
+    # provider: mock | openai | openai_compatible | deepseek | gemini | vertex
+    content_evaluator_provider: Optional[str] = None
+    content_evaluator_model: Optional[str] = None
+    content_evaluator_api_key: Optional[str] = None
+    content_evaluator_base_url: Optional[str] = None
+    content_evaluator_timeout_seconds: int = 30
+    content_evaluator_temperature: float = 0.0
+    content_evaluator_fail_closed: bool = False
+    content_evaluator_min_confidence_to_intervene: float = 0.9
 
     # Observability
     otel_endpoint: Optional[str] = None

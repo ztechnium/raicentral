@@ -103,6 +103,10 @@ class AgentVersion(Base):
     configuration_digest = Column(String)
     # Controlled test instance for WP7 live evaluation of this exact version.
     evaluation_endpoint_url = Column(String, nullable=True)
+    # Evidence content capture, e.g. {"prompt": "REDACTED", "model_response": "FULL"}.
+    evidence_content_policy = Column(JSON, nullable=True)
+    # Content Rule handling for gateway calls: OFF | OBSERVE | ENFORCE (null = ENFORCE).
+    content_rule_mode = Column(String, nullable=True)
     risk_tier = Column(String)
     material_change_status = Column(String, nullable=False, default="NONE")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

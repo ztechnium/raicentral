@@ -44,6 +44,7 @@ from rai_gateway.registry.errors import (
     ImmutableVersionError,
     InvalidTransitionError,
     NotFoundError,
+    RegistryError,
     RelationshipError,
 )
 from rai_gateway.registry.material_change import (
@@ -441,6 +442,44 @@ class RegistryService:
             version.evaluation_endpoint_url = evaluation_endpoint_url
         prev = self._previous_version(version.agent_id, version.version_number)
         apply_material_change_analysis(self._db, version, prev)
+        self._db.commit()
+        self._db.refresh(version)
+        return version
+
+    def set_content_capture(
+        self, version_id: UUID, policy: dict[str, str]
+    ) -> AgentVersion:
+        """Set prompt/response evidence capture. Operational: allowed on any status."""
+        from rai_gateway.evidence.domain import ContentHandlingMode
+
+        allowed = {m.value for m in ContentHandlingMode}
+        clean: dict[str, str] = {}
+        for kind in ("prompt", "model_response"):
+            value = policy.get(kind)
+            if value is None:
+                continue
+            mode = str(value).strip().upper()
+            if mode not in allowed:
+                raise RegistryError(
+                    f"Invalid content mode '{value}' for {kind}; use one of "
+                    f"{sorted(allowed)}"
+                )
+            clean[kind] = mode
+        version = self.get_agent_version(version_id)
+        version.evidence_content_policy = clean or None
+        self._db.commit()
+        self._db.refresh(version)
+        return version
+
+    def set_content_rule_mode(self, version_id: UUID, mode: str | None) -> AgentVersion:
+        """OFF | OBSERVE | ENFORCE. Operational: allowed on any lifecycle status."""
+        value = str(mode).strip().upper() if mode else None
+        if value is not None and value not in {"OFF", "OBSERVE", "ENFORCE"}:
+            raise RegistryError(
+                f"Invalid content rule mode '{mode}'; use OFF, OBSERVE or ENFORCE"
+            )
+        version = self.get_agent_version(version_id)
+        version.content_rule_mode = value
         self._db.commit()
         self._db.refresh(version)
         return version

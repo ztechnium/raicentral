@@ -105,7 +105,7 @@ def _dispatch(
         state["tickets"].append(ticket)
         return {"artifact_id": ticket_id, "ticket": ticket}
 
-    if tool_key == "create_order":
+    if tool_key in {"create_order", "create_budgeted_order"}:
         order_id = f"ord_{uuid4().hex[:12]}"
         order = {
             "order_id": order_id,

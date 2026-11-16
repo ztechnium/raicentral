@@ -26,6 +26,7 @@ def _request(path: str) -> ProxyRequest:
 
 def test_vertex_upstream_url_pins_governed_project_and_location(monkeypatch) -> None:
     monkeypatch.setattr(settings, "gcp_project_id", "governed-proj")
+    monkeypatch.setattr(settings, "gcp_pin_location", True)
     monkeypatch.setattr(settings, "gcp_location", "us-central1")
     adapter = VertexAIAdapter()
     url = adapter.upstream_url(
@@ -63,3 +64,40 @@ def test_vertex_resolver_unavailable_without_google_credentials(monkeypatch) -> 
     monkeypatch.setattr(gcp_token.gcp_token_provider, "get_token", boom)
     with pytest.raises(ProviderCredentialUnavailable):
         SettingsCredentialResolver().resolve("vertex")
+
+
+def test_vertex_upstream_url_honors_client_location(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "gcp_project_id", "governed-proj")
+    monkeypatch.setattr(settings, "gcp_location", "us-central1")
+    monkeypatch.setattr(settings, "gcp_pin_location", False)
+    adapter = VertexAIAdapter()
+    cred = ProviderCredential(
+        provider="vertex",
+        base_url="https://us-central1-aiplatform.googleapis.com/v1",
+    )
+    url = adapter.upstream_url(
+        _request(
+            "/providers/vertex-ai/v1/projects/evil/locations/global/"
+            "publishers/google/models/gemini-3.1-flash-lite:generateContent"
+        ),
+        cred,
+    )
+    assert url == (
+        "https://aiplatform.googleapis.com/v1/projects/governed-proj/"
+        "locations/global/publishers/google/models/"
+        "gemini-3.1-flash-lite:generateContent"
+    )
+
+
+def test_vertex_upstream_forwards_only_alt_sse(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "gcp_project_id", "governed-proj")
+    adapter = VertexAIAdapter()
+    cred = ProviderCredential(
+        provider="vertex", base_url="https://aiplatform.googleapis.com/v1"
+    )
+    req = _request(
+        "/providers/vertex-ai/v1beta1/projects/p/locations/global/publishers/google/"
+        "models/m:streamGenerateContent"
+    )
+    object.__setattr__(req, "query", "alt=sse&key=SECRET")
+    assert adapter.upstream_url(req, cred).endswith(":streamGenerateContent?alt=sse")

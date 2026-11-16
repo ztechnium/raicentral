@@ -7,12 +7,15 @@ no governance itself.
 
 from __future__ import annotations
 
+import time
+import uuid
 from collections.abc import AsyncIterator, Callable
 
 from fastapi import Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from rai_gateway.core.config import settings
+from rai_gateway.provider_gateway import sdk_trace
 from rai_gateway.provider_gateway.domain import ProxyRequest, ProxyResponse
 from rai_gateway.provider_gateway.errors import body_too_large
 from rai_gateway.provider_gateway.proxy import ProviderProxy, error_response
@@ -103,15 +106,33 @@ async def handle_provider_request(
             if isinstance(exc, ProviderGatewayError):
                 return to_starlette(error_response(exc))
             raise
+        routed_path = sdk_trace.resolve_unified_path(request.url.path)
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        client_host = request.client.host if request.client else None
+        sdk_trace.log_request(
+            method=request.method,
+            original_path=request.url.path,
+            routed_path=routed_path,
+            headers=request.headers,
+            client_host=client_host,
+            request_id=request_id,
+        )
         proxy_request = ProxyRequest(
             method=request.method,
-            path=request.url.path,
+            path=routed_path,
             query=request.url.query,
             headers=dict(request.headers),
             body=body,
-            client_host=request.client.host if request.client else None,
+            client_host=client_host,
         )
+        started = time.monotonic()
         proxy_response = await proxy.handle(proxy_request, db=db)
+        sdk_trace.log_response(
+            request_id=request_id,
+            status=proxy_response.status_code,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            receipt_id=proxy_response.receipt_id,
+        )
         stream_pending = proxy_response.stream is not None
         return to_starlette(
             proxy_response,

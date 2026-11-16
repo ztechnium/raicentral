@@ -10,6 +10,9 @@ The catalog covers:
 - Tools on that server
 - Policy Library sources, with each RAI rule linked to the source obligation
 - Tool rules that ALLOW, DENY, or REQUIRE_APPROVAL
+- A Sales AI runtime amount budget that denies budgeted orders over 1000 per 24-hour window
+- A Sales AI `MARK_AND_MONITOR` rule that creates an active monitor after a budgeted-order action
+- Two clearly labeled, synthetic estimated model-call spans for FinOps (USD 1.50 total)
 - Keyword content rules evaluated by the mock content evaluator
 
 There is one instance. The scripts sign in as the bootstrap admin. They do not create an organization and they do not send `X-Organization-ID`.
@@ -71,10 +74,14 @@ Or run cases directly:
 ```text
 python examples/developer_lab/run_case.py --all
 python examples/developer_lab/run_case.py sales-ai small-order
+python examples/developer_lab/run_case.py sales-ai budget-over-limit
 ```
 
 The tool process must already be listening on port 8765. `support_ai_reference` starts it. `provision.py` and the other reference scripts do not.
 
 Workspace changes land in `examples/developer_lab/state/records.json`. A passing ALLOW case adds an audit row there. A passing DENY or REQUIRE_APPROVAL case leaves the file unchanged.
+
+The Sales AI `budget-over-limit` case must be denied with reason `BUDGET_EXCEEDED` before the MCP tool runs. Its budget is created or updated when you provision the lab.
+Running that case also triggers the Sales AI monitor rule, so an active monitor appears on `/risk/monitoring`. Provisioning records two synthetic FinOps spans; their USD 1.50 total is explicitly estimated sample data, not billed provider usage.
 
 The coding-agent sandbox notes are in [sandbox/README.md](sandbox/README.md).

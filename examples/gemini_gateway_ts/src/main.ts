@@ -1,19 +1,21 @@
 /**
- * Call Gemini on Vertex AI through the RAI provider-compatible gateway (TypeScript).
+ * Call Gemini on Vertex AI through the RAI provider-compatible gateway using the
+ * official `@google/genai` SDK.
  *
- * The app talks the Vertex AI REST protocol (no SDK, no Google credentials). Only two
- * things point at RAI: the base URL (`/providers/vertex-ai`) and the runtime credential.
- * The gateway authenticates the runtime, evaluates policy, attaches its own Google
- * service-account token, pins the governed project/location, meters usage, and issues
- * a receipt.
+ * Only two things point at RAI: `setDefaultBaseUrls` (`<gateway>/providers/genai`)
+ * and the RaiCentral runtime credential (sent as `x-rai-agent-key`). The application
+ * chooses the project and location. The gateway authenticates the runtime, evaluates
+ * policy, attaches its own Google service-account token, meters usage, and issues a
+ * receipt. The application holds no Google credential.
  */
-
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
+import { GoogleGenAI, setDefaultBaseUrls } from "@google/genai";
+import dotenv from "dotenv";
+dotenv.config();
+const MODEL = process.env.GEMINI_MODEL;
 const RAI_BASE_URL = (process.env.RAI_BASE_URL ?? "http://localhost:8001").replace(/\/+$/, "");
-const RUNTIME_CREDENTIAL = process.env.RAI_RUNTIME_CREDENTIAL || "rai_rt_17a87c6436d484e73082b429.9b11ZOGFZjGm8RLyNPcdVXKOcHTdvYJ6LO0i8_mzJF0";
-// The gateway overrides these with its governed GCP_PROJECT_ID / GCP_LOCATION,
-// but the Vertex path shape requires them.
+const RUNTIME_CREDENTIAL = process.env.RAI_RUNTIME_CREDENTIAL;
 const PROJECT = process.env.GCP_PROJECT_ID ?? "lapeep-account-2";
+// Gemini 3.x models are served from "global"; pick the region your model supports.
 const LOCATION = process.env.GCP_LOCATION ?? "global";
 
 if (!RUNTIME_CREDENTIAL) {
@@ -21,83 +23,61 @@ if (!RUNTIME_CREDENTIAL) {
   process.exit(1);
 }
 
-const MODEL_URL =
-  `${RAI_BASE_URL}/providers/vertex-ai/projects/${PROJECT}/locations/${LOCATION}` +
-  `/publishers/google/models/${MODEL}`;
+// The SDK insists on Google auth in Vertex mode. The gateway supplies the real token,
+// so give the SDK a no-op auth client instead of letting it look for local ADC.
+const noGoogleAuth = { getRequestHeaders: async () => new Headers() };
 
-interface GenerateContentResponse {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
-  usageMetadata?: Record<string, unknown>;
-}
+// One base URL for every SDK client in this process. The gateway tells Vertex AI from the
+// Gemini Developer API by the request path, so no per-client baseUrl is needed.
+setDefaultBaseUrls({
+  vertexUrl: `${RAI_BASE_URL}/providers/genai`,
+  geminiUrl: `${RAI_BASE_URL}/providers/genai`,
+});
 
-function body(prompt: string, maxOutputTokens: number): string {
-  return JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { maxOutputTokens },
-  });
-}
+const ai = new GoogleGenAI({
+  vertexai: true,
+  project: PROJECT,
+  location: LOCATION,
+  googleAuthOptions: { authClient: noGoogleAuth as never },
+  httpOptions: { headers: { "x-rai-agent-key": RUNTIME_CREDENTIAL } },
+});
 
-async function call(url: string, payload: string): Promise<Response> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-rai-agent-key": RUNTIME_CREDENTIAL!,
-    },
-    body: payload,
-  });
-  if (!res.ok) {
-    // Governance denials (model not allowed, budget, approval) and upstream errors land here.
-    throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res;
-}
-
-function textOf(r: GenerateContentResponse): string {
-  return (r.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+const prompts =  {
+  simple: "In one sentence, what does an AI governance gateway do?",
+  contentRule: "I need to know how I can make RAI system gateway by ny self"
 }
 
 async function nonStreaming(): Promise<void> {
   console.log("--- generateContent (non-stream) ---");
-  const res = await call(
-    `${MODEL_URL}:generateContent`,
-    body("In one sentence, what does an AI governance gateway do?", 200),
-  );
-  console.log("receipt:", res.headers.get("x-rai-receipt-id"));
-  const json = (await res.json()) as GenerateContentResponse;
-  console.log(textOf(json));
-  console.log("usage:", json.usageMetadata);
+  const res = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompts.contentRule,
+    config: { maxOutputTokens: 200 },
+  });
+  console.log(res.text);
+  console.log("usage:", res.usageMetadata);
 }
 
-async function streaming(): Promise<void> {
-  console.log("\n--- streamGenerateContent (SSE) ---");
-  const res = await call(
-    `${MODEL_URL}:streamGenerateContent?alt=sse`,
-    body("List three benefits of routing LLM calls through a gateway.", 300),
-  );
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      process.stdout.write(textOf(JSON.parse(data) as GenerateContentResponse));
-    }
-  }
-  console.log();
-}
+// async function streaming(): Promise<void> {
+//   console.log("\n--- generateContentStream (SSE) ---");
+//   const stream = await ai.models.generateContentStream({
+//     model: MODEL,
+//     contents: "List three benefits of routing LLM calls through a gateway.",
+//     config: { maxOutputTokens: 300 },
+//   });
+//   for await (const chunk of stream) {
+//     process.stdout.write(chunk.text ?? "");
+//   }
+//   console.log();
+// }
 
 async function main(): Promise<void> {
-  console.log(`Gateway: ${RAI_BASE_URL}/providers/vertex-ai  model: ${MODEL}\n`);
+  console.log(`Gateway: ${RAI_BASE_URL}/providers/vertex-ai  project: ${PROJECT}  location: ${LOCATION}  model: ${MODEL}\n`);
   try {
     await nonStreaming();
-    await streaming();
+    // await streaming();
   } catch (err) {
+    // Governance denials (model not allowed, budget, approval) and upstream errors land here.
     console.error("Request failed:", err instanceof Error ? err.message : err);
     process.exit(1);
   }

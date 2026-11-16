@@ -33,6 +33,10 @@ class StreamUsageCollector:
     def usage(self) -> UsageInfo | None:
         return None
 
+    def text(self) -> str | None:
+        """Accumulated response text, when the adapter can recover it."""
+        return None
+
 
 class ProviderProtocolAdapter(ABC):
     provider_name: str
@@ -68,6 +72,16 @@ class ProviderProtocolAdapter(ABC):
 
     def new_stream_usage_collector(self) -> StreamUsageCollector:
         return StreamUsageCollector()
+
+    def extract_prompt_text(self, request: ProxyRequest) -> str | None:
+        """Human-readable prompt text, used only when the agent version opts in."""
+        return None
+
+    def extract_response_text(
+        self, response_body: Mapping[str, Any] | None
+    ) -> str | None:
+        """Human-readable response text from a non-streaming body (opt-in capture)."""
+        return None
 
     def upstream_headers(
         self, request: ProxyRequest, credential: ProviderCredential

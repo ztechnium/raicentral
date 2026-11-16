@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 from rai_gateway.provider_gateway.adapters.base import ProviderProtocolAdapter
 from rai_gateway.provider_gateway.adapters.common import (
     declared_tool_names,
+    forward_safe_query,
     load_json,
     max_output_tokens,
     normalize_usage,
@@ -60,6 +62,101 @@ def _usage_from_gemini(response: Mapping[str, Any] | None) -> UsageInfo | None:
     )
 
 
+_MAX_CAPTURE_CHARS = 64_000
+
+
+def gemini_prompt_text(body: Mapping[str, Any]) -> str | None:
+    """Readable prompt (system instruction + user/model turns) from a generateContent body."""
+    lines: list[str] = []
+    system = body.get("systemInstruction") or body.get("system_instruction")
+    if isinstance(system, dict):
+        text = _parts_text(system.get("parts"))
+        if text:
+            lines.append(f"[system] {text}")
+    contents = body.get("contents")
+    if isinstance(contents, dict):
+        contents = [contents]
+    for item in contents if isinstance(contents, list) else []:
+        if not isinstance(item, dict):
+            continue
+        text = _parts_text(item.get("parts"))
+        if text:
+            lines.append(f"[{item.get('role') or 'user'}] {text}")
+    joined = "\n".join(lines)
+    return joined[:_MAX_CAPTURE_CHARS] or None
+
+
+def _parts_text(parts: Any) -> str:
+    if not isinstance(parts, list):
+        return ""
+    return "".join(
+        p["text"] for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str)
+    )
+
+
+def gemini_response_text(response: Mapping[str, Any] | None) -> str | None:
+    if not response:
+        return None
+    candidates = response.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    first = candidates[0]
+    content = first.get("content") if isinstance(first, dict) else None
+    text = _parts_text(content.get("parts")) if isinstance(content, dict) else ""
+    return text or None
+
+
+class GeminiStreamCollector:
+    """SSE collector: last ``usageMetadata`` wins; response text is accumulated."""
+
+    def __init__(self, provider: str | None = None, capture_text: bool = False) -> None:
+        self._provider = provider
+        self._capture = capture_text
+        self._buffer = b""
+        self._usage: UsageInfo | None = None
+        self._text: list[str] = []
+        self._text_len = 0
+
+    def feed(self, chunk: bytes) -> None:
+        self._buffer += chunk
+        while b"\n" in self._buffer:
+            line, self._buffer = self._buffer.split(b"\n", 1)
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if payload in {b"", b"[DONE]"}:
+                continue
+            try:
+                event = json.loads(payload)
+            except ValueError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            usage = _usage_from_gemini(event)
+            if usage is not None:
+                if self._provider:
+                    usage.provider = self._provider
+                self._usage = usage
+            if self._capture and self._text_len < _MAX_CAPTURE_CHARS:
+                piece = gemini_response_text(event)
+                if piece:
+                    self._text.append(piece)
+                    self._text_len += len(piece)
+
+    def usage(self) -> UsageInfo | None:
+        return self._usage
+
+    def text(self) -> str | None:
+        return ("".join(self._text)[:_MAX_CAPTURE_CHARS]) or None
+
+
+def gemini_stream_usage_collector(
+    provider: str | None = None, capture_text: bool = False
+) -> GeminiStreamCollector:
+    return GeminiStreamCollector(provider, capture_text)
+
+
 class GeminiAdapter(ProviderProtocolAdapter):
     provider_name = "google_ai"
     passthrough_headers = ("x-goog-api-client",)
@@ -109,7 +206,7 @@ class GeminiAdapter(ProviderProtocolAdapter):
             f"/{version}/"
         ):
             base = base[: -len(version) - 1]
-        return f"{base}{suffix}"
+        return f"{base}{suffix}{forward_safe_query(request.query)}"
 
     def is_streaming(self, request: ProxyRequest) -> bool:
         if "alt=sse" in (request.query or "").lower():
@@ -119,6 +216,17 @@ class GeminiAdapter(ProviderProtocolAdapter):
         if isinstance(config, dict) and config.get("responseMimeType") == "text/event-stream":
             return True
         return ":streamGenerateContent" in request.path
+
+    def new_stream_usage_collector(self):
+        return gemini_stream_usage_collector(capture_text=True)
+
+    def extract_prompt_text(self, request: ProxyRequest) -> str | None:
+        return gemini_prompt_text(load_json(request.body))
+
+    def extract_response_text(
+        self, response_body: Mapping[str, Any] | None
+    ) -> str | None:
+        return gemini_response_text(response_body)
 
     def extract_usage(
         self, response_body: Mapping[str, Any] | None

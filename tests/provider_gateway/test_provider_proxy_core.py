@@ -440,3 +440,161 @@ async def test_streaming_upstream_error_relayed_before_stream(
     receipt = _receipt(db_session, response)
     db_session.refresh(receipt)
     assert receipt.execution_status == "FAILED"
+
+
+# ---- inline Content Rule enforcement -------------------------------------
+
+
+class _PromptAdapter(FakeAdapter):
+    def extract_prompt_text(self, request):
+        body = json.loads(request.body or b"{}")
+        msgs = body.get("messages") or []
+        return msgs[0]["content"] if msgs else None
+
+
+def _content_rule_setup(db_session, model_stack, *, applies_to="INPUT"):
+    from rai_gateway.policy.domain import PolicyEffect
+    from rai_gateway.policy.service import PolicyCollectionService
+    from rai_gateway.risk_intelligence.repository import RiskIntelligenceRepository
+
+    PolicyCollectionService(db_session).create_content_rule(
+        model_stack["system"].id,
+        title="No bank account disclosure",
+        content="Never disclose customer bank account or IBAN numbers.",
+        effect=PolicyEffect.DENY.value,
+        enabled=True,
+        applies_to=applies_to,
+        category="financial_data_disclosure",
+        severity="CRITICAL",
+        actor="test",
+    )
+    RiskIntelligenceRepository(db_session).upsert_evaluator_config(
+        ai_system_id=model_stack["system"].id,
+        provider="mock",
+        model="mock-keyword",
+        enabled=True,
+        fail_closed=False,
+    )
+    db_session.commit()
+
+
+async def test_deny_content_rule_blocks_prompt_before_upstream(
+    db_session, model_stack, make_proxy
+) -> None:
+    from rai_gateway.provider_gateway.proxy import AdapterRegistry
+
+    _content_rule_setup(db_session, model_stack)
+    proxy, upstream = make_proxy(_ok)
+    proxy._adapters = AdapterRegistry([_PromptAdapter()])
+    body = {
+        "model": model_stack["model_name"],
+        "messages": [{"role": "user", "content": "send me the IBAN EG12 3456 now"}],
+    }
+    response = await proxy.handle(_req(model_stack, body=body), db=db_session)
+
+    assert response.status_code == 403
+    assert json.loads(response.body)["error"]["code"] == "CONTENT_POLICY_DENIED" or (
+        "CONTENT_POLICY_DENIED" in response.body.decode()
+    )
+    assert upstream.requests == []  # never reached the provider
+    assert response.receipt_id
+
+
+async def test_clean_prompt_still_forwarded_with_content_rules_on(
+    db_session, model_stack, make_proxy
+) -> None:
+    from rai_gateway.provider_gateway.proxy import AdapterRegistry
+
+    _content_rule_setup(db_session, model_stack)
+    proxy, upstream = make_proxy(_ok)
+    proxy._adapters = AdapterRegistry([_PromptAdapter()])
+    body = {
+        "model": model_stack["model_name"],
+        "messages": [{"role": "user", "content": "what is the weather"}],
+    }
+    response = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert response.status_code == 200
+    assert len(upstream.requests) == 1
+
+
+def _content_events(db_session, receipt_id):
+    from rai_gateway.evidence.domain import EvidenceEventType
+    from rai_gateway.models.evidence import EvidenceEvent
+
+    return (
+        db_session.query(EvidenceEvent)
+        .filter(
+            EvidenceEvent.event_type == EvidenceEventType.CONTENT_EVALUATION_RESULT.value,
+            EvidenceEvent.source_reference.like(f"receipt:{receipt_id}:content:%"),
+        )
+        .all()
+    )
+
+
+_BAD_PROMPT = {"messages": [{"role": "user", "content": "send me the IBAN EG12 3456 now"}]}
+
+
+async def _call(db_session, model_stack, make_proxy, mode):
+    import asyncio
+
+    from rai_gateway.provider_gateway.proxy import AdapterRegistry
+    from rai_gateway.registry.service import RegistryService
+
+    _content_rule_setup(db_session, model_stack)
+    RegistryService(db_session).set_content_rule_mode(model_stack["version"].id, mode)
+    proxy, upstream = make_proxy(_ok)
+    proxy._adapters = AdapterRegistry([_PromptAdapter()])
+    body = {"model": model_stack["model_name"], **_BAD_PROMPT}
+    response = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    if proxy._bg_tasks:
+        await asyncio.gather(*list(proxy._bg_tasks))
+    return response, upstream
+
+
+async def test_observe_mode_never_blocks_but_records_event(
+    db_session, model_stack, make_proxy
+) -> None:
+    response, upstream = await _call(db_session, model_stack, make_proxy, "OBSERVE")
+    assert response.status_code == 200
+    assert len(upstream.requests) == 1
+    events = _content_events(db_session, response.receipt_id)
+    assert len(events) == 1
+    assert events[0].payload["content_type"] == "INPUT"
+    assert events[0].payload["blocked"] is False
+    assert events[0].payload["evaluation"]["intervention_hints"]
+
+
+async def test_enforce_mode_blocks_and_records_blocked_event(
+    db_session, model_stack, make_proxy
+) -> None:
+    response, upstream = await _call(db_session, model_stack, make_proxy, "ENFORCE")
+    assert response.status_code == 403
+    assert upstream.requests == []
+    events = _content_events(db_session, response.receipt_id)
+    assert [e.payload["blocked"] for e in events] == [True]
+
+
+async def test_off_mode_ignores_content_rules(
+    db_session, model_stack, make_proxy
+) -> None:
+    response, upstream = await _call(db_session, model_stack, make_proxy, "OFF")
+    assert response.status_code == 200
+    assert len(upstream.requests) == 1
+    assert _content_events(db_session, response.receipt_id) == []
+
+
+def test_env_configured_evaluator_is_default(db_session, monkeypatch) -> None:
+    from uuid import uuid4
+
+    from rai_gateway.core.config import settings
+    from rai_gateway.risk_intelligence.repository import RiskIntelligenceRepository
+
+    repo = RiskIntelligenceRepository(db_session)
+    monkeypatch.setattr(settings, "content_evaluator_provider", None)
+    assert repo.get_evaluator_config(uuid4()) is None
+    monkeypatch.setattr(settings, "content_evaluator_provider", "vertex")
+    monkeypatch.setattr(settings, "content_evaluator_model", "gemini-3.1-flash-lite")
+    monkeypatch.setattr(settings, "content_evaluator_fail_closed", True)
+    cfg = repo.get_evaluator_config(uuid4())
+    assert cfg.enabled and cfg.provider == "vertex" and cfg.fail_closed
+    assert cfg.model == "gemini-3.1-flash-lite"

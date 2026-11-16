@@ -50,10 +50,37 @@ class RiskIntelligenceRepository:
             if row:
                 return row
         # Platform-global / default (ai_system_id IS NULL) — runtime only
-        return (
+        row = (
             self._db.query(ContentEvaluatorConfig)
             .filter(ContentEvaluatorConfig.ai_system_id.is_(None))
             .first()
+        )
+        return row or self._env_evaluator_config()
+
+    @staticmethod
+    def _env_evaluator_config() -> ContentEvaluatorConfig | None:
+        """Detached default built from CONTENT_EVALUATOR_* settings (never persisted)."""
+        from rai_gateway.core.config import settings
+
+        provider = (settings.content_evaluator_provider or "").strip().lower()
+        if not provider:
+            return None
+        return ContentEvaluatorConfig(
+            ai_system_id=None,
+            provider=provider,
+            model=settings.content_evaluator_model or "",
+            temperature=settings.content_evaluator_temperature,
+            timeout_seconds=settings.content_evaluator_timeout_seconds,
+            max_rules_per_call=20,
+            confidence_threshold=0.5,
+            minimum_confidence_to_mark=0.5,
+            minimum_confidence_to_monitor=0.7,
+            minimum_confidence_to_intervene=(
+                settings.content_evaluator_min_confidence_to_intervene
+            ),
+            fail_closed=settings.content_evaluator_fail_closed,
+            enabled=True,
+            health_status="UNKNOWN",
         )
 
     def upsert_evaluator_config(self, **fields: Any) -> ContentEvaluatorConfig:

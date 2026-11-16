@@ -404,6 +404,8 @@ export interface AgentVersionSummary {
   material_change_status: string;
   approved_at?: string | null;
   configuration_digest?: string | null;
+  evidence_content_policy?: { prompt?: string; model_response?: string } | null;
+  content_rule_mode?: string | null;
 }
 
 export interface VersionDependency {

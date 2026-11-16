@@ -771,6 +771,19 @@ export function transitionAgent(agentId: string, status: string) {
   return apiPost<AgentSummary>(`/v1/agents/${agentId}/lifecycle`, { status });
 }
 
+export function setVersionContentRuleMode(versionId: string, mode: string | null) {
+  return apiPut<AgentVersionSummary>(`/v1/agent-versions/${versionId}/content-rule-mode`, {
+    mode,
+  });
+}
+
+export function setVersionContentCapture(
+  versionId: string,
+  policy: { prompt?: string; model_response?: string },
+) {
+  return apiPut<AgentVersionSummary>(`/v1/agent-versions/${versionId}/content-capture`, policy);
+}
+
 export function createAgentVersion(
   agentId: string,
   payload: {

@@ -33,7 +33,9 @@ def extract_runtime_secret(headers: Mapping[str, str]) -> str | None:
     auth = lowered.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip() or None
-    return None
+    # Gemini Developer API SDKs put their `apiKey` in x-goog-api-key.
+    goog_key = lowered.get("x-goog-api-key", "").strip()
+    return goog_key or None
 
 
 class ProviderCredentialUnavailable(Exception):
