@@ -820,9 +820,15 @@ async def test_budget_effects_create_no_findings(
         .filter(RuntimeRiskFinding.ai_system_id == model_stack["system"].id)
         .count()
     )
+    from rai_gateway.models.evidence import RuntimeTrajectory
+
     evidence_findings = (
         db_session.query(EvidenceFinding)
-        .filter(EvidenceFinding.title.like("%BUDGET%"))
+        .join(RuntimeTrajectory, RuntimeTrajectory.id == EvidenceFinding.trajectory_id)
+        .filter(
+            RuntimeTrajectory.ai_system_id == model_stack["system"].id,
+            EvidenceFinding.title.like("%BUDGET%"),
+        )
         .count()
     )
     assert risk_findings == 0

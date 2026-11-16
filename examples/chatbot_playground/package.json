@@ -1,0 +1,9 @@
+{
+  "name": "rai-chatbot-playground",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Simple chat UI to test every provider route of the RAI gateway",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
