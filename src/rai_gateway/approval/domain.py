@@ -33,6 +33,7 @@ class ApprovalRequirement(StrEnum):
 class IntegrationType(StrEnum):
     MCP = "mcp"
     EXTERNAL_SERVICE = "external_service"
+    CLOUD_GOVERNANCE = "cloud_governance"
 
 
 APPROVAL_TRANSITIONS: dict[ApprovalStatus, set[ApprovalStatus]] = {

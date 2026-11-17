@@ -213,6 +213,12 @@ export const navSections: NavSection[] = [
     label: "Organization",
     items: [
       {
+        label: "Integrations",
+        href: "/integrations",
+        icon: "network",
+        roles: ["General Admin", "RAI Officer", "Auditor"],
+      },
+      {
         label: "Team & roles",
         href: "/organization/team",
         icon: "users",

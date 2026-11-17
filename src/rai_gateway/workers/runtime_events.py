@@ -80,7 +80,18 @@ def run_once(db: Session | None = None) -> dict[str, int]:
     try:
         expired = ApprovalService(session).expire_due_approvals(limit=100)
         outbox = process_outbox_to_webhooks(session, limit=50)
-        return {"expired": expired, "outbox_processed": outbox}
+        from rai_gateway.workers.cloud_sync import process_cloud_jobs
+
+        cloud_jobs = process_cloud_jobs(session, limit=5)
+        from rai_gateway.cloud_governance.scheduler import process_connection_schedules
+
+        scheduled = process_connection_schedules(session, limit=20)
+        return {
+            "expired": expired,
+            "outbox_processed": outbox,
+            "cloud_jobs_processed": cloud_jobs,
+            "cloud_scheduled": scheduled,
+        }
     finally:
         if own_session:
             session.close()

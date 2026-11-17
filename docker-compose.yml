@@ -31,6 +31,8 @@ services:
     build: .
     ports:
       - "8001:8000"
+    volumes:
+      - ${GOOGLE_ADC_HOST_PATH:-C:/Users/khhab/AppData/Roaming/gcloud/application_default_credentials.json}:/run/secrets/gcp-adc.json:ro
     # Pass through host `.env` (see `.env.production.example` for the full set).
     # Explicit `environment` keys below override env_file (Docker network URLs, etc.).
     env_file:
@@ -70,7 +72,7 @@ services:
       - ADMIN_BOOTSTRAP_ROLE=${ADMIN_BOOTSTRAP_ROLE:-admin}
       - ADMIN_SESSION_MINUTES=${ADMIN_SESSION_MINUTES:-480}
       # Phase 23 — CORS
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
       - CORS_ALLOW_CREDENTIALS=${CORS_ALLOW_CREDENTIALS:-true}
       - CORS_ALLOW_METHODS=${CORS_ALLOW_METHODS:-GET,POST,PUT,DELETE,OPTIONS,PATCH}
       - CORS_ALLOW_HEADERS=${CORS_ALLOW_HEADERS:-Content-Type,Authorization,X-Organization-ID,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key}
@@ -146,6 +148,7 @@ services:
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
       - GCP_LOCATION=${GCP_LOCATION:-us-central1}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcp-adc.json}
       # Build metadata (optional)
       - GIT_COMMIT_SHA=${GIT_COMMIT_SHA:-}
       - BUILD_TIME=${BUILD_TIME:-}
@@ -161,6 +164,28 @@ services:
       timeout: 10s
       retries: 3
 
+  rai-worker:
+    build: .
+    command: ["rai-worker", "runtime-events", "--interval", "10"]
+    volumes:
+      - ${GOOGLE_ADC_HOST_PATH:-C:/Users/khhab/AppData/Roaming/gcloud/application_default_credentials.json}:/run/secrets/gcp-adc.json:ro
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=postgresql://rai_user:rai_password@postgres:5432/rai_gateway
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - EVIDENCE_ENCRYPTION_KEY=${EVIDENCE_ENCRYPTION_KEY:-dev-only-encryption-key}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - GCP_LOCATION=${GCP_LOCATION:-us-central1}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/run/secrets/gcp-adc.json}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   control-plane-ui:
     build:
       context: ./control-plane-ui
@@ -168,7 +193,7 @@ services:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8001}
         NEXT_PUBLIC_ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
     ports:
-      - "3000:3000"
+      - "${CONTROL_PLANE_UI_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8001}

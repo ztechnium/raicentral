@@ -169,6 +169,9 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
             "finops:read",
             "finops:export",
             "finops:manage_budgets",
+            "cloud_governance:read",
+            "cloud_governance:manage",
+            "cloud_governance:enforce",
         ],
     },
     "ai_system_owner": {
@@ -345,6 +348,9 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
             "sdk:manage",
             "finops:read",
             "finops:manage_budgets",
+            "cloud_governance:read",
+            "cloud_governance:manage",
+            "cloud_governance:enforce",
         ],
     },
     "risk_officer": {
@@ -414,6 +420,7 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
             "sdk:read",
             "finops:read",
             "finops:export",
+            "cloud_governance:read",
         ],
     },
     "incident_manager": {
