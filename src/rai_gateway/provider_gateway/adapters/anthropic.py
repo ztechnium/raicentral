@@ -110,6 +110,11 @@ class AnthropicAdapter(ProviderProtocolAdapter):
     ) -> str:
         suffix = strip_route_prefix(request.path, ROUTE_PREFIX)
         base = credential.base_url.rstrip("/")
+        # The route prefix already consumed "/v1", and the default base URL
+        # (https://api.anthropic.com) has none. Anthropic serves /v1/messages, so
+        # re-add the version unless the configured base URL already ends with it.
+        if not base.endswith("/v1"):
+            base = f"{base}/v1"
         return f"{base}{suffix}"
 
     def is_streaming(self, request: ProxyRequest) -> bool:
