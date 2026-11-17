@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAI Chat Playground</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --text:#1c2230; --muted:#6b7385; --line:#dde1e8; --accent:#3b5bdb; --ok:#2b8a3e; --bad:#c92a2a; --user:#e7edff; --bot:#f1f3f5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#13161c; --panel:#1b1f27; --text:#e6e9ef; --muted:#8c94a6; --line:#2b313c; --accent:#748ffc; --ok:#69db7c; --bad:#ff8787; --user:#27315a; --bot:#242a35; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:grid; grid-template-columns:320px 1fr; }
+  aside { background:var(--panel); border-right:1px solid var(--line); padding:16px; overflow-y:auto; }
+  h1 { font-size:16px; margin:0 0 4px; } .sub { color:var(--muted); font-size:12px; margin-bottom:16px; word-break:break-all; }
+  label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  select,input,textarea { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  button { padding:7px 12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--text); cursor:pointer; font:inherit; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:wait; }
+  .row { display:flex; gap:8px; } .row>* { flex:1; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--muted); margin-right:6px; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  #tests { margin-top:8px; font-size:12px; } #tests div { padding:3px 0; border-bottom:1px solid var(--line); }
+  main { display:flex; flex-direction:column; min-width:0; height:100vh; }
+  #log { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:78%; padding:10px 14px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
+  .msg.user { align-self:flex-end; background:var(--user); } .msg.assistant { align-self:flex-start; background:var(--bot); }
+  .msg.error { align-self:flex-start; background:transparent; border:1px solid var(--bad); color:var(--bad); }
+  .meta { font-size:11px; color:var(--muted); margin-top:6px; white-space:normal; }
+  details { margin-top:6px; font-size:11px; } pre { overflow:auto; max-height:260px; background:var(--bg); padding:8px; border-radius:6px; }
+  form { display:flex; gap:8px; padding:12px 20px; border-top:1px solid var(--line); background:var(--panel); }
+  form textarea { resize:none; height:46px; }
+  .tabs { display:flex; gap:4px; padding:8px 20px 0; border-bottom:1px solid var(--line); background:var(--panel); }
+  .tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; color:var(--muted); }
+  .tabs button.on { color:var(--text); border-bottom-color:var(--accent); }
+  #mcpView { display:none; flex:1; overflow-y:auto; padding:20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; margin-bottom:14px; }
+  .card h3 { margin:0 0 8px; font-size:14px; } .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tool { border-top:1px solid var(--line); padding:8px 0; } .tool code, .rule { font:12px ui-monospace,monospace; background:var(--bg); padding:1px 5px; border-radius:4px; }
+  .tool .d { color:var(--muted); font-size:12px; margin:2px 0 4px; } .pill { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--muted); }
+  .allow { color:var(--ok); } .deny { color:var(--bad); } .small { font-size:12px; padding:3px 8px; }
+  .tool textarea { font:12px ui-monospace,monospace; margin:6px 0; }
+  .empty { margin:auto; color:var(--muted); text-align:center; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>RAI Chat Playground</h1>
+  <div class="sub" id="gw">…</div>
+  <div><span class="dot" id="hdot"></span><span id="htxt">checking gateway…</span></div>
+
+  <label>Provider</label>
+  <select id="provider"></select>
+
+  <label>Model <span style="float:right">custom ↓</span></label>
+  <select id="modelSel"></select>
+  <input id="modelCustom" placeholder="or type any model / deployment id">
+
+  <div id="extra"></div>
+
+  <label>Runtime credential <span id="credNote"></span></label>
+  <input id="cred" type="password" placeholder="rai_rt_… (blank = use server .env)" autocomplete="off">
+
+  <label>System prompt</label>
+  <textarea id="system" rows="2" placeholder="optional"></textarea>
+
+  <div class="row">
+    <div><label>Temperature</label><input id="temp" type="number" step="0.1" min="0" max="2" placeholder="default"></div>
+    <div><label>Max tokens</label><input id="maxTokens" type="number" value="1024"></div>
+  </div>
+
+  <label style="margin-top:16px"><input type="checkbox" id="useTools" checked style="width:auto"> Let the model use MCP tools <span id="toolCount"></span></label>
+  <label><input type="checkbox" id="raiCheck" checked style="width:auto"> Authorize every tool call with RAI</label>
+
+  <div class="row" style="margin-top:16px">
+    <button id="testOne">Test provider</button>
+    <button id="testAll">Test all</button>
+  </div>
+  <div id="tests"></div>
+  <div class="row" style="margin-top:16px"><button id="clear">Clear chat</button></div>
+</aside>
+
+<main>
+  <div class="tabs"><button class="on" data-tab="chat">Chat</button><button data-tab="mcp">MCP tools</button></div>
+  <div id="mcpView">
+    <div class="card">
+      <h3>Add MCP server</h3>
+      <div class="grid2">
+        <div><label>Name (as in your RAI catalog)</label><input id="mName" placeholder="github"></div>
+        <div><label>Transport</label><select id="mTransport"><option value="http">Remote (Streamable HTTP)</option><option value="stdio">Local (stdio command)</option></select></div>
+      </div>
+      <div id="mHttp">
+        <label>URL</label><input id="mUrl" value="https://api.githubcopilot.com/mcp/">
+        <label>Bearer token (e.g. GitHub PAT, kept in server memory only)</label><input id="mToken" type="password" autocomplete="off" placeholder="ghp_…">
+      </div>
+      <div id="mStdio" style="display:none">
+        <label>Command</label><input id="mCmd" placeholder="npx">
+        <label>Arguments</label><input id="mArgs" placeholder="-y @modelcontextprotocol/server-github">
+        <label>Env (KEY=value per line)</label><textarea id="mEnv" rows="2" placeholder="GITHUB_PERSONAL_ACCESS_TOKEN=ghp_…"></textarea>
+      </div>
+      <div class="row" style="margin-top:12px;align-items:center"><button class="primary" id="mConnect" style="flex:0 0 160px">Connect &amp; list tools</button><span id="mMsg" class="meta"></span></div>
+    </div>
+    <div class="card">
+      <h3>Check with RAI as</h3>
+      <div class="grid2">
+        <div><label>Client type</label><select id="hClient"><option value="cursor">cursor (beforeMCPExecution)</option><option value="claude_code">claude_code (PreToolUse)</option><option value="gemini_cli">gemini_cli (BeforeTool)</option></select></div>
+        <div class="meta" style="align-self:end">Sends the tool call to <code>/v1/runtime/client-hooks/authorize</code>, the same decision path your tool rules use. "Check &amp; call" runs the tool only if RAI allows it.</div>
+      </div>
+    </div>
+    <div id="mServers"></div>
+  </div>
+  <div id="log"><div class="empty">Pick a provider and model, then send a prompt.<br>Every request goes through the RAI gateway.</div></div>
+  <div id="chips" style="padding:8px 20px 0;display:flex;gap:6px;flex-wrap:wrap">
+    <span class="meta" style="align-self:center">Try:</span>
+    <button class="small" data-p="What's the weather in Cairo, and what is 12 * (3 + 4)?">safe tools</button>
+    <button class="small" data-p="Send an email to boss@example.com with subject 'Hello' saying the report is ready.">send_email</button>
+    <button class="small" data-p="Delete the file /etc/passwd.">delete_file</button>
+    <button class="small" data-p="Transfer 5000 to account 12345678.">transfer_money</button>
+    <button class="small" data-p="Create an issue titled 'Login bug' in repo acme/app.">create_issue</button>
+  </div>
+  <form id="form">
+    <textarea id="prompt" placeholder="Send a prompt…  (Enter to send, Shift+Enter for newline)"></textarea>
+    <button class="primary" id="send" style="flex:0 0 90px">Send</button>
+  </form>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let cfg, history = [];
+const store = { get:(k,d)=>{ try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set:(k,v)=>{ try { localStorage.setItem(k,v); } catch {} } };
+
+const extras = {
+  "vertex-ai": [["project","GCP project id"],["location","Location (global, us-central1…)"]],
+  "azure-openai": [["apiVersion","API version"]],
+};
+
+function renderProvider() {
+  const p = cfg.providers[$("provider").value];
+  $("modelSel").innerHTML = p.models.map(m => `<option>${m}</option>`).join("");
+  $("modelCustom").value = "";
+  $("extra").innerHTML = (extras[$("provider").value] || []).map(([k, ph]) =>
+    `<label>${ph}</label><input data-extra="${k}" value="${(p.extra?.[k] ?? store.get("x_"+k,"")).toString().replace(/"/g,"&quot;")}">`).join("");
+  $("extra").querySelectorAll("input").forEach(i => i.oninput = () => store.set("x_"+i.dataset.extra, i.value));
+  store.set("provider", $("provider").value);
+}
+const model = () => $("modelCustom").value.trim() || $("modelSel").value;
+const extra = () => Object.fromEntries([...$("extra").querySelectorAll("input")].map(i => [i.dataset.extra, i.value.trim()]));
+
+async function call(messages) {
+  const r = await fetch("/api/chat", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
+    provider: $("provider").value, model: model(), messages, system: $("system").value,
+    temperature: $("temp").value, maxTokens: $("maxTokens").value, extra: extra(), credential: $("cred").value.trim() || undefined,
+    useTools: $("useTools").checked, raiCheck: $("raiCheck").checked, clientType: $("hClient").value, hookEvent: HOOK_EVENT[$("hClient").value],
+  })});
+  return r.json();
+}
+
+function add(cls, text, res) {
+  $("log").querySelector(".empty")?.remove();
+  const d = document.createElement("div"); d.className = "msg " + cls;
+  d.textContent = text;
+  if (res?.toolCalls?.length) {
+    const tc = document.createElement("div"); tc.className = "meta";
+    tc.innerHTML = res.toolCalls.map(c => {
+      const dec = c.rai?.decision;
+      const badge = c.allowed === false ? `<b class="deny">BLOCKED</b>` : `<b class="allow">${c.rai ? "ALLOWED" : "RAN"}</b>`;
+      const why = c.allowed === false ? ` · ${esc(dec?.reason_code ?? c.rai?.error ?? "")}` : "";
+      return `<details open><summary>🔧 ${esc(c.server)}.${esc(c.tool)} ${badge}${why}</summary><pre>${esc(JSON.stringify({ args: c.args, rai_decision: dec, result: c.result ?? c.error }, null, 2))}</pre></details>`;
+    }).join("");
+    d.prepend(tc);
+  }
+  if (res) {
+    const m = document.createElement("div"); m.className = "meta";
+    const u = res.usage ? ` · tokens in ${res.usage.input ?? "?"} / out ${res.usage.output ?? "?"}` : "";
+    const rc = Object.entries(res.headers || {}).map(([k,v]) => `${k}: ${v}`).join(" · ");
+    m.textContent = `HTTP ${res.status} · ${res.latencyMs ?? "?"} ms${u}${rc ? " · " + rc : ""}`;
+    const det = document.createElement("details");
+    det.innerHTML = "<summary>request / raw response</summary>";
+    const pre = document.createElement("pre");
+    pre.textContent = `POST ${res.url}\n\n` + (typeof res.raw === "string" ? res.raw : JSON.stringify(res.raw, null, 2));
+    det.append(pre); m.append(det); d.append(m);
+  }
+  $("log").append(d); $("log").scrollTop = $("log").scrollHeight;
+}
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("prompt").value.trim(); if (!text) return;
+  $("prompt").value = ""; add("user", text);
+  history.push({ role:"user", content:text });
+  $("send").disabled = true; $("send").textContent = "…";
+  const res = await call(history);
+  $("send").disabled = false; $("send").textContent = "Send";
+  if (res.ok) { add("assistant", res.text || "(empty response)", res); history.push({ role:"assistant", content:res.text }); }
+  else { add("error", `${res.error || "Request failed"}`, res); history.pop(); }
+};
+$("prompt").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); } };
+document.querySelectorAll("#chips button").forEach(b => b.onclick = () => { $("prompt").value = b.dataset.p; $("prompt").focus(); });
+async function refreshToolCount() {
+  try { const s = (await (await fetch("/api/mcp")).json()).servers; $("toolCount").textContent = s.length ? `(${s.map(x => `${x.name}: ${x.toolCount}`).join(", ")})` : "(no MCP servers)"; } catch {}
+}
+refreshToolCount();
+$("clear").onclick = () => { history = []; $("log").innerHTML = '<div class="empty">Chat cleared.</div>'; };
+
+async function testProvider(name) {
+  const prev = $("provider").value;
+  const p = cfg.providers[name];
+  const m = name === prev ? model() : p.models[0];
+  const ex = name === prev ? extra() : { ...(p.extra || {}) };
+  const r = await fetch("/api/chat", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
+    provider:name, model:m, messages:[{role:"user",content:"Reply with the single word: OK"}], maxTokens:64, extra:ex, credential:$("cred").value.trim() || undefined })});
+  const res = await r.json();
+  const row = document.createElement("div");
+  row.innerHTML = `<span class="dot ${res.ok ? "ok" : "bad"}"></span><b>${name}</b> / ${m} — ${res.ok ? `OK ${res.latencyMs} ms` : `HTTP ${res.status}: ${(res.error||"").slice(0,140)}`}`;
+  $("tests").prepend(row);
+}
+$("testOne").onclick = async () => { $("testOne").disabled = true; await testProvider($("provider").value); $("testOne").disabled = false; };
+$("testAll").onclick = async () => { $("testAll").disabled = true; $("tests").innerHTML = ""; for (const n of Object.keys(cfg.providers)) await testProvider(n); $("testAll").disabled = false; };
+
+// ---------- MCP ----------
+const HOOK_EVENT = { cursor:"beforeMCPExecution", claude_code:"PreToolUse", gemini_cli:"BeforeTool" };
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mcpState = { servers: [] };
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  const mcp = b.dataset.tab === "mcp";
+  $("mcpView").style.display = mcp ? "block" : "none";
+  $("log").style.display = $("form").style.display = $("chips").style.display = mcp ? "none" : ""; if (!mcp) refreshToolCount();
+  if (mcp) loadServers();
+});
+$("mTransport").onchange = () => { const h = $("mTransport").value === "http"; $("mHttp").style.display = h ? "" : "none"; $("mStdio").style.display = h ? "none" : ""; };
+
+async function loadServers() { mcpState.servers = (await (await fetch("/api/mcp")).json()).servers; renderServers(); }
+
+$("mConnect").onclick = async () => {
+  $("mConnect").disabled = true; $("mMsg").textContent = "connecting…"; $("mMsg").className = "meta";
+  const env = Object.fromEntries($("mEnv").value.split("\n").map(l => l.trim()).filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  const r = await (await fetch("/api/mcp", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
+    name: $("mName").value, transport: $("mTransport").value, url: $("mUrl").value, token: $("mToken").value,
+    command: $("mCmd").value, args: $("mArgs").value, env })})).json();
+  $("mConnect").disabled = false;
+  if (r.error) { $("mMsg").textContent = "✗ " + r.error; $("mMsg").className = "meta deny"; return; }
+  $("mMsg").textContent = `✓ ${r.name}: ${r.toolCount} tools`; $("mMsg").className = "meta allow";
+  await loadServers();
+};
+
+function renderServers() {
+  $("mServers").innerHTML = mcpState.servers.map((s) => `
+    <div class="card" data-server="${esc(s.name)}">
+      <div class="row" style="align-items:center">
+        <h3 style="flex:1;margin:0">${esc(s.name)} <span class="pill">${s.transport}</span> <span class="pill">${s.toolCount} tools</span></h3>
+        <button class="small" data-act="copy" style="flex:0 0 auto">Copy tool names</button>
+        <button class="small" data-act="json" style="flex:0 0 auto">Copy JSON</button>
+        <button class="small" data-act="refresh" style="flex:0 0 auto">Refresh</button>
+        <button class="small" data-act="remove" style="flex:0 0 auto">Remove</button>
+      </div>
+      <div class="meta">${esc(s.target)}${s.server?.name ? ` · ${esc(s.server.name)} ${esc(s.server.version ?? "")}` : ""}</div>
+      ${s.tools.map((t) => `
+        <div class="tool" data-tool="${esc(t.name)}">
+          <div><code>${esc(t.name)}</code> <span class="pill" title="Use this server.tool value in a tool rule">rule: <span class="rule">${esc(s.name)}.${esc(t.name)}</span></span></div>
+          <div class="d">${esc((t.description ?? "").split("\n")[0].slice(0, 220))}</div>
+          <details><summary>input schema &amp; test</summary>
+            <pre>${esc(JSON.stringify(t.inputSchema ?? {}, null, 2))}</pre>
+            <textarea rows="3" data-args placeholder='arguments as JSON, e.g. {"owner":"me","repo":"x"}'>{}</textarea>
+            <div class="row" style="align-items:center">
+              <button class="small" data-act="check" style="flex:0 0 auto">Check with RAI</button>
+              <button class="small primary" data-act="callcheck" style="flex:0 0 auto">Check &amp; call</button>
+              <button class="small" data-act="call" style="flex:0 0 auto" title="Bypasses RAI and calls the MCP server directly">Call directly</button>
+            </div>
+            <div data-out class="meta"></div>
+          </details>
+        </div>`).join("")}
+    </div>`).join("") || '<div class="empty">No MCP servers yet. Add one above (e.g. GitHub).</div>';
+}
+
+const copy = (t) => navigator.clipboard?.writeText(t);
+$("mServers").onclick = async (e) => {
+  const btn = e.target.closest("button[data-act]"); if (!btn) return;
+  const card = btn.closest("[data-server]"); const name = card.dataset.server;
+  const srv = mcpState.servers.find(s => s.name === name); const act = btn.dataset.act;
+  if (act === "copy") return copy(srv.tools.map(t => `${name}.${t.name}`).join("\n"));
+  if (act === "json") return copy(JSON.stringify({ server: name, tools: srv.tools.map(t => ({ name: t.name, rule_key: `${name}.${t.name}`, description: t.description, inputSchema: t.inputSchema })) }, null, 2));
+  if (act === "remove") { await fetch("/api/mcp/" + encodeURIComponent(name), { method:"DELETE" }); return loadServers(); }
+  if (act === "refresh") { await fetch(`/api/mcp/${encodeURIComponent(name)}/refresh`, { method:"POST" }); return loadServers(); }
+
+  const toolEl = btn.closest("[data-tool]"); const out = toolEl.querySelector("[data-out]");
+  let args; try { args = JSON.parse(toolEl.querySelector("[data-args]").value || "{}"); } catch { out.innerHTML = '<span class="deny">Arguments are not valid JSON</span>'; return; }
+  const client = $("hClient").value;
+  out.textContent = "running…"; btn.disabled = true;
+  const r = await (await fetch(`/api/mcp/${encodeURIComponent(name)}/call`, { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
+    tool: toolEl.dataset.tool, arguments: args, check: act !== "call", execute: act !== "check",
+    clientType: client, hookEvent: HOOK_EVENT[client], credential: $("cred").value.trim() || undefined })})).json();
+  btn.disabled = false;
+  let h = "";
+  if (r.rai) {
+    const d = r.rai.decision;
+    h += r.rai.ok && d
+      ? `<div><b class="${d.allowed ? "allow" : "deny"}">RAI: ${d.allowed ? "ALLOWED" : "BLOCKED"}</b> · effect ${esc(d.effect)} · ${esc(d.reason_code ?? "")}<br>${esc(d.human_explanation ?? "")}</div>`
+      : `<div class="deny">RAI check failed (HTTP ${r.rai.status}): ${esc(r.rai.error)}</div>`;
+    h += `<details><summary>RAI payload / decision</summary><pre>${esc(JSON.stringify({ sent: r.rai.sent, decision: d }, null, 2))}</pre></details>`;
+  }
+  if (r.executed) h += r.toolError ? `<div class="deny">Tool error: ${esc(r.toolError)}</div>` : `<div>Tool result (${r.latencyMs} ms):</div><pre>${esc(JSON.stringify(r.result, null, 2))}</pre>`;
+  else if (r.rai && act !== "check") h += "<div>Tool was NOT executed.</div>";
+  out.innerHTML = h || esc(r.error ?? "");
+};
+
+(async () => {
+  cfg = await (await fetch("/api/config")).json();
+  $("gw").textContent = cfg.gateway;
+  $("credNote").textContent = cfg.hasEnvCredential ? "(server .env set)" : "(required)";
+  $("provider").innerHTML = Object.entries(cfg.providers).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
+  $("provider").value = store.get("provider", "anthropic");
+  if (!$("provider").value) $("provider").selectedIndex = 0;
+  $("provider").onchange = renderProvider; renderProvider();
+  const h = await (await fetch("/api/health")).json();
+  $("hdot").className = "dot " + (h.reachable ? "ok" : "bad");
+  $("htxt").textContent = h.reachable ? `gateway reachable (HTTP ${h.status})` : `gateway unreachable (${h.error})`;
+})();
+</script>
+</body>
+</html>

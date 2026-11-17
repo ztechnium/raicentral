@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from rai_gateway.core.config import settings
 from rai_gateway.models.policy_engine import ContentRule, PolicyCollection
 from rai_gateway.risk_intelligence.domain import (
     ContentAppliesTo,
@@ -169,7 +170,18 @@ class ContentEvaluationService:
             temperature=config_row.temperature or 0.0,
             timeout_seconds=config_row.timeout_seconds or 30,
             max_rules_per_call=config_row.max_rules_per_call or 20,
-            api_key=config_row.api_key_encrypted,
+            api_key=config_row.api_key_encrypted
+            or settings.content_evaluator_api_key,
+            base_url=getattr(config_row, "base_url", None)
+            or settings.content_evaluator_base_url,
+            location=getattr(config_row, "location", None)
+            or settings.content_evaluator_location,
+            gcp_project_id=getattr(config_row, "gcp_project_id", None)
+            or settings.content_evaluator_gcp_project_id,
+            service_account_json=getattr(
+                config_row, "service_account_json_encrypted", None
+            )
+            or settings.content_evaluator_service_account_json,
         )
         request = EvaluatorRequest(
             content=content,
@@ -209,6 +221,7 @@ class ContentEvaluationService:
                 "id": str(row.id) if row else None,
                 "status": ContentEvaluationStatus.FAILED.value,
                 "failure_type": exc.failure_type,
+                "error": exc.message[:500],
                 "evaluations": [],
                 "intervention_hints": [],
                 "provider": config_row.provider,

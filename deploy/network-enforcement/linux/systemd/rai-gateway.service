@@ -1,0 +1,19 @@
+[Unit]
+Description=RaiCentral enforcement gateway
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+EnvironmentFile=-/etc/rai-gateway/environment
+ExecStart=/usr/bin/docker run --rm \
+  --name rai-gateway \
+  -p 127.0.0.1:8000:8000 \
+  --env-file /etc/rai-gateway/environment \
+  rai-gateway:latest
+ExecStop=/usr/bin/docker stop rai-gateway
+
+[Install]
+WantedBy=multi-user.target

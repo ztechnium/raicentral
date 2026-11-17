@@ -43,6 +43,10 @@ class EvaluatorConfigUpsert(BaseModel):
     minimum_confidence_to_intervene: float = 0.9
     fail_closed: bool = False
     fallback_provider: str | None = None
+    base_url: str | None = None
+    location: str | None = None
+    gcp_project_id: str | None = None
+    service_account_json: str | None = None
 
 
 class ContentEvaluateRequest(BaseModel):
@@ -313,6 +317,25 @@ def list_effective_budgets(
         provider=provider,
     )
     return {"items": svc._budgets.effective_budgets(ctx)}
+
+
+@router.get("/risk/budgets/scope-options")
+def budget_scope_options(
+    scope_type: str,
+    ai_system_id: UUID | None = None,
+    tenant: TenantContext = Depends(require_permission("risk:read")),
+    db: Session = Depends(get_db),
+):
+    """Records a budget can be scoped to (agents, models, tools...), per AI system."""
+    from rai_gateway.risk_intelligence.budget_scope_options import list_scope_options
+
+    return {
+        "scope_type": scope_type.upper(),
+        "ai_system_id": str(ai_system_id) if ai_system_id else None,
+        "items": list_scope_options(
+            db, scope_type=scope_type, ai_system_id=ai_system_id
+        ),
+    }
 
 
 @router.post("/risk/budgets")
@@ -742,6 +765,8 @@ def upsert_evaluator_config(
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/content-evaluator/evaluate")

@@ -15,3 +15,11 @@ describe("FinOps cost display", () => {
     expect(formatCost(null, "ACTUAL")).toBe("Unavailable");
   });
 });
+
+describe("sub-cent cost precision", () => {
+  it("does not round tiny LLM costs to zero", () => {
+    expect(formatCost(0.0000465, "ESTIMATED")).toBe("≈ $0.0000465");
+    expect(formatCost(0.0084, "ACTUAL")).toContain("0.0084");
+    expect(formatCost(12.3456, "BILLED")).toContain("12.35");
+  });
+});

@@ -771,6 +771,19 @@ export function transitionAgent(agentId: string, status: string) {
   return apiPost<AgentSummary>(`/v1/agents/${agentId}/lifecycle`, { status });
 }
 
+export function setVersionContentRuleMode(versionId: string, mode: string | null) {
+  return apiPut<AgentVersionSummary>(`/v1/agent-versions/${versionId}/content-rule-mode`, {
+    mode,
+  });
+}
+
+export function setVersionContentCapture(
+  versionId: string,
+  policy: { prompt?: string; model_response?: string },
+) {
+  return apiPut<AgentVersionSummary>(`/v1/agent-versions/${versionId}/content-capture`, policy);
+}
+
 export function createAgentVersion(
   agentId: string,
   payload: {
@@ -1918,6 +1931,10 @@ export function upsertContentEvaluatorConfig(payload: {
   minimum_confidence_to_intervene?: number;
   fail_closed?: boolean;
   fallback_provider?: string | null;
+  base_url?: string | null;
+  location?: string | null;
+  gcp_project_id?: string | null;
+  service_account_json?: string | null;
 }) {
   return apiPut<ContentEvaluatorConfig>(`/v1/content-evaluator/config`, payload);
 }
@@ -2164,6 +2181,7 @@ export function createRiskBudget(payload: {
   scope_id?: string;
   metric: string;
   tool_name?: string;
+  tool_id?: string;
   resource_filter?: Record<string, unknown>;
   limit_value: number;
   window_seconds?: number;
@@ -2174,6 +2192,19 @@ export function createRiskBudget(payload: {
   enabled?: boolean;
 }) {
   return apiPost<RuntimeBudget>(`/v1/risk/budgets`, payload);
+}
+
+export type BudgetScopeOption = {
+  value: string;
+  label: string;
+  detail?: string | null;
+  tool_name?: string;
+};
+
+export function getBudgetScopeOptions(params: { scope_type: string; ai_system_id?: string }) {
+  const query = new URLSearchParams({ scope_type: params.scope_type });
+  if (params.ai_system_id) query.set("ai_system_id", params.ai_system_id);
+  return apiGet<{ items: BudgetScopeOption[] }>(`/v1/risk/budgets/scope-options?${query}`);
 }
 
 export function getEffectiveRiskBudgets(params?: {

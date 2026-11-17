@@ -49,6 +49,41 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _publish_runtime_cache_revocation(
+    identity_id: UUID, *, suspended: bool = False, reason: str | None = None
+) -> None:
+    try:
+        from rai_gateway.provider_gateway.production.policy_cache import (
+            shared_policy_cache,
+        )
+
+        if suspended:
+            shared_policy_cache.mark_runtime_suspended(
+                str(identity_id), reason=reason or "runtime_suspend"
+            )
+        else:
+            shared_policy_cache.mark_runtime_revoked(
+                str(identity_id), reason=reason or "runtime_revoke"
+            )
+    except Exception:
+        pass
+
+
+def _publish_delegation_cache_revocation(
+    delegation_id: UUID, *, reason: str | None = None
+) -> None:
+    try:
+        from rai_gateway.provider_gateway.production.policy_cache import (
+            shared_policy_cache,
+        )
+
+        shared_policy_cache.mark_delegation_revoked(
+            str(delegation_id), reason=reason or "delegation_revoke"
+        )
+    except Exception:
+        pass
+
+
 def _sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -245,12 +280,14 @@ class RuntimeIdentityService:
         updated_by: str,
         reason: str | None = None,
     ) -> AgentRuntimeIdentity:
-        return self._transition(
+        identity = self._transition(
             self.get_runtime_identity(identity_id),
             RuntimeIdentityStatus.SUSPENDED.value,
             updated_by=updated_by,
             reason=reason,
         )
+        _publish_runtime_cache_revocation(identity.id, suspended=True, reason=reason)
+        return identity
 
     def activate_runtime_identity(
         self,
@@ -287,6 +324,7 @@ class RuntimeIdentityService:
                     cred.id,
                     revoked_by=updated_by,
                 )
+        _publish_runtime_cache_revocation(identity.id, suspended=False, reason=reason)
         return identity
 
     def mark_expired_if_needed(self, identity: AgentRuntimeIdentity) -> None:
@@ -640,6 +678,7 @@ class DelegationService:
         )
         self._db.commit()
         self._db.refresh(grant)
+        _publish_delegation_cache_revocation(grant.id, reason=reason or "suspended")
         return grant
 
     def activate_delegation(
@@ -722,6 +761,7 @@ class DelegationService:
         )
         self._db.commit()
         self._db.refresh(grant)
+        _publish_delegation_cache_revocation(grant.id, reason=reason)
         return grant
 
     def compute_effective_status(self, grant: DelegationGrant) -> str:

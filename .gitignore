@@ -78,3 +78,7 @@ node_modules/
 
 # Tooling caches
 control-plane-ui/.turbo/
+
+# GCP service account keys (never commit)
+vertex-gemini.json
+*-sa-key.json

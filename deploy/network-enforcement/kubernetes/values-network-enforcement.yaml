@@ -1,0 +1,25 @@
+# Helm values overlay — use with deploy/helm/rai-control-plane
+replicaCount: 2
+
+networkEnforcement:
+  enabled: true
+  workloadEgressDenyInternet: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+env:
+  GATEWAY_ENFORCEMENT_MODE: ENFORCE
+  FAIL_CLOSED_ON_RAI_UNAVAILABLE: "true"
+  PROVIDER_GATEWAY_ISOLATED_CREDENTIALS: "true"
+
+service:
+  type: ClusterIP
+  port: 8000

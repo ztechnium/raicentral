@@ -46,15 +46,30 @@ class Settings(BaseSettings):
     # Anthropic (Claude)
     anthropic_api_key: Optional[str] = None
 
+    # Google AI (Gemini API)
+    google_ai_api_key: Optional[str] = None
+    google_ai_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # AWS Bedrock
     aws_region: str = "us-east-1"  # boto3 credentials from environment/IAM
+    bedrock_runtime_url: Optional[str] = None
 
     # Google Vertex AI
     gcp_project_id: Optional[str] = None
     gcp_location: str = "us-central1"
+    # Default location used when the client does not send one. When true, the gateway
+    # ignores the client's `locations/<x>` and always uses gcp_location.
+    gcp_pin_location: bool = False
+    # Service-account credentials the gateway uses to call Vertex AI (server-side only).
+    # Either a path (standard GOOGLE_APPLICATION_CREDENTIALS) or raw JSON in one env var.
+    # When neither is set the gateway falls back to the GCE/GKE metadata server.
+    google_application_credentials: Optional[str] = None
+    gcp_service_account_json: Optional[str] = None
 
     # Ollama (local/on-prem)
     ollama_endpoint: str = "http://localhost:11434"
+    provider_gateway_ollama_enabled: bool = False
+    provider_gateway_ollama_allowlist: str = "localhost,127.0.0.1"
 
     # Data Classification Service
     data_classification_url: Optional[str] = None
@@ -66,6 +81,25 @@ class Settings(BaseSettings):
     # Cache Configuration
     redis_url: str = "redis://localhost:6379"
     cache_ttl_seconds: int = 3600
+
+    # Content Rule evaluator (LLM-as-judge). When CONTENT_EVALUATOR_PROVIDER is set it is
+    # the default for every AI system that has no evaluator row of its own, and
+    # CONTENT_EVALUATOR_API_KEY / _BASE_URL fill in what a row leaves blank.
+    # provider: mock | openai | openai_compatible | deepseek | gemini | vertex
+    content_evaluator_provider: Optional[str] = None
+    content_evaluator_model: Optional[str] = None
+    content_evaluator_api_key: Optional[str] = None
+    content_evaluator_base_url: Optional[str] = None
+    # Vertex region for the evaluator model (Gemini 3.x models are global-only).
+    content_evaluator_location: str = "global"
+    # Optional dedicated Google project / service-account key for the evaluator
+    # (defaults to GCP_PROJECT_ID and the gateway's own service account).
+    content_evaluator_gcp_project_id: Optional[str] = None
+    content_evaluator_service_account_json: Optional[str] = None
+    content_evaluator_timeout_seconds: int = 30
+    content_evaluator_temperature: float = 0.0
+    content_evaluator_fail_closed: bool = False
+    content_evaluator_min_confidence_to_intervene: float = 0.9
 
     # Observability
     otel_endpoint: Optional[str] = None
@@ -119,6 +153,41 @@ class Settings(BaseSettings):
     object_storage_endpoint: Optional[str] = None
     oidc_jwks_url: Optional[str] = None
     fail_closed_on_rai_unavailable: bool = True
+    # Runtime gateway rollout posture: OBSERVE | WARN | ENFORCE. Unknown values
+    # are treated as ENFORCE (fail closed).
+    gateway_enforcement_mode: str = "ENFORCE"
+    # Shared secret for /v1/network-observation/events collectors (flow logs, eBPF, etc.).
+    network_observation_ingest_token: Optional[str] = None
+
+    # Provider proxy (infrastructure gateway) transport limits.
+    provider_gateway_max_body_bytes: int = 10 * 1024 * 1024
+    # Pre-call token budgets: also reserve the caller's max-output-tokens cap. Off by
+    # default (output is reconciled to real usage after the call); on is stricter and
+    # can deny small budgets before any usage is recorded.
+    provider_gateway_reserve_max_output_tokens: bool = False
+    provider_gateway_max_header_bytes: int = 32 * 1024
+    provider_gateway_max_response_bytes: int = 64 * 1024 * 1024
+    provider_gateway_connect_timeout_seconds: float = 10.0
+    provider_gateway_read_timeout_seconds: float = 120.0
+    provider_gateway_max_stream_duration_seconds: float = 600.0
+    provider_gateway_max_concurrent_streams: int = 500
+    provider_gateway_max_concurrent_per_runtime: int = 20
+    provider_gateway_max_concurrent_per_provider: int = 100
+    provider_gateway_rate_limit_per_runtime_per_minute: int = 120
+    provider_gateway_policy_cache_ttl_seconds: int = 60
+    provider_gateway_policy_cache_fast_invalidate_ttl_seconds: int = 5
+    provider_gateway_outbound_allowlist: str = ""
+    # Private link / PSC host suffixes allowed when not in the public catalog.
+    provider_gateway_private_endpoint_suffixes: str = (
+        ".privatelink.azure.com,.p.googleapis.com,.private.googleapis.com"
+    )
+    provider_gateway_verify_tls: bool = True
+    provider_gateway_ca_bundle_path: Optional[str] = None
+    provider_gateway_drain_seconds: int = 30
+    gateway_rollout_phase: str = "PROXY_OPTIONAL"
+    provider_gateway_max_retries: int = 2
+    # When true, upstream provider keys come from credential refs + grants only.
+    provider_gateway_isolated_credentials: bool = False
     approval_webhooks_enabled: bool = True
     webhook_allow_private_hosts: bool = False
     webhook_allow_http: bool = False

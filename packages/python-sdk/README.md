@@ -1,5 +1,8 @@
 # RAI Control Plane Python SDK
 
+> **Do not edit this copy.** It is a mirror of the source of truth:
+> [github.com/ztechnium/rai-python-sdk](https://github.com/ztechnium/rai-python-sdk)
+
 Official Python client for the RAI Control Plane stable `/sdk/v1` governance API.
 
 **Never execute a consequential side effect before RAI returns ALLOW.**

@@ -31,6 +31,7 @@ import rai_gateway.models.portfolio  # noqa: F401
 import rai_gateway.models.productization  # noqa: F401
 import rai_gateway.models.registry  # noqa: F401 — WP1 registry tables
 import rai_gateway.models.risk_intelligence  # noqa: F401 — WP6
+import rai_gateway.models.network_bypass  # noqa: F401 — Step 7 bypass detection
 import rai_gateway.models.runtime_enforcement  # noqa: F401
 from rai_gateway.core.config import settings
 from rai_gateway.models.database import Base

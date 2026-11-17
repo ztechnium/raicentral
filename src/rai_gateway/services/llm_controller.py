@@ -43,7 +43,9 @@ from rai_gateway.governance.api import router as governance_router
 from rai_gateway.identity.api import router as identity_router
 from rai_gateway.lineage.api import router as lineage_router
 from rai_gateway.models.database import Case, ExecutionAudit
+from rai_gateway.network_enforcement.api import router as network_enforcement_router
 from rai_gateway.policy.api import router as policy_router
+from rai_gateway.provider_gateway.router import router as provider_gateway_router
 from rai_gateway.portfolio.api import router as portfolio_router
 from rai_gateway.public_product.welcome_api import router as welcome_router
 from rai_gateway.registry.api import router as registry_router
@@ -74,6 +76,8 @@ app.include_router(identity_router)
 app.include_router(approval_router)
 app.include_router(policy_router)
 app.include_router(runtime_enforcement_router)
+app.include_router(provider_gateway_router)
+app.include_router(network_enforcement_router)
 app.include_router(client_hooks_router)
 app.include_router(evidence_router)
 app.include_router(risk_intelligence_router)

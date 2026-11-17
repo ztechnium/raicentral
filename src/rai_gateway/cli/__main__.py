@@ -13,6 +13,7 @@ Or if installed as a package:
 import click
 
 from rai_gateway.cli.admin import admin
+from rai_gateway.cli.gateway_doctor import gateway_doctor
 from rai_gateway.cli.orphan_cleanup import orphan_cleanup
 
 
@@ -26,6 +27,7 @@ def cli():
 # Register command groups
 cli.add_command(admin)
 cli.add_command(orphan_cleanup)
+cli.add_command(gateway_doctor, name="doctor")
 
 
 if __name__ == "__main__":

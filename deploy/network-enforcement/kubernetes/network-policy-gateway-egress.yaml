@@ -1,0 +1,38 @@
+# Gateway pods may egress to HTTPS (443) for upstream AI providers and HTTP to metadata/log sinks.
+# Private RFC1918 traffic remains allowed for Postgres, Redis, and internal ILB health checks.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rai-gateway-egress
+  namespace: rai-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rai-control-plane
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379

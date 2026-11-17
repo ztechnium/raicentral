@@ -11,15 +11,43 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { FormField } from "@/components/registry/form-field";
-import { createRiskBudget, getAISystems, getRiskBudgets, updateRiskBudget } from "@/lib/api";
+import {
+  createRiskBudget,
+  getAISystems,
+  getBudgetScopeOptions,
+  getRiskBudgets,
+  updateRiskBudget,
+  type BudgetScopeOption,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { AISystemSummary, RuntimeBudget } from "@/lib/types";
 
-const WINDOW_PRESETS = ["5m", "15m", "1h", "24h"] as const;
+/** Window presets. `seconds` is sent for the ones the backend has no short code for. */
+const WINDOWS = [
+  { value: "5m", label: "5 minutes" },
+  { value: "15m", label: "15 minutes" },
+  { value: "1h", label: "1 hour" },
+  { value: "24h", label: "24 hours" },
+  { value: "7d", label: "7 days", seconds: 604800 },
+  { value: "30d", label: "30 days", seconds: 2592000 },
+] as const;
+
+/** What "Applies to" can target. `specific` scopes pick a record from the AI system. */
+const SCOPES = [
+  { value: "AI_SYSTEM", label: "Whole AI system", noun: "" },
+  { value: "ORGANIZATION", label: "Whole organization", noun: "" },
+  { value: "AGENT", label: "A specific agent", noun: "agent" },
+  { value: "AGENT_VERSION", label: "A specific agent version", noun: "agent version" },
+  { value: "RUNTIME_IDENTITY", label: "A specific runtime identity", noun: "runtime identity" },
+  { value: "DELEGATION", label: "A specific delegation", noun: "delegation" },
+  { value: "MODEL", label: "A specific model", noun: "model" },
+  { value: "TOOL", label: "A specific tool", noun: "tool" },
+] as const;
 
 type BudgetFormState = {
   ai_system_id: string;
   scope_type: string;
+  scope_id: string;
   name: string;
   metric: string;
   tool_name: string;
@@ -34,6 +62,7 @@ type BudgetFormState = {
 const EMPTY_FORM: BudgetFormState = {
   ai_system_id: "",
   scope_type: "AI_SYSTEM",
+  scope_id: "",
   name: "",
   metric: "ACTION_COUNT",
   tool_name: "",
@@ -55,6 +84,52 @@ export default function RiskBudgetsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<BudgetFormState>(EMPTY_FORM);
+  const [scopeOptions, setScopeOptions] = useState<BudgetScopeOption[]>([]);
+  const [toolOptions, setToolOptions] = useState<BudgetScopeOption[]>([]);
+
+  const scopeMeta = SCOPES.find((s) => s.value === form.scope_type) ?? SCOPES[0];
+  const needsRecord = Boolean(scopeMeta.noun);
+
+  // Records of the chosen type that belong to the selected AI system (all, if none chosen).
+  useEffect(() => {
+    if (!showForm || !needsRecord) {
+      setScopeOptions([]);
+      return;
+    }
+    let cancelled = false;
+    void getBudgetScopeOptions({
+      scope_type: form.scope_type,
+      ai_system_id: form.ai_system_id || undefined,
+    })
+      .then((res) => {
+        if (!cancelled) setScopeOptions(res.data.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setScopeOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showForm, needsRecord, form.scope_type, form.ai_system_id]);
+
+  // Tool filter choices (tools used by the AI system, or all tools).
+  useEffect(() => {
+    if (!showForm) return;
+    let cancelled = false;
+    void getBudgetScopeOptions({
+      scope_type: "TOOL",
+      ai_system_id: form.ai_system_id || undefined,
+    })
+      .then((res) => {
+        if (!cancelled) setToolOptions(res.data.items ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setToolOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showForm, form.ai_system_id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,17 +161,32 @@ export default function RiskBudgetsPage() {
 
   async function onCreate() {
     if (!form.name.trim()) return;
-    if (form.scope_type !== "ORGANIZATION" && !form.ai_system_id) return;
+    if (form.scope_type !== "ORGANIZATION" && !form.ai_system_id) {
+      setError("Choose an AI system, or pick Whole organization.");
+      return;
+    }
+    const limit = Number(form.limit_value);
+    if (!Number.isFinite(limit) || limit <= 0) {
+      setError("Limit must be a number greater than 0.");
+      return;
+    }
+    setError(null);
     setSaving(true);
     try {
       const created = await createRiskBudget({
         ai_system_id: form.ai_system_id || undefined,
         scope_type: form.scope_type,
+        scope_id: needsRecord && form.scope_id ? form.scope_id : undefined,
         name: form.name.trim(),
         metric: form.metric,
         tool_name: form.tool_name.trim() || undefined,
         limit_value: Number(form.limit_value),
-        window: form.window,
+        ...(WINDOWS.find((w) => w.value === form.window && "seconds" in w)
+          ? {
+              window_seconds: (WINDOWS.find((w) => w.value === form.window) as { seconds: number })
+                .seconds,
+            }
+          : { window: form.window }),
         effect_on_exceed: form.effect_on_exceed,
         warning_threshold: Number(form.warning_threshold),
         amount_parameter_path:
@@ -194,10 +284,21 @@ export default function RiskBudgetsPage() {
             apply.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="AI System (optional for org-wide)">
+            <div className="sm:col-span-2">
+              <FormField label="Name" required>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="e.g. Support agent token cap"
+                />
+              </FormField>
+            </div>
+            <FormField label="AI System" hint="Leave empty only for an organization-wide control.">
               <Select
                 value={form.ai_system_id}
-                onChange={(e) => setForm({ ...form, ai_system_id: e.target.value })}
+                onChange={(e) =>
+                  setForm({ ...form, ai_system_id: e.target.value, scope_id: "", tool_name: "" })
+                }
               >
                 <option value="">Organization-wide…</option>
                 {systems.map((s) => (
@@ -207,27 +308,52 @@ export default function RiskBudgetsPage() {
                 ))}
               </Select>
             </FormField>
-            <FormField label="Applies to (scope)">
+            <FormField
+              label="Applies to"
+              hint="Everything in the AI system, or one specific record."
+            >
               <Select
-                value={form.scope_type || "AI_SYSTEM"}
-                onChange={(e) => setForm({ ...form, scope_type: e.target.value })}
+                value={form.scope_type}
+                onChange={(e) => setForm({ ...form, scope_type: e.target.value, scope_id: "" })}
               >
-                <option value="ORGANIZATION">Organization</option>
-                <option value="AI_SYSTEM">AI System</option>
-                <option value="AGENT">Agent</option>
-                <option value="AGENT_VERSION">Agent version</option>
-                <option value="RUNTIME_IDENTITY">Runtime identity</option>
-                <option value="DELEGATION">Tenant / Delegation</option>
-                <option value="MODEL">Model</option>
-                <option value="TOOL">Tool</option>
+                {SCOPES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
               </Select>
             </FormField>
-            <FormField label="Name">
-              <Input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </FormField>
+            {needsRecord ? (
+              <div className="sm:col-span-2">
+                <FormField
+                  label={`Which ${scopeMeta.noun}?`}
+                  hint={
+                    scopeOptions.length === 0
+                      ? `No ${scopeMeta.noun}s are linked to ${
+                          form.ai_system_id ? "this AI system" : "the organization"
+                        } yet.`
+                      : form.ai_system_id
+                        ? `Showing ${scopeMeta.noun}s related to the selected AI system.`
+                        : `Showing all ${scopeMeta.noun}s.`
+                  }
+                >
+                  <Select
+                    value={form.scope_id}
+                    onChange={(e) => setForm({ ...form, scope_id: e.target.value })}
+                  >
+                    <option value="">
+                      Every {scopeMeta.noun} (each one gets its own limit)
+                    </option>
+                    {scopeOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                        {o.detail ? ` — ${o.detail}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+              </div>
+            ) : null}
             <FormField label="Metric">
               <Select
                 value={form.metric}
@@ -240,31 +366,57 @@ export default function RiskBudgetsPage() {
                 ))}
               </Select>
             </FormField>
-            <FormField label="Tool name (optional)">
-              <Input
+            <FormField
+              label="Only count this tool (optional)"
+              hint="Limits the count to calls of one tool. Leave on Any tool for everything."
+            >
+              <Select
                 value={form.tool_name}
                 onChange={(e) => setForm({ ...form, tool_name: e.target.value })}
-                placeholder="create_order"
-              />
+              >
+                <option value="">Any tool</option>
+                {toolOptions.map((t) => (
+                  <option key={t.value} value={t.tool_name ?? t.label}>
+                    {t.label}
+                    {t.detail ? ` — ${t.detail}` : ""}
+                  </option>
+                ))}
+              </Select>
             </FormField>
-            <FormField label="Limit">
+            <FormField label="Limit" hint="Total allowed per window, in the metric's unit.">
               <Input
                 value={form.limit_value}
                 onChange={(e) => setForm({ ...form, limit_value: e.target.value })}
               />
             </FormField>
-            <FormField label="Window">
+            <FormField
+              label="Window"
+              hint="How long usage is counted before the counter starts again."
+            >
               <Select
                 value={form.window}
                 onChange={(e) => setForm({ ...form, window: e.target.value })}
               >
-                {WINDOW_PRESETS.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
+                {WINDOWS.map((w) => (
+                  <option key={w.value} value={w.value}>
+                    {w.label}
                   </option>
                 ))}
               </Select>
             </FormField>
+            <div className="rounded-md border border-base-200 bg-base-50 p-3 text-xs text-ink-600 sm:col-span-2">
+              <p className="font-semibold text-ink-900">What the window does</p>
+              <p className="mt-1">
+                The limit is a rate, not a lifetime total. Usage is added up inside the current
+                window, and when the window ends the counter resets to zero. With a limit of{" "}
+                <strong>{form.limit_value || "N"}</strong> per{" "}
+                <strong>{WINDOWS.find((w) => w.value === form.window)?.label ?? form.window}</strong>
+                , the {form.metric.toLowerCase().replace("_", " ")} is capped at that amount in
+                every {WINDOWS.find((w) => w.value === form.window)?.label ?? form.window} period.
+                Short windows stop bursts and runaway loops; long windows (24 hours to 30 days)
+                cap daily or monthly spend.
+              </p>
+            </div>
             <FormField label="Effect on exceed">
               <Select
                 value={form.effect_on_exceed}

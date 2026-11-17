@@ -93,6 +93,8 @@ class RiskEngine:
         tool_id: str | None = None,
         parameters: dict[str, Any] | None = None,
         amount: float | None = None,
+        monitor_reason: str | None = None,
+        budget_monitor: bool = False,
     ) -> dict[str, Any]:
         prev_state = None
         if runtime_identity_id:
@@ -139,6 +141,8 @@ class RiskEngine:
                 tool_name=tool_name,
                 tool_id=tool_id,
                 signal_ids=[str(s.id) for s in signals],
+                reason=monitor_reason,
+                record_finding=not budget_monitor,
             )
             if policy_monitor is not None:
                 monitor_results.append(policy_monitor)

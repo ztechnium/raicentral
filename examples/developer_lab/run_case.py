@@ -33,8 +33,14 @@ def assess_tool_case(
     execution_attempted: bool,
     execution_status: str | None,
     state_changed: bool,
+    expected_reason_code: str | None = None,
+    reason_code: str | None = None,
 ) -> tuple[bool, str]:
     effect_ok = effect == expect
+    if expected_reason_code and reason_code != expected_reason_code:
+        return False, (
+            f"expected reason {expected_reason_code}, received {reason_code or 'none'}"
+        )
     if expect == "ALLOW":
         executed = (
             execution_attempted and execution_status == "SUCCEEDED" and state_changed
@@ -141,15 +147,21 @@ def _run_tool_case(
     attempted = bool((body or {}).get("execution_attempted"))
     status = (body or {}).get("execution_status")
     changed = before != after
+    reason_code = (body or {}).get("reason_code")
     ok, summary = assess_tool_case(
         expect=case["expect"],
         effect=effect,
         execution_attempted=attempted,
         execution_status=status,
         state_changed=changed,
+        expected_reason_code=case.get("expect_reason_code"),
+        reason_code=reason_code,
     )
     reason = (body or {}).get("human_explanation") or (body or {}).get("reason_code")
-    return ok, f"{summary} (effect={effect}, execution={status}, reason={reason})"
+    return ok, (
+        f"{summary} (effect={effect}, execution={status}, "
+        f"reason_code={reason_code}, reason={reason})"
+    )
 
 
 def _run_content_case(

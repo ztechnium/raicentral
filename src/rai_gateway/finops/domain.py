@@ -157,6 +157,8 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "azureopenai": "azure_openai",
     "anthropic": "anthropic",
     "google": "google",
+    "google_ai": "google",
+    "googleai": "google",
     "gemini": "google",
     "vertex": "google",
     "vertexai": "google",

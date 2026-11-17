@@ -1,0 +1,3 @@
+# OBSERVE: no drops — pair with VPC/K8s flow logs and GATEWAY_ENFORCEMENT_MODE=OBSERVE
+table inet rai_egress {
+}

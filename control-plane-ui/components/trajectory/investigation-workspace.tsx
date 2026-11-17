@@ -47,6 +47,7 @@ function categoryFor(eventType: string): string {
   }
   if (upper.includes("TOOL_RESULT") || upper.includes("ACTION_RESULT")) return "tool_result";
   if (upper.includes("OUTPUT")) return "output";
+  if (upper.includes("CONTENT_EVALUATION")) return "policy";
   return "other";
 }
 
@@ -385,6 +386,82 @@ function DecisionGraph({
   );
 }
 
+type RuleRow = {
+  rule_id: string;
+  title?: string | null;
+  effect?: string | null;
+  violated: boolean;
+  confidence?: number | null;
+  severity?: string | null;
+  reason?: string | null;
+  evidence_spans?: string[];
+};
+
+function ContentEvaluationDetails({ event }: { event: EvidenceEvent }) {
+  const payload = event.payload ?? {};
+  const rules = Array.isArray(payload.rules) ? (payload.rules as RuleRow[]) : [];
+  const verdict = typeof payload.decision === "string" ? payload.decision : null;
+  const tone =
+    verdict === "BLOCKED"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : verdict === "VIOLATION_OBSERVED" || verdict === "EVALUATOR_FAILED"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-emerald-200 bg-emerald-50 text-emerald-800";
+  return (
+    <div className="mt-4 space-y-3">
+      {typeof payload.summary === "string" ? (
+        <div className={cn("rounded-md border p-3 text-xs font-medium", tone)}>
+          {payload.summary}
+        </div>
+      ) : null}
+      {rules.length > 0 ? (
+        <div>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+            Rules evaluated
+          </div>
+          <ul className="space-y-2">
+            {rules.map((rule) => (
+              <li
+                key={rule.rule_id}
+                className="rounded-md border border-base-200 bg-base-50 p-3 text-xs"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-ink-900">
+                    {rule.title ?? rule.rule_id}
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                      rule.violated
+                        ? "bg-red-100 text-red-700"
+                        : "bg-emerald-100 text-emerald-700",
+                    )}
+                  >
+                    {rule.violated ? "Violated" : "Passed"}
+                  </span>
+                </div>
+                <div className="mt-1 text-ink-500">
+                  {rule.effect ? `Action: ${rule.effect}` : null}
+                  {rule.confidence != null
+                    ? ` · confidence ${Math.round(rule.confidence * 100)}%`
+                    : null}
+                  {rule.severity ? ` · ${rule.severity}` : null}
+                </div>
+                {rule.reason ? <p className="mt-1 text-ink-700">{rule.reason}</p> : null}
+                {rule.evidence_spans && rule.evidence_spans.length > 0 ? (
+                  <p className="mt-1 font-mono text-ink-500">
+                    “{rule.evidence_spans.join("”, “")}”
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function EventInspector({
   event,
   trajectory,
@@ -430,6 +507,10 @@ function EventInspector({
             </div>
           ))}
         </dl>
+
+        {event.event_type === "CONTENT_EVALUATION_RESULT" ? (
+          <ContentEvaluationDetails event={event} />
+        ) : null}
 
         {preview ? (
           <div className="mt-4">

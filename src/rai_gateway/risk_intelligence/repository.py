@@ -41,6 +41,10 @@ class RiskIntelligenceRepository:
         self,
         ai_system_id: UUID | None = None,
     ) -> ContentEvaluatorConfig | None:
+        """Evaluator for an AI system: CONTENT_EVALUATOR_* env first, then saved config."""
+        env = self._env_evaluator_config()
+        if env is not None:
+            return env
         if ai_system_id is not None:
             row = (
                 self._db.query(ContentEvaluatorConfig)
@@ -49,11 +53,47 @@ class RiskIntelligenceRepository:
             )
             if row:
                 return row
-        # Platform-global / default (ai_system_id IS NULL) — runtime only
+        # Platform-global / default (ai_system_id IS NULL) - runtime only
         return (
             self._db.query(ContentEvaluatorConfig)
             .filter(ContentEvaluatorConfig.ai_system_id.is_(None))
             .first()
+        )
+
+    def get_saved_evaluator_config(
+        self, ai_system_id: UUID
+    ) -> ContentEvaluatorConfig | None:
+        """The UI/API-saved row only (used by the settings screen and upsert)."""
+        return (
+            self._db.query(ContentEvaluatorConfig)
+            .filter(ContentEvaluatorConfig.ai_system_id == ai_system_id)
+            .first()
+        )
+
+    @staticmethod
+    def _env_evaluator_config() -> ContentEvaluatorConfig | None:
+        """Detached default built from CONTENT_EVALUATOR_* settings (never persisted)."""
+        from rai_gateway.core.config import settings
+
+        provider = (settings.content_evaluator_provider or "").strip().lower()
+        if not provider:
+            return None
+        return ContentEvaluatorConfig(
+            ai_system_id=None,
+            provider=provider,
+            model=settings.content_evaluator_model or "",
+            temperature=settings.content_evaluator_temperature,
+            timeout_seconds=settings.content_evaluator_timeout_seconds,
+            max_rules_per_call=20,
+            confidence_threshold=0.5,
+            minimum_confidence_to_mark=0.5,
+            minimum_confidence_to_monitor=0.7,
+            minimum_confidence_to_intervene=(
+                settings.content_evaluator_min_confidence_to_intervene
+            ),
+            fail_closed=settings.content_evaluator_fail_closed,
+            enabled=True,
+            health_status="UNKNOWN",
         )
 
     def upsert_evaluator_config(self, **fields: Any) -> ContentEvaluatorConfig:

@@ -15,6 +15,13 @@ def create_app() -> FastAPI:
     # In a full microservices deployment, this would be the API Gateway
     app = llm_controller_app
 
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        from rai_gateway.provider_gateway.production.lifecycle import gateway_lifecycle
+
+        gateway_lifecycle.start_drain()
+        logger.info("gateway_drain_started")
+
     @app.on_event("startup")
     async def startup_event():
         """Initialize application."""

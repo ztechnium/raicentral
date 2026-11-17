@@ -88,6 +88,10 @@ class RiskIntelligenceService:
         minimum_confidence_to_intervene: float = 0.9,
         fail_closed: bool = False,
         fallback_provider: str | None = None,
+        base_url: str | None = None,
+        location: str | None = None,
+        gcp_project_id: str | None = None,
+        service_account_json: str | None = None,
     ) -> dict[str, Any]:
         if ai_system_id is None:
             raise LookupError("AI system not found")
@@ -106,10 +110,23 @@ class RiskIntelligenceService:
             "minimum_confidence_to_intervene": minimum_confidence_to_intervene,
             "fail_closed": fail_closed,
             "fallback_provider": fallback_provider,
+            "base_url": base_url or None,
+            "location": location or None,
+            "gcp_project_id": gcp_project_id or None,
             "health_status": "HEALTHY" if enabled else "UNAVAILABLE",
         }
         if api_key is not None:
             fields["api_key_encrypted"] = api_key  # server-side only
+        if service_account_json:
+            import json as _json
+
+            try:
+                parsed = _json.loads(service_account_json)
+            except ValueError as exc:
+                raise ValueError("Service account JSON is not valid JSON") from exc
+            if not parsed.get("client_email") or not parsed.get("private_key"):
+                raise ValueError("Service account JSON needs client_email and private_key")
+            fields["service_account_json_encrypted"] = service_account_json
         row = self._repo.upsert_evaluator_config(**fields)
         self._db.commit()
         return self._serialize_evaluator_config(row)
@@ -309,7 +326,85 @@ class RiskIntelligenceService:
         return [self._serialize_signal(s) for s in self._repo.list_signals(**kwargs)]
 
     def list_monitors(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return [self._serialize_monitor(m) for m in self._repo.list_monitors(**kwargs)]
+        self._expire_monitors()
+        monitors = self._repo.list_monitors(**kwargs)
+        context = self._monitor_context(monitors)
+        return [self._serialize_monitor(m, **context) for m in monitors]
+
+    def _expire_monitors(self) -> None:
+        """Flip monitors past their expiry to EXPIRED and clear the scope's flag.
+
+        Expiry used to be checked only when a new trigger arrived, so a finished
+        monitor stayed ACTIVE on the monitoring page indefinitely.
+        """
+        from datetime import datetime, timezone
+
+        from rai_gateway.models.risk_intelligence import RiskMonitor
+
+        try:
+            now = datetime.now(timezone.utc)
+            stale = (
+                self._db.query(RiskMonitor)
+                .filter(
+                    RiskMonitor.status == "ACTIVE",
+                    RiskMonitor.expires_at.isnot(None),
+                    RiskMonitor.expires_at <= now,
+                )
+                .all()
+            )
+            for monitor in stale:
+                monitor.status = "EXPIRED"
+                still_active = self._repo.get_active_monitor(
+                    scope_type=monitor.scope_type, scope_id=monitor.scope_id
+                )
+                if still_active is None:
+                    self._state.set_monitoring(
+                        ai_system_id=monitor.ai_system_id,
+                        scope_type=monitor.scope_type,
+                        scope_id=monitor.scope_id,
+                        active=False,
+                    )
+            if stale:
+                self._db.commit()
+        except Exception:
+            logger.exception("Expiring risk monitors failed")
+            self._db.rollback()
+
+    def _monitor_context(self, monitors: list[Any]) -> dict[str, Any]:
+        """Rules and display names for a batch of monitors (avoids N+1 lookups)."""
+        from rai_gateway.models.identity import AgentRuntimeIdentity
+        from rai_gateway.models.risk_intelligence import RiskMonitorRule
+
+        rule_ids = {m.monitor_rule_id for m in monitors if m.monitor_rule_id}
+        rules = (
+            {
+                r.id: r
+                for r in self._db.query(RiskMonitorRule)
+                .filter(RiskMonitorRule.id.in_(rule_ids))
+                .all()
+            }
+            if rule_ids
+            else {}
+        )
+        names: dict[tuple[str, str], str] = {}
+        identity_ids = []
+        for m in monitors:
+            if m.scope_type == "RUNTIME_IDENTITY":
+                try:
+                    identity_ids.append(UUID(str(m.scope_id)))
+                except ValueError:
+                    continue
+        if identity_ids:
+            for row in (
+                self._db.query(AgentRuntimeIdentity)
+                .filter(AgentRuntimeIdentity.id.in_(identity_ids))
+                .all()
+            ):
+                names[("RUNTIME_IDENTITY", str(row.id))] = row.name
+        system_ids = {m.ai_system_id for m in monitors}
+        for row in self._db.query(AISystem).filter(AISystem.id.in_(system_ids)).all():
+            names[("AI_SYSTEM", str(row.id))] = row.name
+        return {"rules": rules, "names": names}
 
     def list_interventions(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
@@ -623,6 +718,7 @@ class RiskIntelligenceService:
         tool_id: UUID | None = None,
         provider: str | None = None,
         model: str | None = None,
+        model_resource_id: UUID | None = None,
         parameters: dict[str, Any] | None = None,
         amount: float | None = None,
         token_usage: float | None = None,
@@ -632,6 +728,7 @@ class RiskIntelligenceService:
         finops_usage_reservation_id: UUID | None = None,
     ) -> dict[str, Any]:
         result = self.check_budgets(
+            model_resource_id=model_resource_id,
             ai_system_id=ai_system_id,
             runtime_identity_id=runtime_identity_id,
             agent_id=agent_id,
@@ -685,8 +782,15 @@ class RiskIntelligenceService:
 
     def _serialize_evaluator_config(self, row: Any) -> dict[str, Any]:
         return {
-            "id": str(row.id),
+            "id": str(row.id) if row.id else None,
             "ai_system_id": str(row.ai_system_id) if row.ai_system_id else None,
+            "source": "DATABASE" if row.id else "ENVIRONMENT",
+            "base_url": getattr(row, "base_url", None),
+            "location": getattr(row, "location", None),
+            "gcp_project_id": getattr(row, "gcp_project_id", None),
+            "has_service_account": bool(
+                getattr(row, "service_account_json_encrypted", None)
+            ),
             "status": "ACTIVE" if row.enabled else "NOT_ACTIVE",
             "enabled": row.enabled,
             "provider": row.provider,
@@ -902,8 +1006,22 @@ class RiskIntelligenceService:
         }
 
     @staticmethod
-    def _serialize_monitor(m: Any) -> dict[str, Any]:
+    def _serialize_monitor(
+        m: Any,
+        rules: dict[Any, Any] | None = None,
+        names: dict[tuple[str, str], str] | None = None,
+    ) -> dict[str, Any]:
+        rule = (rules or {}).get(m.monitor_rule_id) if m.monitor_rule_id else None
+        # RULE: a Monitor Rule counted/summed events past a threshold.
+        # POLICY: a tool/policy/budget MONITOR effect flagged the calls (no numeric
+        # threshold here; the reason carries the budget figures).
+        source = "RULE" if m.monitor_rule_id else "POLICY"
         return {
+            "source": source,
+            "rule_name": rule.name if rule else None,
+            "aggregation": rule.aggregation if rule else None,
+            "window_seconds": rule.window_seconds if rule else None,
+            "scope_label": (names or {}).get((m.scope_type, str(m.scope_id))),
             "id": str(m.id),
             "ai_system_id": str(m.ai_system_id),
             "monitor_rule_id": str(m.monitor_rule_id) if m.monitor_rule_id else None,

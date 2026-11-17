@@ -1,0 +1,20 @@
+{
+  "name": "rai-gemini-gateway-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Call Gemini on Vertex AI through the RAI provider-compatible gateway (TypeScript, @google/genai SDK)",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@google/genai": "^3.3.0",
+    "dotenv": "^18.0.10"
+  }
+}

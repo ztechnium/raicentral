@@ -1,0 +1,11 @@
+services:
+  rai-gateway:
+    image: rai-gateway:latest
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      GATEWAY_ENFORCEMENT_MODE: ENFORCE
+      FAIL_CLOSED_ON_RAI_UNAVAILABLE: "true"
+      PROVIDER_GATEWAY_ISOLATED_CREDENTIALS: "true"
+      DATABASE_URL: ${DATABASE_URL}
+    restart: unless-stopped

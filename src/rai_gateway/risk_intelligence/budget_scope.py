@@ -113,7 +113,13 @@ def budget_matches(budget: RuntimeBudget, ctx: BudgetEvaluationContext) -> bool:
 
     scope_value = ctx.scope_value(budget.scope_type)
     if budget.scope_id:
-        if scope_value is None or str(budget.scope_id) != str(scope_value):
+        accepted = {str(scope_value)} if scope_value is not None else set()
+        if budget.scope_type == RiskScopeType.MODEL.value:
+            # A model budget can name the registered resource (id) or the model name.
+            accepted |= {
+                str(v) for v in (ctx.model_resource_id, ctx.model) if v is not None
+            }
+        if str(budget.scope_id) not in accepted:
             return False
     else:
         # Unscoped type still requires the context dimension to exist

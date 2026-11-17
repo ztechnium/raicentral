@@ -35,3 +35,4 @@ Start with the [README](../README.md). [Current status](releases/SYSTEM_STATUS.m
 - [Instance data model](operations/TENANT_OWNERSHIP_MAP.md)
 - [Fail-closed behavior](public/operations/fail-closed.md)
 - [Kubernetes reference chart](../deploy/helm/rai-control-plane/Chart.yaml)
+- [Network enforcement reference deployments (Step 6)](../deploy/network-enforcement/README.md)

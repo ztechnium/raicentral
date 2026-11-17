@@ -1,0 +1,33 @@
+# Governed AI provider destinations for firewall, proxy, and DNS controls.
+# Version this file when domains change; do not rely on static IP allowlists alone.
+version: "1.0.0"
+providers:
+  - provider: OPENAI
+    hostnames:
+      - api.openai.com
+  - provider: ANTHROPIC
+    hostnames:
+      - api.anthropic.com
+  - provider: GOOGLE_AI
+    hostnames:
+      - generativelanguage.googleapis.com
+  - provider: VERTEX
+    hostnames:
+      - aiplatform.googleapis.com
+    hostname_suffixes:
+      - .prediction.vertexai.goog
+  - provider: AZURE_OPENAI
+    hostname_suffixes:
+      - .openai.azure.com
+  - provider: BEDROCK
+    hostname_suffixes:
+      - .bedrock-runtime.us-east-1.amazonaws.com
+      - .bedrock-runtime.us-west-2.amazonaws.com
+      - .bedrock-runtime.eu-west-1.amazonaws.com
+      - .bedrock-runtime.ap-southeast-1.amazonaws.com
+  - provider: OLLAMA
+    hostnames:
+      - localhost
+      - 127.0.0.1
+    hostname_suffixes:
+      - .svc.cluster.local

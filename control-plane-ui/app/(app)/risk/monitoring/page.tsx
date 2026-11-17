@@ -8,6 +8,31 @@ import { Table } from "@/components/ui/table";
 import { getRiskMonitors } from "@/lib/api";
 import type { RiskMonitor } from "@/lib/types";
 
+function humanWindow(seconds?: number | null) {
+  if (!seconds) return "";
+  if (seconds % 86400 === 0) return `${seconds / 86400}d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+/** What the monitor has measured so far. */
+function observed(m: RiskMonitor): string {
+  if (m.source === "RULE" && m.aggregation === "SUM") return `${m.current_sum} total`;
+  if (m.source === "RULE") return `${m.current_count} matching event${m.current_count === 1 ? "" : "s"}`;
+  return `${m.current_count} flagged call${m.current_count === 1 ? "" : "s"}`;
+}
+
+/** The numeric line that triggered the monitor, if there is one. */
+function triggerLimit(m: RiskMonitor): string {
+  if (m.source === "RULE" && m.threshold != null) {
+    const unit = m.aggregation === "SUM" ? "total" : "events";
+    const window = m.window_seconds ? ` in ${humanWindow(m.window_seconds)}` : "";
+    return `More than ${m.threshold} ${unit}${window}`;
+  }
+  return "No fixed threshold (set by the policy or budget; see Reason)";
+}
+
 export default function RiskMonitoringPage() {
   const [items, setItems] = useState<RiskMonitor[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -35,11 +60,18 @@ export default function RiskMonitoringPage() {
       items.map((m) => [
         <div key={`${m.id}-scope`}>
           <div className="text-xs text-muted-foreground">{m.scope_type}</div>
-          <div className="font-mono text-xs">{m.scope_id.slice(0, 12)}…</div>
+          <div className="text-xs font-medium">
+            {m.scope_label ?? `${m.scope_id.slice(0, 12)}…`}
+          </div>
         </div>,
-        m.reason || "—",
-        `${m.current_count} / ${m.current_sum}`,
-        m.threshold ?? "—",
+        <div key={`${m.id}-reason`} className="text-xs">
+          <div>{m.reason || "—"}</div>
+          <div className="text-muted-foreground">
+            {m.source === "RULE" ? `Rule: ${m.rule_name ?? "monitor rule"}` : "Policy / budget"}
+          </div>
+        </div>,
+        observed(m),
+        triggerLimit(m),
         m.started_at ? new Date(m.started_at).toLocaleString() : "—",
         m.expires_at ? new Date(m.expires_at).toLocaleString() : "—",
         <StatusBadge key={`${m.id}-status`} status={m.status} />,
@@ -65,8 +97,8 @@ export default function RiskMonitoringPage() {
             columns={[
               "Scope",
               "Reason",
-              "Count / Sum",
-              "Threshold",
+              "Observed",
+              "Trigger limit",
               "Started",
               "Expires",
               "Status",

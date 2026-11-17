@@ -149,7 +149,7 @@ More detail is in [examples/developer_lab/README.md](examples/developer_lab/READ
 - **Runtime enforcement** — authorize or deny tool, MCP, and model actions before execution
 - **Risk, evidence, and reporting** — budgets, findings, trajectories, and portfolio overview
 - **Team** — one directory of people, departments, and governance roles
-- **SDKs** — Python and TypeScript clients under `packages/`
+- **SDKs** — install [rai-python-sdk](https://github.com/ztechnium/rai-python-sdk) or [rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk). The `packages/` directories in this tree are mirrors, not the source of truth.
 - **Console** — Next.js app in `control-plane-ui/`
 
 ## Documentation

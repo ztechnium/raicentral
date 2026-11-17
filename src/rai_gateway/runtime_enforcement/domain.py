@@ -34,8 +34,26 @@ class ExecutionStatus(StrEnum):
 
 
 class ExecutionSource(StrEnum):
+    """How an action was (or will be) executed, recorded on every receipt."""
+
+    SDK_HOOK = "SDK_HOOK"
     RAI_EXECUTED = "RAI_EXECUTED"
+    PROVIDER_PROXY = "PROVIDER_PROXY"
+    MCP_PROXY = "MCP_PROXY"
+    TOOL_PROXY = "TOOL_PROXY"
+    NETWORK_OBSERVED = "NETWORK_OBSERVED"
     CLIENT_REPORTED = "CLIENT_REPORTED"
+
+
+# Sources where RaiCentral itself performed (or forwarded) the downstream call.
+GATEWAY_EXECUTED_SOURCES = frozenset(
+    {
+        ExecutionSource.RAI_EXECUTED.value,
+        ExecutionSource.PROVIDER_PROXY.value,
+        ExecutionSource.MCP_PROXY.value,
+        ExecutionSource.TOOL_PROXY.value,
+    }
+)
 
 
 class DeploymentControl(StrEnum):
@@ -108,7 +126,11 @@ class RuntimeEnforcementReasonCode(StrEnum):
     RISK_CONTROL_UNAVAILABLE = "RISK_CONTROL_UNAVAILABLE"
     APPROVAL_CONTROL_UNAVAILABLE = "APPROVAL_CONTROL_UNAVAILABLE"
     EMERGENCY_STOPPED = "EMERGENCY_STOPPED"
+    GATEWAY_EVALUATION_FAILED = "GATEWAY_EVALUATION_FAILED"
 
+
+# integration_type for governed LLM provider calls (resource = registered model).
+MODEL_PROVIDER_INTEGRATION = "model_provider"
 
 POLICY_EFFECT_PRECEDENCE = "DENY > REQUIRE_APPROVAL > MONITOR > ALLOW"
 
@@ -145,6 +167,11 @@ class RuntimeActionRequest:
     idempotency_key: str | None = None
     delegation_id: UUID | None = None
     client_context: dict[str, Any] | None = None
+    # How this action reaches its destination; recorded on the receipt.
+    # None keeps the legacy per-path defaults.
+    execution_source: str | None = None
+    # Registered ModelResource for provider calls (integration_type=model_provider).
+    model_id: UUID | None = None
 
 
 @dataclass

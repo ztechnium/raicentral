@@ -27,6 +27,8 @@ import {
   getVersionAssurance,
   getVersionDependencies,
   getVersionRiskAssessments,
+  setVersionContentCapture,
+  setVersionContentRuleMode,
   transitionAgentVersion,
   updateAgentVersion,
 } from "@/lib/api";
@@ -41,6 +43,21 @@ import type {
   VersionAssurance,
   VersionDependency,
 } from "@/lib/types";
+
+/** Evidence content modes; keep aligned with backend ContentHandlingMode. */
+const CAPTURE_MODES = [
+  { value: "", label: "Not captured (default)" },
+  { value: "REDACTED", label: "Capture text, secrets redacted" },
+  { value: "FULL", label: "Capture full text (secrets still scrubbed)" },
+  { value: "HASH_ONLY", label: "Hash only" },
+  { value: "METADATA_ONLY", label: "Metadata only" },
+] as const;
+
+const CONTENT_RULE_MODES = [
+  { value: "ENFORCE", label: "Enforce: evaluate before the call and block violated DENY rules" },
+  { value: "OBSERVE", label: "Observe: evaluate after the response, record only, never block" },
+  { value: "OFF", label: "Off: ignore Content Rules for this version" },
+] as const;
 
 /** Must stay aligned with backend ASSESSMENT_TRANSITIONS. */
 const ASSESSMENT_TRANSITIONS: Record<string, string[]> = {
@@ -251,6 +268,61 @@ export default function VersionDetailPage() {
                 </div>
               </dl>
             )}
+          </Panel>
+
+          <Panel
+            title="Trajectory Content Capture"
+            description="Choose whether the gateway keeps this version's prompts and model responses in trajectory evidence. Applies to new calls on any lifecycle status; nothing is captured unless set."
+          >
+            <div className="grid gap-4 md:grid-cols-2">
+              {(
+                [
+                  ["prompt", "Prompt"],
+                  ["model_response", "Model response"],
+                ] as const
+              ).map(([kind, label]) => (
+                <FormField key={kind} label={label}>
+                  <Select
+                    value={version.evidence_content_policy?.[kind] ?? ""}
+                    onChange={async (e) => {
+                      await setVersionContentCapture(versionId, {
+                        prompt: version.evidence_content_policy?.prompt,
+                        model_response: version.evidence_content_policy?.model_response,
+                        [kind]: e.target.value || undefined,
+                      });
+                      load();
+                    }}
+                  >
+                    {CAPTURE_MODES.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel
+            title="Content Rules"
+            description="How the gateway applies this AI system's Content Rules to calls made by this version. Enforce adds one evaluator call before each request; Observe waits until the response is complete and only records the result on the trajectory."
+          >
+            <FormField label="Mode">
+              <Select
+                value={version.content_rule_mode ?? "ENFORCE"}
+                onChange={async (e) => {
+                  await setVersionContentRuleMode(versionId, e.target.value);
+                  load();
+                }}
+              >
+                {CONTENT_RULE_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
           </Panel>
 
           <VersionDependencies

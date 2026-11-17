@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -108,17 +109,43 @@ def _provision_system(
         source_id=source["id"],
         obligation_id=obligation_id,
     )
+    if spec.get("budget"):
+        budget = spec["budget"]
+        _ensure_budget(
+            base,
+            token,
+            system_id=system["id"],
+            tool_id=tools[budget["tool_key"]]["id"],
+            spec=budget,
+        )
+    if spec.get("monitor_rule"):
+        monitor_rule = spec["monitor_rule"]
+        _ensure_monitor_rule(
+            base,
+            token,
+            system_id=system["id"],
+            tool=tools[monitor_rule["tool_key"]],
+            spec=monitor_rule,
+        )
     if spec["content_rules"]:
         _ensure_mock_evaluator(base, token, system["id"])
     agent = _ensure_agent(base, token, system["id"], spec)
-    version = _ensure_version(base, token, agent["id"])
+    dependencies = [
+        ("model", model["id"]),
+        ("mcp_server", mcp_id),
+        *(("tool", tool["id"]) for tool in tools.values()),
+    ]
+    version = _ensure_version(
+        base,
+        token,
+        agent["id"],
+        required_dependencies=dependencies,
+    )
     _ensure_dependencies(
         base,
         token,
         version_id=version["id"],
-        model_id=model["id"],
-        mcp_id=mcp_id,
-        tool_ids=[tool["id"] for tool in tools.values()],
+        dependencies=dependencies,
     )
     _approve_for_execution(
         base,
@@ -143,6 +170,15 @@ def _provision_system(
         )
         api_key = issued["plaintext_secret"]
     integration = _ensure_integration(base, token, spec["system_key"], identity["id"])
+    if spec.get("finops_demo"):
+        _ensure_finops_demo(
+            base,
+            api_key=api_key,
+            integration_id=integration["id"],
+            identity_id=identity["id"],
+            system_key=spec["system_key"],
+            spec=spec["finops_demo"],
+        )
     return {
         "ai_system_id": system["id"],
         "model_id": model["id"],
@@ -344,6 +380,154 @@ def _ensure_rules(
         )
 
 
+def _ensure_budget(
+    base: str,
+    token: str,
+    *,
+    system_id: str,
+    tool_id: str,
+    spec: dict[str, Any],
+) -> dict:
+    fields = {
+        "name": spec["name"],
+        "tool_id": tool_id,
+        "metric": spec["metric"],
+        "scope_type": spec["scope_type"],
+        "limit_value": spec["limit_value"],
+        "window_seconds": spec["window_seconds"],
+        "warning_threshold": spec["warning_threshold"],
+        "effect_on_exceed": spec["effect_on_exceed"],
+        "amount_parameter_path": spec["amount_parameter_path"],
+        "enforcement_mode": spec["enforcement_mode"],
+        "enabled": True,
+    }
+    listed = request_json(
+        "GET",
+        f"{base}/v1/risk/budgets?ai_system_id={system_id}&limit=200",
+        token=token,
+    )
+    existing = next(
+        (row for row in items_of(listed) if row.get("name") == spec["name"]),
+        None,
+    )
+    if existing:
+        mutable_fields = {
+            key: value
+            for key, value in fields.items()
+            if key not in {"metric", "scope_type"}
+        }
+        return request_json(
+            "PATCH",
+            f"{base}/v1/risk/budgets/{existing['id']}",
+            token=token,
+            payload=mutable_fields,
+        )
+    return request_json(
+        "POST",
+        f"{base}/v1/risk/budgets",
+        token=token,
+        payload={"ai_system_id": system_id, **fields},
+    )
+
+
+def _ensure_monitor_rule(
+    base: str,
+    token: str,
+    *,
+    system_id: str,
+    tool: dict[str, Any],
+    spec: dict[str, Any],
+) -> dict:
+    listed = request_json(
+        "GET",
+        f"{base}/v1/risk/monitor-rules?ai_system_id={system_id}",
+        token=token,
+    )
+    existing = next(
+        (row for row in items_of(listed) if row.get("name") == spec["name"]),
+        None,
+    )
+    if existing:
+        return existing
+    fields = {key: value for key, value in spec.items() if key != "tool_key"}
+    return request_json(
+        "POST",
+        f"{base}/v1/risk/monitor-rules",
+        token=token,
+        payload={
+            **fields,
+            "ai_system_id": system_id,
+            "tool_id": tool["id"],
+            "tool_name": tool["name"],
+        },
+    )
+
+
+def _ensure_finops_demo(
+    base: str,
+    *,
+    api_key: str,
+    integration_id: str,
+    identity_id: str,
+    system_key: str,
+    spec: dict[str, Any],
+) -> None:
+    session_key = f"developer-lab-finops-{system_key}-{identity_id}"
+    session = request_json(
+        "POST",
+        f"{base}/sdk/v1/sessions",
+        agent_key=api_key,
+        payload={
+            "integration_id": integration_id,
+            "external_session_id": session_key,
+            "external_conversation_id": session_key,
+            "channel": "developer-lab",
+            "principal": "sample-data",
+            "metadata": {"sample_data": True},
+            "allow_ended_session_reuse": True,
+        },
+    )
+    session_id = (session or {}).get("session_id") or (session or {}).get(
+        "rai_session_id"
+    )
+    if not session_id:
+        raise RuntimeError("SDK session creation did not return a session id")
+
+    now = datetime.now(timezone.utc)
+    for index, sample in enumerate(spec["samples"]):
+        started = now - timedelta(minutes=(len(spec["samples"]) - index) * 10)
+        request_json(
+            "POST",
+            f"{base}/sdk/v1/sessions/{session_id}/metering/spans",
+            agent_key=api_key,
+            payload={
+                "span_type": "MODEL_CALL",
+                "operation": "developer-lab-sample-inference",
+                "provider": spec["provider"],
+                "model": spec["model"],
+                "usage": {
+                    "input_tokens": sample["input_tokens"],
+                    "output_tokens": sample["output_tokens"],
+                    "source": "ESTIMATED",
+                },
+                "cost": {
+                    "amount": sample["estimated_cost"],
+                    "currency": "USD",
+                    "source": "ESTIMATED",
+                },
+                "started_at": started.isoformat(),
+                "completed_at": (started + timedelta(seconds=2)).isoformat(),
+                "external_span_id": (f"developer-lab:{identity_id}:{sample['key']}"),
+                "tokens_are_estimated": True,
+                "metadata": {
+                    "sample_data": True,
+                    "sample_origin": "developer_lab",
+                    "cost_note": "Illustrative estimate; not billed provider usage.",
+                },
+            },
+        )
+
+
 def _ensure_mock_evaluator(base: str, token: str, system_id: str) -> None:
     request_json(
         "PUT",
@@ -379,21 +563,43 @@ def _ensure_agent(base: str, token: str, system_id: str, spec: dict[str, Any]) -
     )
 
 
-def _ensure_version(base: str, token: str, agent_id: str) -> dict:
+def _ensure_version(
+    base: str,
+    token: str,
+    agent_id: str,
+    *,
+    required_dependencies: list[tuple[str, str]],
+) -> dict:
     listed = request_json("GET", f"{base}/v1/agents/{agent_id}/versions", token=token)
     rows = items_of(listed)
     if rows:
-        return rows[0]
+        version = rows[0]
+        version_dependencies = request_json(
+            "GET",
+            f"{base}/v1/agent-versions/{version['id']}/dependencies",
+            token=token,
+        )
+        present = {
+            (row.get("resource_type"), row.get("resource_id"))
+            for row in items_of(version_dependencies)
+        }
+        dependencies_ready = set(required_dependencies).issubset(present)
+        if dependencies_ready or version.get("lifecycle_status") == "DRAFT":
+            return version
     return request_json(
         "POST",
         f"{base}/v1/agents/{agent_id}/versions",
         token=token,
         payload={
-            "change_summary": "Developer lab version bound to the local MCP tools.",
+            "change_summary": "Developer lab version updated for registered dependencies.",
             "risk_tier": "MEDIUM",
             "configuration_snapshot": {
                 "source": "examples/developer_lab",
                 "execution": "rai_runtime_execute",
+                "dependencies": [
+                    {"resource_type": kind, "resource_id": resource_id}
+                    for kind, resource_id in required_dependencies
+                ],
             },
         },
     )
@@ -404,9 +610,7 @@ def _ensure_dependencies(
     token: str,
     *,
     version_id: str,
-    model_id: str,
-    mcp_id: str,
-    tool_ids: list[str],
+    dependencies: list[tuple[str, str]],
 ) -> None:
     listed = request_json(
         "GET",
@@ -416,9 +620,7 @@ def _ensure_dependencies(
     present = {
         (row.get("resource_type"), row.get("resource_id")) for row in items_of(listed)
     }
-    pairs = [("model", model_id), ("mcp_server", mcp_id)]
-    pairs.extend(("tool", tool_id) for tool_id in tool_ids)
-    for resource_type, resource_id in pairs:
+    for resource_type, resource_id in dependencies:
         if (resource_type, resource_id) in present:
             continue
         try:
@@ -524,15 +726,23 @@ def _ensure_integration(
 ) -> dict:
     key = f"{system_key}-sdk"
     listed = request_json("GET", f"{base}/v1/productization/integrations", token=token)
-    for row in items_of(listed):
-        if row.get("integration_key") == key:
+    rows = items_of(listed)
+    identity_key = f"{key}-{identity_id}"
+    for row in rows:
+        if (
+            row.get("integration_key") in {key, identity_key}
+            and row.get("runtime_identity_id") == identity_id
+        ):
             return row
+    integration_key = (
+        identity_key if any(row.get("integration_key") == key for row in rows) else key
+    )
     return request_json(
         "POST",
         f"{base}/v1/productization/integrations",
         token=token,
         payload={
-            "integration_key": key,
+            "integration_key": integration_key,
             "name": f"{system_key} developer integration",
             "runtime_identity_id": identity_id,
             "integration_type": "SDK",

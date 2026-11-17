@@ -367,7 +367,7 @@ export default function TrajectoryDetailPage() {
   }
 
   const riskLevel =
-    riskFindings?.highest_risk_level ?? trajectory.assurance_summary?.highest ?? null;
+    riskFindings?.highest_risk_level ?? null; // assurance is evidence quality, not risk
   const findingCount =
     findings.evidence.length + findings.risk.length + findings.trajectoryFindings.length;
 

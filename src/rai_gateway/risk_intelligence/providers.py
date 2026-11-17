@@ -29,6 +29,10 @@ class ProviderConfig:
     timeout_seconds: int = 30
     max_rules_per_call: int = 20
     api_key: str | None = None
+    base_url: str | None = None
+    location: str | None = None
+    gcp_project_id: str | None = None
+    service_account_json: str | None = None
 
 
 @dataclass
@@ -276,7 +280,7 @@ class OpenAIContentEvaluator:
             request,
             config,
             provider_label="OpenAI",
-            api_url=self.api_url,
+            api_url=_chat_url(config.base_url) if config.base_url else self.api_url,
             default_model=self.default_model,
         )
 
@@ -295,9 +299,139 @@ class DeepSeekContentEvaluator:
             request,
             config,
             provider_label="DeepSeek",
-            api_url=self.api_url,
+            api_url=_chat_url(config.base_url) if config.base_url else self.api_url,
             default_model=self.default_model,
         )
+
+
+def _chat_url(base: str) -> str:
+    """Accept a base URL (.../v1) or a full chat-completions URL."""
+    base = base.rstrip("/")
+    return base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+
+
+class OpenAICompatibleContentEvaluator:
+    """Any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, Groq, OpenRouter, Azure...)."""
+
+    name = "openai_compatible"
+
+    def evaluate(
+        self, request: EvaluatorRequest, config: ProviderConfig
+    ) -> StructuredEvaluatorOutput:
+        if not config.base_url:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                "openai_compatible evaluator needs CONTENT_EVALUATOR_BASE_URL",
+            )
+        return _openai_compatible_evaluate(
+            request,
+            config,
+            provider_label="OpenAI-compatible",
+            api_url=_chat_url(config.base_url),
+            default_model=config.model or "default",
+            allow_no_key=True,
+        )
+
+
+class VertexContentEvaluator:
+    """Gemini on Vertex AI using the gateway's own Google service account (no API key)."""
+
+    name = "vertex"
+
+    def evaluate(
+        self, request: EvaluatorRequest, config: ProviderConfig
+    ) -> StructuredEvaluatorOutput:
+        import urllib.error
+        import urllib.request
+
+        from rai_gateway.core.config import settings
+        from rai_gateway.provider_gateway.credentials.gcp_token import (
+            GcpTokenError,
+            gcp_token_provider,
+        )
+
+        project = config.gcp_project_id or settings.gcp_project_id
+        if not project:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                "vertex evaluator needs a GCP project (evaluator setting or GCP_PROJECT_ID)",
+            )
+        try:
+            if config.service_account_json:
+                try:
+                    info = json.loads(config.service_account_json)
+                except ValueError as exc:
+                    raise GcpTokenError("Evaluator service account JSON is invalid") from exc
+                token = gcp_token_provider.get_token_for_info(info)
+            else:
+                token = gcp_token_provider.get_token()
+        except GcpTokenError as exc:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                f"Vertex credential unavailable: {exc}",
+            ) from exc
+        location = config.location or settings.content_evaluator_location or "global"
+        host = (
+            "aiplatform.googleapis.com"
+            if location == "global"
+            else f"{location}-aiplatform.googleapis.com"
+        )
+        model = config.model or "gemini-2.5-flash"
+        url = (
+            f"https://{host}/v1/projects/{project}/locations/{location}"
+            f"/publishers/google/models/{model}:generateContent"
+        )
+        expected = {str(r["id"]) for r in request.applicable_rules}
+        user_prompt = (
+            f"Content type: {request.content_type}\n"
+            f"Content:\n{request.content}\n\n"
+            f"Applicable rules:\n{_build_rules_prompt(request.applicable_rules)}\n"
+        )
+        body = {
+            "systemInstruction": {"parts": [{"text": EVALUATOR_SYSTEM_PROMPT}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {
+                "temperature": config.temperature,
+                "responseMimeType": "application/json",
+            },
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=config.timeout_seconds) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except TimeoutError as exc:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_TIMEOUT.value,
+                "Vertex evaluator timed out",
+            ) from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                f"Vertex HTTP {exc.code}: {detail}",
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                f"Vertex unavailable: {exc}",
+            ) from exc
+        try:
+            parts = payload["candidates"][0]["content"]["parts"]
+            content = "".join(p.get("text", "") for p in parts)
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_INVALID_RESPONSE.value,
+                "Unexpected Vertex response shape",
+            ) from exc
+        return parse_structured_evaluator_output(content, expected_rule_ids=expected)
 
 
 def _openai_compatible_evaluate(
@@ -307,8 +441,9 @@ def _openai_compatible_evaluate(
     provider_label: str,
     api_url: str,
     default_model: str,
+    allow_no_key: bool = False,
 ) -> StructuredEvaluatorOutput:
-    if not config.api_key:
+    if not config.api_key and not allow_no_key:
         raise ContentEvaluatorError(
             EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
             f"{provider_label} API key not configured",
@@ -335,7 +470,7 @@ def _openai_compatible_evaluate(
         api_url,
         data=json.dumps(body).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {config.api_key}",
+            **({"Authorization": f"Bearer {config.api_key}"} if config.api_key else {}),
             "Content-Type": "application/json",
         },
         method="POST",
@@ -444,6 +579,9 @@ _PROVIDERS: dict[str, ContentEvaluatorProvider] = {
     "openai": OpenAIContentEvaluator(),
     "deepseek": DeepSeekContentEvaluator(),
     "gemini": GeminiContentEvaluator(),
+    "google_ai": GeminiContentEvaluator(),
+    "openai_compatible": OpenAICompatibleContentEvaluator(),
+    "vertex": VertexContentEvaluator(),
 }
 
 

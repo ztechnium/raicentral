@@ -1,0 +1,15 @@
+# ENFORCE: members of group rai-workload cannot open outbound TCP/443 except to gateway IP.
+# Domain-aware controls still require proxy/SWG; this blocks naive direct provider bypass.
+table inet rai_egress {
+  set rai_gateway {
+    type ipv4_addr
+    elements = { 127.0.0.1 }
+  }
+
+  chain output {
+    type filter hook output priority filter + 10; policy accept;
+    tcp dport 443 ip daddr != @rai_gateway meta skgid 990 drop comment "rai-workload direct https";
+  }
+}
+
+# Create group: sudo groupadd -g 990 rai-workload

@@ -209,11 +209,15 @@ class InterventionService:
         signal_ids: list[str] | None = None,
         reason: str | None = None,
         monitor_duration_seconds: int = 1800,
+        record_finding: bool = True,
     ) -> Any:
         """Activate MARK_AND_MONITOR when a tool/policy effect is MONITOR.
 
         Tool-rule MONITOR decisions previously only flagged the receipt; they
         never created a RiskMonitor row, so /risk/monitoring stayed empty.
+
+        ``record_finding=False`` (used for budgets, which only control cost and
+        tokens) still shows the monitor but creates no finding or intervention.
         """
         effect = InterventionEffect.MARK_AND_MONITOR.value
         scope_type = (
@@ -227,36 +231,38 @@ class InterventionService:
             f"Policy MONITOR effect on tool '{tool_label}' — "
             "elevated monitoring activated"
         )
-        finding = self._repo.create_finding(
-            trajectory_id=trajectory_id,
-            ai_system_id=ai_system_id,
-            agent_id=agent_id,
-            agent_version_id=agent_version_id,
-            runtime_identity_id=runtime_identity_id,
-            finding_type="POLICY_MONITOR",
-            title=f"Policy monitor: {tool_label}",
-            description=description,
-            severity=RiskSeverity.MEDIUM.value,
-            confidence=1.0,
-            sensitivity="NORMAL",
-            dimensions={
-                "severity": RiskSeverity.MEDIUM.value,
-                "confidence": 1.0,
-            },
-            signal_ids=signal_ids or [],
-            evidence_refs=[],
-            policy_rule_ids=[],
-            intervention_effect=effect,
-            status=FindingStatus.MONITORING.value,
-            explanation={
-                "observed": description,
-                "tool_name": tool_name,
-                "tool_id": tool_id,
-                "why_intervention": (
-                    "Configured tool/policy effect MONITOR maps to MARK_AND_MONITOR"
-                ),
-            },
-        )
+        finding = None
+        if record_finding:
+            finding = self._repo.create_finding(
+                trajectory_id=trajectory_id,
+                ai_system_id=ai_system_id,
+                agent_id=agent_id,
+                agent_version_id=agent_version_id,
+                runtime_identity_id=runtime_identity_id,
+                finding_type="POLICY_MONITOR",
+                title=f"Policy monitor: {tool_label}",
+                description=description,
+                severity=RiskSeverity.MEDIUM.value,
+                confidence=1.0,
+                sensitivity="NORMAL",
+                dimensions={
+                    "severity": RiskSeverity.MEDIUM.value,
+                    "confidence": 1.0,
+                },
+                signal_ids=signal_ids or [],
+                evidence_refs=[],
+                policy_rule_ids=[],
+                intervention_effect=effect,
+                status=FindingStatus.MONITORING.value,
+                explanation={
+                    "observed": description,
+                    "tool_name": tool_name,
+                    "tool_id": tool_id,
+                    "why_intervention": (
+                        "Configured tool/policy effect MONITOR maps to MARK_AND_MONITOR"
+                    ),
+                },
+            )
         expires = datetime.now(timezone.utc) + timedelta(
             seconds=monitor_duration_seconds
         )
@@ -275,14 +281,14 @@ class InterventionService:
                 current_sum=0.0,
                 threshold=None,
                 expires_at=expires,
-                finding_id=finding.id,
+                finding_id=finding.id if finding else None,
             )
         else:
             existing.current_count = int(existing.current_count or 0) + 1
             existing.reason = description
             if existing.expires_at is None or existing.expires_at < expires:
                 existing.expires_at = expires
-            if not existing.finding_id:
+            if finding is not None and not existing.finding_id:
                 existing.finding_id = finding.id
             self._db.flush()
 
@@ -294,6 +300,8 @@ class InterventionService:
             require_approval=False,
         )
 
+        if finding is None:
+            return None
         return self._create_and_maybe_execute(
             ai_system_id=ai_system_id,
             trajectory_id=trajectory_id,

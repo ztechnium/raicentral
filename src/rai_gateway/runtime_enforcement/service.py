@@ -28,7 +28,7 @@ from rai_gateway.identity.resolver import (
     RuntimeAuthorityContext,
     RuntimeAuthorityResolver,
 )
-from rai_gateway.models.registry import MCPServer, ToolResource
+from rai_gateway.models.registry import MCPServer, ModelResource, ToolResource
 from rai_gateway.policy.domain import PolicyEffect
 from rai_gateway.policy.evaluation import PolicyEvaluationService
 from rai_gateway.registry.eligibility import EligibilityService
@@ -42,6 +42,7 @@ from rai_gateway.runtime_enforcement.canonical_receipt import (
 )
 from rai_gateway.runtime_enforcement.control_decision import DecisionPhase
 from rai_gateway.runtime_enforcement.domain import (
+    MODEL_PROVIDER_INTEGRATION,
     ClientExecutionReport,
     DeploymentControl,
     EnforcementDecisionType,
@@ -154,7 +155,21 @@ class RuntimeEnforcementService:
                         amount = None
                     break
             decision = receipt.enforcement_decision or "ALLOW"
+            if decision == "DENY" and str(receipt.reason_code or "").startswith("BUDGET_"):
+                # Budgets control cost and tokens. A budget denial is not a security or
+                # policy event, so it raises no risk signals, anomalies or findings.
+                return
+            monitor_reason = None
+            budget_monitor = False
+            if getattr(receipt, "monitor", False) and decision == "ALLOW":
+                # Allowed but flagged for monitoring (tool/policy/budget MONITOR effect):
+                # the risk engine must activate a monitor so it shows in /risk/monitoring.
+                decision = "MONITOR"
+                monitor_reason = self._monitor_reason(receipt)
+                budget_monitor = monitor_reason is not None
             RiskIntelligenceService(self._db).process_enforcement_safe(
+                monitor_reason=monitor_reason,
+                budget_monitor=budget_monitor,
                 ai_system_id=receipt.ai_system_id,
                 agent_id=receipt.agent_id,
                 agent_version_id=receipt.agent_version_id,
@@ -169,6 +184,20 @@ class RuntimeEnforcementService:
         except Exception:
             # Never fail the enforcement path
             pass
+
+    @staticmethod
+    def _monitor_reason(receipt: Any) -> str | None:
+        """Human reason for a budget-triggered MONITOR, from the receipt's budget checks."""
+        policy = receipt.policy_decision if isinstance(receipt.policy_decision, dict) else {}
+        for check in policy.get("budget_checks") or []:
+            if not isinstance(check, dict) or check.get("status") != "EXCEEDED":
+                continue
+            return (
+                f"Budget MONITOR: {check.get('budget_name') or 'budget'} exceeded "
+                f"({check.get('projected_usage')}/{check.get('limit_value')} "
+                f"{check.get('metric')})"
+            )
+        return None
 
     def _risk_authorization_overlay(
         self, authority: Any, request: RuntimeActionRequest
@@ -286,6 +315,7 @@ class RuntimeEnforcementService:
                 tool_id=request.tool_id,
                 provider=estimate.get("provider"),
                 model=estimate.get("model"),
+                model_resource_id=getattr(request, "model_id", None),
                 parameters=params,
                 amount=amount,
                 token_usage=token_usage,
@@ -358,12 +388,103 @@ class RuntimeEnforcementService:
             execute_downstream=True,
         )
 
+    def authorize_for_gateway_execution(
+        self,
+        request: RuntimeActionRequest,
+        *,
+        credential_secret: str,
+    ) -> EnforcementResult:
+        """Proxy-grade enforcement where the caller performs the downstream call.
+
+        Behaves like :meth:`enforce_and_execute` (approval consumption, receipt
+        persisted before any side effect, STARTED status) but does not invoke a
+        runtime adapter. The caller must report the outcome through
+        :meth:`finalize_gateway_execution`.
+        """
+        return self._enforce(
+            request,
+            credential_secret=credential_secret,
+            execute_downstream=True,
+            defer_execution=True,
+        )
+
+    def finalize_gateway_execution(
+        self,
+        receipt_id: UUID,
+        *,
+        succeeded: bool,
+        duration_ms: int | None = None,
+        downstream_reference: str | None = None,
+        safe_result_metadata: dict[str, Any] | None = None,
+        execution_status: str | None = None,
+    ) -> bool:
+        """Record the actual gateway-observed outcome on an existing receipt.
+
+        Idempotent: a receipt already in a terminal execution state is left
+        untouched and ``False`` is returned.
+        """
+        receipt = self._repo.get_receipt(receipt_id)
+        if receipt is None:
+            return False
+        if receipt.execution_status in {
+            ExecutionStatus.SUCCEEDED.value,
+            ExecutionStatus.FAILED.value,
+            ExecutionStatus.UNKNOWN.value,
+        }:
+            return False
+        status = execution_status or (
+            ExecutionStatus.SUCCEEDED.value
+            if succeeded
+            else ExecutionStatus.FAILED.value
+        )
+        meta = dict(safe_result_metadata or {})
+        fields: dict[str, Any] = {
+            "execution_attempted": True,
+            "execution_status": status,
+            "execution_report": meta,
+        }
+        if receipt.execution_source is None:
+            fields["execution_source"] = ExecutionSource.RAI_EXECUTED.value
+        if downstream_reference:
+            fields["downstream_reference"] = downstream_reference
+        if duration_ms is not None:
+            fields["duration_ms"] = duration_ms
+        self._repo.update_execution_outcome(receipt, **fields)
+        if receipt.idempotency_key:
+            record = self._repo.get_idempotency_record(
+                receipt.runtime_identity_id, receipt.idempotency_key
+            )
+            if record:
+                record.execution_status = status
+        self._db.commit()
+        if succeeded:
+            self._settle_finops_from_report(receipt, meta)
+            self._db.commit()
+        else:
+            self._release_finops_on_failed_gateway_execution(receipt, meta)
+        self._project_evidence(receipt.id)
+        log_admin_audit(
+            trace_id=receipt.trace_id or receipt.correlation_id or generate_trace_id(),
+            actor_user_id="runtime",
+            actor_role="runtime",
+            action="runtime.execution.reported_succeeded"
+            if succeeded
+            else "runtime.execution.reported_failed",
+            target={
+                "receipt_id": str(receipt.id),
+                "execution_status": status,
+                "execution_source": receipt.execution_source,
+            },
+        )
+        return True
+
     def _enforce(
         self,
         request: RuntimeActionRequest,
         *,
         credential_secret: str,
         execute_downstream: bool,
+        defer_execution: bool = False,
     ) -> EnforcementResult:
         correlation_id = request.correlation_id or generate_trace_id()
         trace_id = request.trace_id or correlation_id
@@ -393,6 +514,25 @@ class RuntimeEnforcementService:
                 request,
                 authority=None,
                 reason_code=self._map_authority_reason(exc.reason),
+                human_explanation=str(exc),
+                correlation_id=correlation_id,
+                trace_id=trace_id,
+                policy_decision=None,
+                action_digest=None,
+            )
+
+        try:
+            from rai_gateway.provider_gateway.production.gateway_revocation import (
+                PolicyCacheRevocationError,
+                assert_not_revoked_for_authority,
+            )
+
+            assert_not_revoked_for_authority(authority)
+        except PolicyCacheRevocationError as exc:
+            return self._deny(
+                request,
+                authority=authority,
+                reason_code=RuntimeEnforcementReasonCode.RUNTIME_IDENTITY_INELIGIBLE.value,
                 human_explanation=str(exc),
                 correlation_id=correlation_id,
                 trace_id=trace_id,
@@ -583,6 +723,12 @@ class RuntimeEnforcementService:
                 "budget_checks": budget_overlay.get("checks")
                 or policy_dict.get("budget_checks"),
             }
+        if budget_overlay.get("finops_reservation_id"):
+            policy_dict = {
+                **policy_dict,
+                "finops_reservation_id": budget_overlay["finops_reservation_id"],
+                "finops_estimate": budget_overlay.get("finops_estimate"),
+            }
 
         try:
             requirement = self._requirement.evaluate(authority, action)
@@ -769,8 +915,8 @@ class RuntimeEnforcementService:
                 or requirement.monitoring_instruction,
             )
 
-        adapter = self._adapters.resolve(action)
-        if not adapter:
+        adapter = None if defer_execution else self._adapters.resolve(action)
+        if not adapter and not defer_execution:
             return self._deny(
                 request,
                 authority=authority,
@@ -785,6 +931,7 @@ class RuntimeEnforcementService:
                 approval_consumed=approval_consumed,
             )
 
+        exec_source = request.execution_source or ExecutionSource.RAI_EXECUTED.value
         receipt = persist_canonical_receipt(
             self._repo,
             authority=authority,
@@ -806,7 +953,7 @@ class RuntimeEnforcementService:
                 "enforcement_decision": EnforcementDecisionType.ALLOW.value,
                 "execution_attempted": False,
                 "execution_status": ExecutionStatus.STARTED.value,
-                "execution_source": ExecutionSource.RAI_EXECUTED.value,
+                "execution_source": exec_source,
                 "deployment_control": DeploymentControl.PROXY_CONTROLLED.value,
                 "verification_status": VerificationStatus.VERIFIED.value,
                 "client_context": request.client_context,
@@ -872,6 +1019,33 @@ class RuntimeEnforcementService:
             target={"receipt_id": str(receipt.id)},
         )
 
+        if defer_execution:
+            return EnforcementResult(
+                allowed=True,
+                effect=EnforcementDecisionType.ALLOW.value,
+                reason_code=None,
+                human_explanation=policy_decision.human_explanation
+                or "Action allowed after governance checks",
+                runtime_identity_id=authority.runtime_identity.id,
+                agent_version_id=authority.agent_version.id,
+                action_digest=action_digest,
+                policy_decision=policy_dict,
+                approval_request_id=approval_request_id,
+                approval_consumed=approval_consumed,
+                monitor=monitor,
+                monitoring_instruction=monitoring_instruction
+                or requirement.monitoring_instruction,
+                execution_attempted=False,
+                execution_status=ExecutionStatus.STARTED.value,
+                execution_source=exec_source,
+                correlation_id=correlation_id,
+                trace_id=trace_id,
+                receipt_id=receipt.id,
+                enforcement_mode=EnforcementMode.PROXY_ENFORCED.value,
+                deployment_control=DeploymentControl.PROXY_CONTROLLED.value,
+                verification_status=VerificationStatus.VERIFIED.value,
+            )
+
         downstream = adapter.execute(action, authority)
         execution_status = (
             ExecutionStatus.SUCCEEDED.value
@@ -883,7 +1057,7 @@ class RuntimeEnforcementService:
             receipt,
             execution_attempted=True,
             execution_status=execution_status,
-            execution_source=ExecutionSource.RAI_EXECUTED.value,
+            execution_source=exec_source,
             downstream_reference=downstream.downstream_reference,
         )
         if request.idempotency_key:
@@ -908,7 +1082,7 @@ class RuntimeEnforcementService:
             target={
                 "receipt_id": str(receipt.id),
                 "execution_status": execution_status,
-                "execution_source": ExecutionSource.RAI_EXECUTED.value,
+                "execution_source": exec_source,
             },
         )
 
@@ -934,7 +1108,7 @@ class RuntimeEnforcementService:
             or requirement.monitoring_instruction,
             execution_attempted=True,
             execution_status=execution_status,
-            execution_source=ExecutionSource.RAI_EXECUTED.value,
+            execution_source=exec_source,
             correlation_id=correlation_id,
             trace_id=trace_id,
             receipt_id=receipt.id,
@@ -947,6 +1121,17 @@ class RuntimeEnforcementService:
     def _validate_registered_resources(
         self, request: RuntimeActionRequest
     ) -> str | None:
+        if request.integration_type == MODEL_PROVIDER_INTEGRATION:
+            if not request.model_id:
+                return RuntimeEnforcementReasonCode.RESOURCE_NOT_REGISTERED.value
+            model = (
+                self._db.query(ModelResource)
+                .filter(ModelResource.id == request.model_id)
+                .first()
+            )
+            if not model or model.status != "ACTIVE":
+                return RuntimeEnforcementReasonCode.RESOURCE_NOT_REGISTERED.value
+            return None
         if request.integration_type == "mcp":
             if not request.integration_id:
                 return RuntimeEnforcementReasonCode.RESOURCE_NOT_REGISTERED.value
@@ -991,6 +1176,7 @@ class RuntimeEnforcementService:
             integration_type=request.integration_type,
             integration_id=request.integration_id,
             tool_id=request.tool_id,
+            model_id=request.model_id,
             target=target,
             parameters=dict(request.parameters or {}),
             environment=request.environment or authority.runtime_identity.environment,
@@ -1150,6 +1336,7 @@ class RuntimeEnforcementService:
                     "enforcement_decision": EnforcementDecisionType.DENY.value,
                     "execution_attempted": False,
                     "execution_status": ExecutionStatus.NOT_ATTEMPTED.value,
+                    "execution_source": request.execution_source,
                     "deployment_control": DeploymentControl.PROXY_CONTROLLED.value,
                     "verification_status": VerificationStatus.VERIFIED.value,
                     "client_context": request.client_context,
@@ -1211,6 +1398,7 @@ class RuntimeEnforcementService:
             monitoring_instruction=monitoring_instruction,
             execution_attempted=False,
             execution_status=ExecutionStatus.NOT_ATTEMPTED.value,
+            execution_source=request.execution_source,
             correlation_id=correlation_id,
             trace_id=trace_id,
             receipt_id=receipt_id,
@@ -1339,6 +1527,7 @@ class RuntimeEnforcementService:
                 "enforcement_decision": EnforcementDecisionType.REQUIRE_APPROVAL.value,
                 "execution_attempted": False,
                 "execution_status": ExecutionStatus.NOT_ATTEMPTED.value,
+                "execution_source": request.execution_source,
                 "client_context": request.client_context,
                 "idempotency_key": request.idempotency_key,
                 "policy_decision": policy_decision,
@@ -1768,6 +1957,32 @@ class RuntimeEnforcementService:
                 self._project_evidence(receipt.id)
         return len(rows)
 
+    def _release_finops_on_failed_gateway_execution(
+        self, receipt: Any, safe_meta: dict[str, Any]
+    ) -> None:
+        reservation_id = None
+        finops = safe_meta.get("finops")
+        if isinstance(finops, dict):
+            reservation_id = finops.get("reservation_id")
+        if not reservation_id and isinstance(receipt.execution_report, dict):
+            nested = receipt.execution_report.get("finops")
+            if isinstance(nested, dict):
+                reservation_id = nested.get("reservation_id")
+        if not reservation_id:
+            return
+        try:
+            from uuid import UUID
+
+            from rai_gateway.finops.service import FinOpsService
+
+            FinOpsService(self._db).release(
+                UUID(str(reservation_id)),
+                reason=safe_meta.get("outcome") or "gateway_execution_failed",
+            )
+            self._db.commit()
+        except Exception:
+            pass
+
     def _attach_finops_reservation(
         self, request: RuntimeActionRequest, receipt_id: UUID
     ) -> None:
@@ -1901,6 +2116,7 @@ class RuntimeEnforcementService:
             if action.integration_id
             else None,
             "tool_id": str(action.tool_id) if action.tool_id else None,
+            "model_id": str(action.model_id) if action.model_id else None,
             "target": action.target.to_dict() if action.target else None,
             "parameters": _redact_parameters(action.parameters or {}),
             "environment": action.environment,
