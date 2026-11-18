@@ -38,7 +38,7 @@
   --danger-50: #fef2f2;
 }
 
-/* VigilRAI security console. Public pages keep the light :root palette. */
+/* RaiCentral security console. Public pages keep the light :root palette. */
 .console {
   color-scheme: dark;
   font-size: 14px;

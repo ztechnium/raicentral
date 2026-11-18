@@ -3,7 +3,7 @@
 **Status:** Canonical
 **Last updated:** 2026-10-27
 
-VigilRAI Community Edition is powered by [Ztechnium](https://ztechnium.com). It is one organization that you run yourself.
+RaiCentral Community Edition is powered by [Ztechnium](https://ztechnium.com). It is one organization that you run yourself.
 
 Start with the [README](../README.md). [Current status](releases/SYSTEM_STATUS.md) overrides older notes when they disagree.
 

@@ -98,7 +98,7 @@ def run_loop(*, interval_seconds: float = 5.0) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="VigilRAI runtime events worker")
+    parser = argparse.ArgumentParser(description="RaiCentral runtime events worker")
     parser.add_argument(
         "command",
         nargs="?",

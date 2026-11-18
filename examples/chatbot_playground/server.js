@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpClient } from "./mcp.js";
+import { sdkCall } from "./sdk.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -152,6 +153,49 @@ function parseResponse(p, json) {
   }
 }
 
+/**
+ * Send one built request to the gateway, either with raw fetch ("api") or through the
+ * provider's official SDK ("sdk"). Always resolves to { ok, status, json, raw, headers, url, error }.
+ */
+async function transport(approach, provider, req, payload, key) {
+  const pick = (h) => {
+    const out = {};
+    const each = typeof h.forEach === "function" ? (f) => h.forEach(f) : (f) => Object.entries(h).forEach(([k, v]) => f(v, k));
+    each((v, k) => { if (/^x-rai|receipt|request-id|retry-after/i.test(k)) out[k] = v; });
+    return out;
+  };
+
+  if (approach === "sdk") {
+    const r = await sdkCall({ provider, req, model: payload.model, extra: payload.extra, baseUrl: RAI_BASE_URL, key });
+    const errText = r.error ?? "";
+    return {
+      ok: r.ok, status: r.status, json: r.json, headers: pick(r.headers ?? {}), url: r.url,
+      raw: r.json ?? errText, error: r.ok ? undefined : errText,
+      unreachable: !r.ok && r.status === 502,
+    };
+  }
+
+  const url = RAI_BASE_URL + req.path;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-rai-agent-key": key, ...req.headers },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const raw = await res.text();
+    let json = null;
+    try { json = JSON.parse(raw); } catch { /* non-JSON error body */ }
+    return {
+      ok: res.ok, status: res.status, json, url, headers: pick(res.headers),
+      raw: json ?? raw.slice(0, 4000),
+      error: res.ok ? undefined : (json?.error?.message ?? json?.detail?.message ?? (typeof json?.detail === "string" ? json.detail : null) ?? raw.slice(0, 1000)),
+    };
+  } catch (e) {
+    return { ok: false, status: 502, url, headers: {}, unreachable: true, error: `Cannot reach gateway at ${RAI_BASE_URL}: ${e.cause?.code ?? e.message}` };
+  }
+}
+
 async function callGateway(payload) {
   const { provider, credential } = payload;
   const key = credential || ENV_CREDENTIAL;
@@ -164,41 +208,21 @@ async function callGateway(payload) {
   } catch (e) {
     return { ok: false, status: 400, error: e.message };
   }
-  const url = RAI_BASE_URL + req.path;
   const started = Date.now();
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-rai-agent-key": key, ...req.headers },
-      body: JSON.stringify(req.body),
-      signal: AbortSignal.timeout(120_000),
-    });
-    const raw = await res.text();
-    let json = null;
-    try { json = JSON.parse(raw); } catch { /* non-JSON error body */ }
-    const parsed = json && res.ok ? parseResponse(provider, json) : { text: "", usage: null };
-    const raiHeaders = {};
-    res.headers.forEach((v, k) => { if (/^x-rai|receipt|request-id|retry-after/i.test(k)) raiHeaders[k] = v; });
-    return {
-      ok: res.ok,
-      status: res.status,
-      latencyMs: Date.now() - started,
-      url,
-      text: parsed.text,
-      usage: parsed.usage,
-      headers: raiHeaders,
-      error: res.ok ? undefined : (json?.error?.message ?? json?.detail?.message ?? (typeof json?.detail === "string" ? json.detail : null) ?? raw.slice(0, 1000)),
-      raw: json ?? raw.slice(0, 4000),
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      status: 502,
-      latencyMs: Date.now() - started,
-      url,
-      error: `Cannot reach gateway at ${RAI_BASE_URL}: ${e.cause?.code ?? e.message}`,
-    };
-  }
+  const r = await transport(payload.approach, provider, req, payload, key);
+  const parsed = r.json && r.ok ? parseResponse(provider, r.json) : { text: "", usage: null };
+  return {
+    ok: r.ok,
+    status: r.status,
+    latencyMs: Date.now() - started,
+    approach: payload.approach,
+    url: r.url,
+    text: parsed.text,
+    usage: parsed.usage,
+    headers: r.headers,
+    error: r.error,
+    raw: r.raw,
+  };
 }
 
 async function readJson(req) {
@@ -437,21 +461,13 @@ async function chatWithTools(b) {
       req = buildRequest(b.provider, { ...b, messages: [] });
       withTools(b.provider, req, native, tools, b.system);
     } catch (e) { return { ok: false, status: 400, error: e.message, toolCalls }; }
-    const url = RAI_BASE_URL + req.path;
     const started = Date.now();
-    let res, raw;
-    try {
-      res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-rai-agent-key": key, ...req.headers }, body: JSON.stringify(req.body), signal: AbortSignal.timeout(120_000) });
-      raw = await res.text();
-    } catch (e) {
-      return { ok: false, status: 502, url, toolCalls, error: `Cannot reach gateway at ${RAI_BASE_URL}: ${e.cause?.code ?? e.message}` };
-    }
+    const r = await transport(b.approach, b.provider, req, b, key);
     totalMs += Date.now() - started;
-    let json = null; try { json = JSON.parse(raw); } catch { /* error body */ }
-    const headers = {}; res.headers.forEach((v, k) => { if (/^x-rai|receipt|request-id/i.test(k)) headers[k] = v; });
-    last = { status: res.status, url, headers, raw: json ?? raw.slice(0, 4000) };
-    if (!res.ok) {
-      return { ok: false, ...last, latencyMs: totalMs, toolCalls, error: json?.error?.message ?? json?.detail?.message ?? (typeof json?.detail === "string" ? json.detail : null) ?? raw.slice(0, 1000) };
+    const json = r.json;
+    last = { status: r.status, url: r.url, headers: r.headers, raw: r.raw, approach: b.approach };
+    if (!r.ok) {
+      return { ok: false, ...last, latencyMs: totalMs, toolCalls, error: r.error };
     }
     const parsed = parseResponse(b.provider, json);
     usage.input += parsed.usage?.input ?? 0; usage.output += parsed.usage?.output ?? 0;
@@ -493,6 +509,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readJson(req);
       const payload = {
         provider: b.provider,
+        approach: b.approach === "sdk" ? "sdk" : "api",
         model: b.model,
         messages: b.messages ?? [],
         system: b.system || "",

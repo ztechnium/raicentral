@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "rai-gateway"
 version = "0.1.0"
-description = "VigilRAI Community Edition — single-organization AI governance, powered by Ztechnium"
+description = "RaiCentral Community Edition — single-organization AI governance, powered by Ztechnium"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

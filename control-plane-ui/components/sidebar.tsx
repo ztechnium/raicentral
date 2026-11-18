@@ -169,7 +169,7 @@ export function Sidebar() {
         <div className="flex h-[68px] items-center gap-3 border-b border-base-200 px-4 text-accent-600">
           <GateMark />
           <div>
-            <div className="text-base font-bold text-ink-900">VIGILRAI</div>
+            <div className="text-base font-bold text-ink-900">RaiCentral</div>
             <div className="text-[9px] font-semibold tracking-wide text-ink-400">
               AI CONTROL & ASSURANCE
             </div>

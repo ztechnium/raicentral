@@ -86,7 +86,7 @@ export default function WebhookSettingsPage() {
     <div className="space-y-6">
       <SectionHeader
         title="Webhook endpoints"
-        subtitle="Receive signed approval lifecycle notifications. Webhooks are notifications only — agents must retry through VigilRAI to resume."
+        subtitle="Receive signed approval lifecycle notifications. Webhooks are notifications only — agents must retry through RaiCentral to resume."
         actions={
           <Link href="/settings" className="text-sm text-primary hover:underline">
             Back to settings

@@ -1,4 +1,4 @@
-# VigilRAI Community Edition — current status
+# RaiCentral Community Edition — current status
 
 **Status:** Canonical
 

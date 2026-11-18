@@ -18,6 +18,14 @@ The credential can also be pasted in the UI. No `npm install` is needed.
 - **Test provider** and **Test all** send a one-word prompt to check connectivity, auth, policy and the model catalog for each provider.
 - A gateway health indicator, from `/v1/providers/_gateway/status`.
 
+## Two approaches (the "Approach" dropdown)
+- **Direct RAI API (fetch)**: the server builds the provider-native request and POSTs it to `<RAI_BASE_URL>/providers/<provider>/...`. No SDK involved.
+- **Official provider SDK**: the same request goes through each provider's own SDK, pointed at the gateway with its base URL:
+  Anthropic → `@anthropic-ai/sdk` (`<gw>/providers/anthropic`), OpenAI / Ollama / Azure OpenAI → `openai` (`<gw>/providers/<p>/v1`),
+  Google AI / Vertex AI → `@google/genai` (`<gw>/providers/genai`, same as `examples/gemini_gateway_ts`).
+  The runtime credential is sent as `x-rai-agent-key` via the SDK's default headers; the SDK API key is a dummy.
+  Run `npm install` once for this mode. The direct approach needs no install. MCP tool calling works in both. The `@google/genai` SDK does not expose response headers, so no `x-rai-*` headers are shown for Google in SDK mode.
+
 ## How it works
 The browser calls this server (`/api/chat`). The server builds the provider-native request, sends it to
 `<RAI_BASE_URL>/providers/<provider>/...` with `x-rai-agent-key`, and returns the normalized reply.

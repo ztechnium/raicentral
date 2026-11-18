@@ -1,6 +1,6 @@
 # Community edition documentation
 
-These guides cover a local single-organization install, integration, and operations. VigilRAI is powered by [Ztechnium](https://ztechnium.com). There is no public marketing site and no company registration.
+These guides cover a local single-organization install, integration, and operations. RaiCentral is powered by [Ztechnium](https://ztechnium.com). There is no public marketing site and no company registration.
 
 ## Getting started
 

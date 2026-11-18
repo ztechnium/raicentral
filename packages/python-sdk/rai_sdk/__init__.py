@@ -322,7 +322,7 @@ class Session:
         )
 
     def report_model_usage(self, **kwargs: Any) -> dict[str, Any]:
-        """Preferred alias — report tokens; VigilRAI prices them."""
+        """Preferred alias — report tokens; RaiCentral prices them."""
         kwargs.setdefault("span_type", "MODEL_CALL")
         return self.record_usage(**kwargs)
 

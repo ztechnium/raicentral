@@ -240,7 +240,7 @@ export default function ApprovalDetailPage() {
         <Panel title="Approved — awaiting execution">
           <p className="text-sm text-muted-foreground">
             Human approval is complete. The AI system has not redeemed this approval yet. It must
-            retry the exact action through VigilRAI before expiry ({formatTime(request.expires_at)}
+            retry the exact action through RaiCentral before expiry ({formatTime(request.expires_at)}
             ).
           </p>
         </Panel>

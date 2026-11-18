@@ -1,6 +1,6 @@
 # Backup, restore, and disaster recovery
 
-VigilRAI Community Edition is powered by Ztechnium. This note covers one instance: its database, optional object storage, and secrets.
+RaiCentral Community Edition is powered by Ztechnium. This note covers one instance: its database, optional object storage, and secrets.
 
 ## Scope
 

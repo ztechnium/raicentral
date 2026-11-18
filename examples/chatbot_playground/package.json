@@ -5,5 +5,10 @@
   "type": "module",
   "description": "Simple chat UI to test every provider route of the RAI gateway",
   "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@google/genai": "^1.0.0",
+    "openai": "^5.0.0"
+  }
 }

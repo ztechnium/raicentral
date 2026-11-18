@@ -1,4 +1,4 @@
-# VigilRAI Community Edition on Kubernetes, powered by Ztechnium.
+# RaiCentral Community Edition on Kubernetes, powered by Ztechnium.
 # One API process. It does not create organizations.
 # Put DATABASE_URL in the secret named by postgresql.existingSecret.
 
