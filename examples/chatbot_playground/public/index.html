@@ -48,6 +48,12 @@
   <div class="sub" id="gw">…</div>
   <div><span class="dot" id="hdot"></span><span id="htxt">checking gateway…</span></div>
 
+  <label>Approach</label>
+  <select id="approach">
+    <option value="api">Direct RAI API (fetch)</option>
+    <option value="sdk">Official provider SDK</option>
+  </select>
+
   <label>Provider</label>
   <select id="provider"></select>
 
@@ -142,12 +148,14 @@ function renderProvider() {
   $("extra").querySelectorAll("input").forEach(i => i.oninput = () => store.set("x_"+i.dataset.extra, i.value));
   store.set("provider", $("provider").value);
 }
+$("approach").value = store.get("approach", "api") || "api";
+$("approach").onchange = () => store.set("approach", $("approach").value);
 const model = () => $("modelCustom").value.trim() || $("modelSel").value;
 const extra = () => Object.fromEntries([...$("extra").querySelectorAll("input")].map(i => [i.dataset.extra, i.value.trim()]));
 
 async function call(messages) {
   const r = await fetch("/api/chat", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
-    provider: $("provider").value, model: model(), messages, system: $("system").value,
+    provider: $("provider").value, approach: $("approach").value, model: model(), messages, system: $("system").value,
     temperature: $("temp").value, maxTokens: $("maxTokens").value, extra: extra(), credential: $("cred").value.trim() || undefined,
     useTools: $("useTools").checked, raiCheck: $("raiCheck").checked, clientType: $("hClient").value, hookEvent: HOOK_EVENT[$("hClient").value],
   })});
@@ -172,7 +180,7 @@ function add(cls, text, res) {
     const m = document.createElement("div"); m.className = "meta";
     const u = res.usage ? ` · tokens in ${res.usage.input ?? "?"} / out ${res.usage.output ?? "?"}` : "";
     const rc = Object.entries(res.headers || {}).map(([k,v]) => `${k}: ${v}`).join(" · ");
-    m.textContent = `HTTP ${res.status} · ${res.latencyMs ?? "?"} ms${u}${rc ? " · " + rc : ""}`;
+    m.textContent = `${res.approach === "sdk" ? "SDK" : "API"} · HTTP ${res.status} · ${res.latencyMs ?? "?"} ms${u}${rc ? " · " + rc : ""}`;
     const det = document.createElement("details");
     det.innerHTML = "<summary>request / raw response</summary>";
     const pre = document.createElement("pre");
@@ -207,7 +215,7 @@ async function testProvider(name) {
   const m = name === prev ? model() : p.models[0];
   const ex = name === prev ? extra() : { ...(p.extra || {}) };
   const r = await fetch("/api/chat", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({
-    provider:name, model:m, messages:[{role:"user",content:"Reply with the single word: OK"}], maxTokens:64, extra:ex, credential:$("cred").value.trim() || undefined })});
+    provider:name, approach:$("approach").value, model:m, messages:[{role:"user",content:"Reply with the single word: OK"}], maxTokens:64, extra:ex, credential:$("cred").value.trim() || undefined })});
   const res = await r.json();
   const row = document.createElement("div");
   row.innerHTML = `<span class="dot ${res.ok ? "ok" : "bad"}"></span><b>${name}</b> / ${m} — ${res.ok ? `OK ${res.latencyMs} ms` : `HTTP ${res.status}: ${(res.error||"").slice(0,140)}`}`;

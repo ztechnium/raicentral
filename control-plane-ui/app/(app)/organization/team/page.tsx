@@ -20,6 +20,10 @@ import {
   removeOrganizationPerson,
   updateOrganizationMembership,
   assignUserRoles,
+  createOrganizationDepartment,
+  updateOrganizationDepartment,
+  deleteOrganizationDepartment,
+  moveOrganizationPerson,
   createRole,
   createUser,
   deleteUser,
@@ -30,6 +34,15 @@ import {
 } from "@/lib/api";
 import { useOrganization, useAuth } from "@/lib/hooks/use-auth";
 import { Tabs } from "@/components/ui/tabs";
+import {
+  DepartmentManager,
+  OrganizationHierarchy,
+  TEAM_ROLES,
+  personDepartment,
+  roleLabel,
+  initials,
+  type Person,
+} from "@/components/organization/team-parts";
 import type {
   Department,
   OrganizationMembership,
@@ -40,43 +53,20 @@ import type {
 
 const OPEN_ORG_STATUSES = new Set(["ACTIVE", "PROVISIONING"]);
 
-const TEAM_ROLES = [
-  { value: "RAI_OFFICER", label: "RAI officer" },
-  { value: "ORGANIZATION_ADMIN", label: "Organization admin" },
-  { value: "BUSINESS_OWNER", label: "Business owner" },
-  { value: "TECHNICAL_OWNER", label: "Technical owner" },
-  { value: "AI_SYSTEM_OWNER", label: "AI system owner" },
-  { value: "RISK_COMPLIANCE_REVIEWER", label: "Risk and compliance" },
-  { value: "INCIDENT_MANAGER", label: "Incident manager" },
-  { value: "BUSINESS_APPROVER", label: "Business approver" },
-  { value: "AUDITOR", label: "Auditor" },
-] as const;
-
-const ROLE_LABELS = Object.fromEntries(TEAM_ROLES.map((role) => [role.value, role.label]));
+const TAB_LABEL_BY_KEY = {
+  hierarchy: "Hierarchy",
+  members: "Members",
+  departments: "Departments",
+  access: "Access",
+} as const;
+const TAB_LABELS = ["Hierarchy", "Members", "Departments"];
 
 const MEMBERSHIP_STATUSES = ["ACTIVE", "INVITED", "SUSPENDED", "REVOKED"] as const;
-
-type Person = {
-  userId: string;
-  name: string;
-  email: string;
-  roles: OrganizationMembership[];
-};
 
 type IssuedCredential = {
   email: string;
   password: string;
 };
-
-function roleLabel(role: string) {
-  return ROLE_LABELS[role] ?? role.replace(/_/g, " ").toLowerCase();
-}
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  const letters = parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
-  return letters || "?";
-}
 
 function groupPeople(memberships: OrganizationMembership[]): Person[] {
   const people = new Map<string, Person>();
@@ -98,72 +88,6 @@ function groupPeople(memberships: OrganizationMembership[]): Person[] {
     });
   }
   return Array.from(people.values()).sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function personDepartment(person: Person) {
-  const match = person.roles.find((membership) => membership.department_id);
-  return {
-    id: match?.department_id ?? null,
-    name: match?.department_name?.trim() || null,
-  };
-}
-
-function OrganizationHierarchy({
-  organizationName,
-  departments,
-  people,
-}: {
-  organizationName: string;
-  departments: Department[];
-  people: Person[];
-}) {
-  const assigned = new Set<string>();
-  const groups = departments.map((department) => {
-    const members = people.filter((person) => personDepartment(person).id === department.id);
-    for (const person of members) assigned.add(person.userId);
-    return { department, members };
-  });
-  const unassigned = people.filter((person) => !assigned.has(person.userId));
-
-  return (
-    <div data-testid="organization-hierarchy" className="text-sm">
-      <p className="font-semibold text-ink-900">{organizationName}</p>
-      <ul className="mt-3 space-y-3 border-l border-base-200 pl-4">
-        {groups.map(({ department, members }) => (
-          <li key={department.id}>
-            <p className="font-medium text-ink-900">{department.name}</p>
-            {department.description ? (
-              <p className="text-xs text-ink-500">{department.description}</p>
-            ) : null}
-            <ul className="mt-2 space-y-1 border-l border-base-200 pl-4">
-              {members.length === 0 ? (
-                <li className="text-xs text-ink-400">No team members</li>
-              ) : (
-                members.map((person) => (
-                  <li key={person.userId} className="text-ink-700">
-                    {person.name}
-                    {person.email ? <span className="text-ink-400"> · {person.email}</span> : null}
-                  </li>
-                ))
-              )}
-            </ul>
-          </li>
-        ))}
-        {unassigned.length > 0 ? (
-          <li>
-            <p className="font-medium text-ink-900">Unassigned</p>
-            <ul className="mt-2 space-y-1 border-l border-base-200 pl-4">
-              {unassigned.map((person) => (
-                <li key={person.userId} className="text-ink-700">
-                  {person.name}
-                </li>
-              ))}
-            </ul>
-          </li>
-        ) : null}
-      </ul>
-    </div>
-  );
 }
 
 function toggleValue(values: string[], value: string) {
@@ -582,7 +506,7 @@ function AccessPanel() {
 export default function OrganizationTeamPage() {
   const { activeOrganization, isLoading: orgLoading } = useOrganization();
   const { isPlatformAdmin } = useAuth();
-  const [tab, setTab] = useState<"team" | "access">("team");
+  const [tab, setTab] = useState<"hierarchy" | "members" | "departments" | "access">("hierarchy");
   const [memberships, setMemberships] = useState<OrganizationMembership[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -790,6 +714,79 @@ export default function OrganizationTeamPage() {
     }
   };
 
+  const refreshDepartments = async () => {
+    const res = await listOrganizationDepartments();
+    setDepartments(res.data.items);
+  };
+
+  const runDepartmentAction = async (
+    action: () => Promise<unknown>,
+    success: string,
+    failure: string,
+  ) => {
+    if (!canInvite) return false;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, orgId);
+    try {
+      await action();
+      await Promise.all([refreshDepartments(), refreshTeam()]);
+      setMessage(success);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : failure);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCreateDepartment = (name: string, description: string) =>
+    runDepartmentAction(
+      () => createOrganizationDepartment({ name: name.trim(), description: description.trim() }),
+      `Department "${name.trim()}" created.`,
+      "Failed to create department",
+    );
+
+  const onUpdateDepartment = (id: string, name: string, description: string) =>
+    runDepartmentAction(
+      () => updateOrganizationDepartment(id, { name: name.trim(), description: description.trim() }),
+      "Department updated.",
+      "Failed to update department",
+    );
+
+  const onDeleteDepartment = (department: Department, memberCount: number) => {
+    if (memberCount > 0) {
+      setError(`Move the ${memberCount} member(s) out of ${department.name} before deleting it.`);
+      return;
+    }
+    if (!window.confirm(`Delete the ${department.name} department?`)) return;
+    void runDepartmentAction(
+      () => deleteOrganizationDepartment(department.id),
+      `Department "${department.name}" deleted.`,
+      "Failed to delete department",
+    );
+  };
+
+  const onMovePerson = async (person: Person, nextDepartmentId: string | null) => {
+    if (!canInvite) return;
+    setActingId(person.userId);
+    setError(null);
+    setMessage(null);
+    window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, orgId);
+    try {
+      await moveOrganizationPerson(person.userId, nextDepartmentId);
+      const target = departments.find((department) => department.id === nextDepartmentId);
+      setMessage(`Moved ${person.name} to ${target?.name ?? "Unassigned"}.`);
+      await refreshTeam();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to move member");
+    } finally {
+      setActingId(null);
+    }
+  };
+
   const copyPassword = async () => {
     if (!credential) return;
     try {
@@ -830,15 +827,18 @@ export default function OrganizationTeamPage() {
         </div>
       )}
 
-      {isPlatformAdmin && (
-        <Tabs
-          tabs={["Team", "Access"]}
-          active={tab === "access" ? "Access" : "Team"}
-          onChange={(value) => setTab(value === "Access" ? "access" : "team")}
-        />
-      )}
+      <Tabs
+        tabs={isPlatformAdmin ? [...TAB_LABELS, "Access"] : TAB_LABELS}
+        active={TAB_LABEL_BY_KEY[tab]}
+        onChange={(value) => {
+          const next = (Object.keys(TAB_LABEL_BY_KEY) as (keyof typeof TAB_LABEL_BY_KEY)[]).find(
+            (key) => TAB_LABEL_BY_KEY[key] === value,
+          );
+          if (next) setTab(next);
+        }}
+      />
 
-      {(tab === "team" || !isPlatformAdmin) && (
+      {tab !== "access" && (
         <>
           {!orgLoading && !activeOrganization && (
             <Panel
@@ -880,7 +880,20 @@ export default function OrganizationTeamPage() {
                 </Panel>
               )}
 
-              {canInvite ? (
+              {tab === "members" && (
+                <Panel title="Roles" description="Every member holds one or more of these roles.">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {TEAM_ROLES.map((option) => (
+                      <div key={option.value} className="rounded-md border border-base-200 p-3">
+                        <p className="text-sm font-semibold text-ink-900">{option.label}</p>
+                        <p className="mt-1 text-xs text-ink-500">{option.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+              )}
+
+              {tab === "members" && (canInvite ? (
                 <Panel
                   title="Invite a teammate"
                   description={`The new membership is created in ${activeOrganization.name}.`}
@@ -956,23 +969,41 @@ export default function OrganizationTeamPage() {
                       : `${activeOrganization.name} is ${activeOrganization.status.toLowerCase()}, so new invites are paused.`}
                   </p>
                 </Panel>
+              ))}
+
+              {tab === "hierarchy" && (
+                <Panel
+                  title="Organization hierarchy"
+                  description="Company → departments → members."
+                >
+                  {loading ? (
+                    <p className="text-sm text-ink-500">Loading organization structure…</p>
+                  ) : (
+                    <OrganizationHierarchy
+                      organizationName={activeOrganization.name}
+                      departments={departments}
+                      people={people}
+                      canManage={canInvite}
+                      actingId={actingId}
+                      onMove={(person, nextId) => void onMovePerson(person, nextId)}
+                    />
+                  )}
+                </Panel>
               )}
 
-              <Panel
-                title="Organization"
-                description="Departments and the team members inside each one."
-              >
-                {loading ? (
-                  <p className="text-sm text-ink-500">Loading organization structure…</p>
-                ) : (
-                  <OrganizationHierarchy
-                    organizationName={activeOrganization.name}
-                    departments={departments}
-                    people={people}
-                  />
-                )}
-              </Panel>
+              {tab === "departments" && (
+                <DepartmentManager
+                  departments={departments}
+                  people={people}
+                  canManage={canInvite}
+                  busy={busy}
+                  onCreate={onCreateDepartment}
+                  onUpdate={onUpdateDepartment}
+                  onDelete={onDeleteDepartment}
+                />
+              )}
 
+              {tab === "members" && (
               <Panel
                 title="Directory"
                 description={
@@ -1140,6 +1171,7 @@ export default function OrganizationTeamPage() {
                   )}
                 </div>
               </Panel>
+              )}
             </>
           )}
         </>

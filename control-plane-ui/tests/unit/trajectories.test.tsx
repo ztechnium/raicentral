@@ -8,6 +8,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  getAISystems: vi.fn().mockResolvedValue({ data: [] }),
+  getAgents: vi.fn().mockResolvedValue({ data: [] }),
+  listOrganizationDepartments: vi.fn().mockResolvedValue({ items: [] }),
+  listOrganizationTeam: vi.fn().mockResolvedValue({ items: [] }),
   getTrajectories: vi.fn().mockResolvedValue({
     data: {
       items: [

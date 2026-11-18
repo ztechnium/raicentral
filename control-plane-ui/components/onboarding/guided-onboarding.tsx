@@ -1477,7 +1477,7 @@ const response = await fetch("https://api.example.com/v1/runtime/...", {
       </div>
 
       <p className="text-xs text-ink-500">
-        Send traffic through your connected application. VigilRAI will authenticate the runtime
+        Send traffic through your connected application. RaiCentral will authenticate the runtime
         credential, evaluate policy, and record a trajectory automatically.
       </p>
       <div className="flex flex-wrap gap-2">
@@ -1519,7 +1519,7 @@ function VerifyStep({
   return (
     <StepShell title="Step 7 — Verify First Trajectory">
       <div className="flex items-center gap-2 text-sm text-accent-700">
-        ✓ VigilRAI is receiving runtime evidence.
+        ✓ RaiCentral is receiving runtime evidence.
       </div>
       <div className="mt-2 grid gap-3 rounded-md border border-base-200 bg-base-100 p-3 text-xs sm:grid-cols-4">
         <div>

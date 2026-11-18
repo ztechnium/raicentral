@@ -114,6 +114,39 @@ class MemberUpdate(BaseModel):
     status: str | None = None
 
 
+class DepartmentCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class DepartmentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class PersonDepartmentUpdate(BaseModel):
+    department_id: UUID | None = None
+
+
+# Roles an organization admin may hand out from the team page.
+ORGANIZATION_TEAM_ROLES = frozenset(
+    {
+        GovernanceRole.ORGANIZATION_ADMIN.value,
+        GovernanceRole.RAI_OFFICER.value,
+        GovernanceRole.AUDITOR.value,
+    }
+)
+
+
+def _require_team_role(role: str) -> None:
+    if role.strip() not in ORGANIZATION_TEAM_ROLES:
+        raise RaiException(
+            error_code=ErrorCode.NOT_ALLOWED,
+            message="Role must be one of: "
+            + ", ".join(sorted(ORGANIZATION_TEAM_ROLES)),
+        )
+
+
 class AccountabilityUpsert(BaseModel):
     business_owner_membership_id: UUID | None = None
     technical_owner_membership_id: UUID | None = None
@@ -418,6 +451,68 @@ def list_current_organization_departments(
         raise _handle(exc) from exc
 
 
+@router.post("/organization/departments")
+def create_current_organization_department(
+    payload: DepartmentCreate,
+    tenant: TenantContext = Depends(require_organization_member),
+    svc: GovernanceService = Depends(_svc),
+):
+    """Create a department (organization admin only)."""
+    _require_org_admin(tenant)
+    try:
+        return svc.create_department(
+            name=payload.name,
+            description=payload.description,
+            created_by=tenant.user_id,
+        )
+    except GovernanceError as exc:
+        raise _handle(exc) from exc
+
+
+@router.patch("/organization/departments/{department_id}")
+def update_current_organization_department(
+    department_id: UUID,
+    payload: DepartmentUpdate,
+    tenant: TenantContext = Depends(require_organization_member),
+    svc: GovernanceService = Depends(_svc),
+):
+    _require_org_admin(tenant)
+    try:
+        return svc.update_department(
+            department_id, name=payload.name, description=payload.description
+        )
+    except GovernanceError as exc:
+        raise _handle(exc) from exc
+
+
+@router.delete("/organization/departments/{department_id}")
+def delete_current_organization_department(
+    department_id: UUID,
+    tenant: TenantContext = Depends(require_organization_member),
+    svc: GovernanceService = Depends(_svc),
+):
+    _require_org_admin(tenant)
+    try:
+        return svc.delete_department(department_id)
+    except GovernanceError as exc:
+        raise _handle(exc) from exc
+
+
+@router.patch("/organization/people/{user_id}/department")
+def move_current_organization_person(
+    user_id: str,
+    payload: PersonDepartmentUpdate,
+    tenant: TenantContext = Depends(require_organization_member),
+    svc: GovernanceService = Depends(_svc),
+):
+    """Move a person (all of their roles) to another department."""
+    _require_org_admin(tenant)
+    try:
+        return svc.assign_person_department(user_id, payload.department_id)
+    except GovernanceError as exc:
+        raise _handle(exc) from exc
+
+
 @router.get("/organization/members")
 def list_current_organization_members(
     status: str | None = None,
@@ -454,6 +549,7 @@ def invite_current_organization_member(
             error_code=ErrorCode.NOT_ALLOWED,
             message="Platform roles cannot be assigned from the organization team",
         )
+    _require_team_role(payload.role)
     try:
         return GovernanceService(db).invite_member(
             email=payload.email,
@@ -492,6 +588,8 @@ def update_current_organization_member(
             error_code=ErrorCode.NOT_ALLOWED,
             message="Platform roles cannot be assigned from the organization team",
         )
+    if payload.role:
+        _require_team_role(payload.role)
     try:
         updated = svc.update_membership(
             membership_id, role=payload.role, status=payload.status

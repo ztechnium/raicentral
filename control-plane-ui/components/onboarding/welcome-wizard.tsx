@@ -316,7 +316,7 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
           <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">
             Developer setup
           </p>
-          <h1 className="mt-1 text-2xl font-semibold">Welcome to VigilRAI</h1>
+          <h1 className="mt-1 text-2xl font-semibold">Welcome to RaiCentral</h1>
           <p className="mt-2 max-w-2xl text-sm text-ink-500">
             Set up the organization, load an example or your own catalog, then connect with the
             TypeScript or Python SDK.

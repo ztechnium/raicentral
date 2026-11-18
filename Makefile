@@ -1,4 +1,4 @@
-# VigilRAI Community Edition. Install and test with uv. Docker is not required for these targets except dev, up, and build.
+# RaiCentral Community Edition. Install and test with uv. Docker is not required for these targets except dev, up, and build.
 .PHONY: setup dev up lint format format-check typecheck test test-unit test-integration test-e2e migrate migration-check build security docs ci seed-mcp-catalog attach-seeded-mcp
 
 PYTHON ?= uv run

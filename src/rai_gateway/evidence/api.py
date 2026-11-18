@@ -43,30 +43,47 @@ def list_trajectories(
     status: str | None = Query(default=None),
     started_after: datetime | None = Query(default=None),
     started_before: datetime | None = Query(default=None),
+    agent_version_id: UUID | None = Query(default=None),
+    model: str | None = Query(default=None),
+    department_id: UUID | None = Query(default=None),
+    delegator_id: str | None = Query(default=None),
+    events: str | None = Query(default=None, description="e.g. gt:10"),
+    findings: str | None = Query(default=None, description="e.g. gte:1"),
+    completeness: str | None = Query(default=None, description="e.g. lt:80"),
+    tokens: str | None = Query(default=None, description="e.g. gt:1000"),
+    cost: str | None = Query(default=None, description="e.g. lte:0.5"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
+    from rai_gateway.evidence.repository import parse_numeric_filter
+
+    try:
+        numeric = {
+            "events": parse_numeric_filter(events),
+            "findings": parse_numeric_filter(findings),
+            "completeness": parse_numeric_filter(completeness),
+            "tokens": parse_numeric_filter(tokens),
+            "cost": parse_numeric_filter(cost),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    filters = dict(
+        ai_system_id=ai_system_id,
+        agent_id=agent_id,
+        agent_version_id=agent_version_id,
+        runtime_identity_id=runtime_identity_id,
+        client_integration_id=client_integration_id,
+        status=status,
+        started_after=started_after,
+        started_before=started_before,
+        model=model,
+        department_id=department_id,
+        delegator_id=delegator_id,
+        **numeric,
+    )
     svc = TrajectoryService(db)
-    rows = svc.list_trajectories(
-        ai_system_id=ai_system_id,
-        agent_id=agent_id,
-        runtime_identity_id=runtime_identity_id,
-        client_integration_id=client_integration_id,
-        status=status,
-        started_after=started_after,
-        started_before=started_before,
-        limit=limit,
-        offset=offset,
-    )
-    total = svc.count_trajectories(
-        ai_system_id=ai_system_id,
-        agent_id=agent_id,
-        runtime_identity_id=runtime_identity_id,
-        client_integration_id=client_integration_id,
-        status=status,
-        started_after=started_after,
-        started_before=started_before,
-    )
+    rows = svc.list_trajectories(limit=limit, offset=offset, **filters)
+    total = svc.count_trajectories(**filters)
     items = [svc.serialize_trajectory_summary(row) for row in rows]
     from rai_gateway.finops.metering import RuntimeMeteringService
 
@@ -80,6 +97,7 @@ def list_trajectories(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "metrics": svc.trajectory_metrics(),
     }
 
 

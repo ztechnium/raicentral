@@ -33,7 +33,12 @@ import {
   transitionAISystem,
   updateAISystem,
 } from "@/lib/api";
-import { BUSINESS_UNITS, RISK_TIERS } from "@/lib/registry-constants";
+import {
+  DepartmentSelect,
+  PersonSelect,
+  useOrganizationDirectory,
+} from "@/components/organization/directory-fields";
+import { RISK_TIERS } from "@/lib/registry-constants";
 import { slugifyKey } from "@/lib/slugify";
 import type {
   AISystemConfigurationProvenance,
@@ -83,6 +88,9 @@ function formatRelative(value?: string | null) {
 }
 
 export default function AISystemDetailPage() {
+  const directory = useOrganizationDirectory();
+  const personLabel = (id?: string | null) =>
+    id ? (directory.people.find((p) => p.userId === id)?.label ?? id) : "—";
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -260,7 +268,7 @@ export default function AISystemDetailPage() {
       <div className="mb-4 rounded-lg border border-base-200 bg-base-50 p-4">
         <MetaGrid
           items={[
-            { label: "Owner", value: system.owner_id ?? "—" },
+            { label: "Owner", value: personLabel(system.owner_id) },
             { label: "Business Unit", value: system.business_unit ?? "—" },
             { label: "Updated", value: formatDate(system.updated_at) },
             {
@@ -573,30 +581,26 @@ export default function AISystemDetailPage() {
               }}
             />
           </FormField>
-          <FormField label="Business Unit">
-            <Input
-              list="bu-list-edit"
-              defaultValue={system.business_unit ?? ""}
-              onBlur={(e) => {
-                if (e.target.value !== (system.business_unit ?? "")) {
-                  void handleUpdateSystem("business_unit", e.target.value);
-                }
+          <FormField label="Business Unit" hint="Optional. Department of the organization.">
+            <DepartmentSelect
+              directory={directory}
+              value={system.business_unit ?? ""}
+              onChange={(name) => {
+                const owner = directory.people.find((p) => p.userId === system.owner_id);
+                const clearOwner = Boolean(name) && owner?.departmentName !== name;
+                void updateAISystem(systemId, {
+                  business_unit: name,
+                  ...(clearOwner ? { owner_id: "" } : {}),
+                }).then(load);
               }}
             />
-            <datalist id="bu-list-edit">
-              {BUSINESS_UNITS.map((unit) => (
-                <option key={unit} value={unit} />
-              ))}
-            </datalist>
           </FormField>
-          <FormField label="Owner ID">
-            <Input
-              defaultValue={system.owner_id ?? ""}
-              onBlur={(e) => {
-                if (e.target.value !== (system.owner_id ?? "")) {
-                  void handleUpdateSystem("owner_id", e.target.value);
-                }
-              }}
+          <FormField label="Owner" hint="Optional. Members of the selected department.">
+            <PersonSelect
+              directory={directory}
+              value={system.owner_id ?? ""}
+              departmentName={system.business_unit || undefined}
+              onChange={(id) => void handleUpdateSystem("owner_id", id)}
             />
           </FormField>
           <FormField label="Risk Tier">
@@ -708,10 +712,11 @@ export default function AISystemDetailPage() {
               className="font-mono"
             />
           </FormField>
-          <FormField label="Owner ID">
-            <Input
+          <FormField label="Owner" hint="Optional.">
+            <PersonSelect
+              directory={directory}
               value={agentForm.owner_id}
-              onChange={(e) => setAgentForm({ ...agentForm, owner_id: e.target.value })}
+              onChange={(id) => setAgentForm({ ...agentForm, owner_id: id })}
             />
           </FormField>
           <FormField label="Business Purpose">

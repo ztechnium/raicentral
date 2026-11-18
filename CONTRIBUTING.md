@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve the VigilRAI community edition. The project is licensed under the Apache License 2.0. By submitting a contribution, you agree that your work is licensed under those terms.
+Thanks for helping improve the RaiCentral community edition. The project is licensed under the Apache License 2.0. By submitting a contribution, you agree that your work is licensed under those terms.
 
 This tree is a single-organization product. Do not add company registration, a public marketing site, an organization switcher, `X-Organization-ID`, or a second tenant key. People belong to the instance through memberships and departments. Platform roles stay separate and only authorize the admin console.
 

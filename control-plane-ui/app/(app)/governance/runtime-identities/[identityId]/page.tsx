@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  PersonSelect,
+  useOrganizationDirectory,
+} from "@/components/organization/directory-fields";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -45,6 +49,7 @@ import type {
 } from "@/lib/types";
 
 export default function RuntimeIdentityDetailPage() {
+  const directory = useOrganizationDirectory();
   const params = useParams();
   const identityId = params.identityId as string;
   const [identity, setIdentity] = useState<RuntimeIdentitySummary | null>(null);
@@ -369,13 +374,12 @@ export default function RuntimeIdentityDetailPage() {
         {showDelegationForm && (
           <div className="mb-6 space-y-4 rounded-lg border border-base-200 p-4">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="Delegator ID" required hint="e.g. user email or service account">
-                <Input
+              <FormField label="Delegator ID" required hint="A user of the organization">
+                <PersonSelect
+                  directory={directory}
                   value={delegationForm.delegator_id}
-                  onChange={(e) =>
-                    setDelegationForm({ ...delegationForm, delegator_id: e.target.value })
-                  }
-                  placeholder="mohamed@example.com"
+                  emptyLabel="Select a user"
+                  onChange={(id) => setDelegationForm({ ...delegationForm, delegator_id: id })}
                 />
               </FormField>
               <FormField label="Expires At">
@@ -423,13 +427,12 @@ export default function RuntimeIdentityDetailPage() {
                         />
                       </FormField>
                       <FormField label="Delegator ID" required>
-                        <Input
+                        <PersonSelect
+                          directory={directory}
                           value={editDelegationForm.delegator_id}
-                          onChange={(e) =>
-                            setEditDelegationForm({
-                              ...editDelegationForm,
-                              delegator_id: e.target.value,
-                            })
+                          emptyLabel="Select a user"
+                          onChange={(id) =>
+                            setEditDelegationForm({ ...editDelegationForm, delegator_id: id })
                           }
                         />
                       </FormField>
@@ -468,7 +471,9 @@ export default function RuntimeIdentityDetailPage() {
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="font-medium text-ink-900">
-                        {d.delegator_type}: {d.delegator_id}
+                        {d.delegator_type}:{" "}
+                        {directory.people.find((p) => p.userId === d.delegator_id)?.label ??
+                          d.delegator_id}
                       </p>
                       <p className="mt-1 text-xs text-ink-500">
                         Valid {d.valid_from ? new Date(d.valid_from).toLocaleString() : "now"}

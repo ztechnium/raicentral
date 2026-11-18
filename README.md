@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://i.postimg.cc/bw44qfz4/d3a24c15-d593-4d0e-89ee-86d4264c00cf.png" alt="RaiCentral" width="160">
+  <img src="https://i.postimg.cc/T2QxM8Dt/Screenshot-2026-11-18-115943.png" alt="RaiCentral" width="160">
 </p>
 
 # RaiCentral Community Edition

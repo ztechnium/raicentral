@@ -1,6 +1,6 @@
 # Deploy with Docker
 
-VigilRAI Community Edition is powered by [Ztechnium](https://ztechnium.com). Run it on one machine: API, console, PostgreSQL, and Redis. This is a single organization, not a multi-tenant service. It is the path for a first trial and for local integration. It is not a hardened production topology.
+RaiCentral Community Edition is powered by [Ztechnium](https://ztechnium.com). Run it on one machine: API, console, PostgreSQL, and Redis. This is a single organization, not a multi-tenant service. It is the path for a first trial and for local integration. It is not a hardened production topology.
 
 ## Requirements
 

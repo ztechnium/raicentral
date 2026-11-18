@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  PersonSelect,
+  useOrganizationDirectory,
+} from "@/components/organization/directory-fields";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -30,6 +34,7 @@ import { RISK_TIERS } from "@/lib/registry-constants";
 import type { AgentSummary, AgentVersionSummary, AISystemSummary } from "@/lib/types";
 
 export default function AgentDetailPage() {
+  const directory = useOrganizationDirectory();
   const params = useParams();
   const agentId = params.agentId as string;
   const [agent, setAgent] = useState<AgentSummary | null>(null);
@@ -166,7 +171,12 @@ export default function AgentDetailPage() {
             <MetaGrid
               items={[
                 { label: "Name", value: agent.name },
-                { label: "Owner", value: agent.owner_id || "—" },
+                {
+                  label: "Owner",
+                  value: agent.owner_id
+                    ? (directory.people.find((p) => p.userId === agent.owner_id)?.label ?? agent.owner_id)
+                    : "—",
+                },
                 { label: "Status", value: <StatusBadge status={agent.status} /> },
                 {
                   label: "Parent system",
@@ -309,10 +319,11 @@ export default function AgentDetailPage() {
               onChange={(e) => setAgentForm({ ...agentForm, name: e.target.value })}
             />
           </FormField>
-          <FormField label="Owner ID">
-            <Input
+          <FormField label="Owner" hint="Optional.">
+            <PersonSelect
+              directory={directory}
               value={agentForm.owner_id}
-              onChange={(e) => setAgentForm({ ...agentForm, owner_id: e.target.value })}
+              onChange={(id) => setAgentForm({ ...agentForm, owner_id: id })}
             />
           </FormField>
           <FormField label="Business Purpose">

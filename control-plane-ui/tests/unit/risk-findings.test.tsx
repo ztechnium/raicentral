@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/link", () => ({
@@ -36,6 +36,18 @@ vi.mock("@/lib/api", () => ({
       offset: 0,
     },
   }),
+  getAISystems: vi.fn().mockResolvedValue({ data: [] }),
+  getAgents: vi.fn().mockResolvedValue({ data: [] }),
+  getModels: vi.fn().mockResolvedValue({ data: [] }),
+  getRuntimeIdentities: vi.fn().mockResolvedValue({ data: [] }),
+  listOrganizationDepartments: vi.fn().mockResolvedValue({ data: { items: [] } }),
+  listOrganizationTeam: vi.fn().mockResolvedValue({ data: { items: [] } }),
+}));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: vi.fn() }),
+  usePathname: () => "/risk/findings",
 }));
 
 import RiskFindingsPage from "@/app/(app)/risk/findings/page";
@@ -44,10 +56,12 @@ describe("Risk findings page", () => {
   it("labels the policy and the action separately", async () => {
     render(<RiskFindingsPage />);
 
-    expect(await screen.findByText("Unusual tool frequency")).toBeInTheDocument();
-    expect(screen.getByText("Send Customer Reply")).toBeInTheDocument();
-    expect(screen.getByText("Policy")).toBeInTheDocument();
-    expect(screen.getByText("Action")).toBeInTheDocument();
+    const table = within(await screen.findByRole("table"));
+
+    expect(table.getByText("Unusual tool frequency")).toBeInTheDocument();
+    expect(table.getByText("Send Customer Reply")).toBeInTheDocument();
+    expect(table.getByText("Policy")).toBeInTheDocument();
+    expect(table.getByText("Action")).toBeInTheDocument();
     expect(screen.queryByText(/TOOL · UNUSUAL_TOOL_FREQUENCY/)).not.toBeInTheDocument();
   });
 });

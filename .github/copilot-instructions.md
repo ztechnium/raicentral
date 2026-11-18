@@ -1,8 +1,8 @@
-# Copilot instructions for the VigilRAI community edition
+# Copilot instructions for the RaiCentral community edition
 
 ## Product
 
-VigilRAI Community Edition is a single-organization AI governance console, powered by Ztechnium. It is not a multi-organization service. Do not add company registration, an organization switcher, or `X-Organization-ID`.
+RaiCentral Community Edition is a single-organization AI governance console, powered by Ztechnium. It is not a multi-organization service. Do not add company registration, an organization switcher, or `X-Organization-ID`.
 
 Read these files before making architectural changes:
 

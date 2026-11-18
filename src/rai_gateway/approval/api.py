@@ -17,6 +17,7 @@ from rai_gateway.approval.errors import (
     ApprovalConflictError,
     ApprovalDeniedError,
     ApprovalError,
+    ApprovalNotFoundError,
 )
 from rai_gateway.approval.plan import ApprovalPlanService
 from rai_gateway.approval.service import ApprovalService
@@ -355,6 +356,36 @@ def _serialize_detail(
     return data
 
 
+def _viewer_can_see_request(request, db: Session, viewer: TenantContext) -> bool:
+    """Only the team roles an approval is routed to (plus its initiator and org
+    admins, who oversee the queue) may see it."""
+    from rai_gateway.core.authorization import PLATFORM_ROLES
+    from rai_gateway.governance.domain import GovernanceRole
+
+    if viewer.has_role(GovernanceRole.ORGANIZATION_ADMIN.value) or any(
+        viewer.has_role(role) for role in PLATFORM_ROLES
+    ):
+        return True
+    if viewer.user_id in {request.initiating_principal, request.created_by}:
+        return True
+    plans = ApprovalPlanService(db)
+    plan = plans.get_plan_for_request(request.id)
+    routed = {
+        plans._normalize_stage_role(str(role))  # noqa: SLF001
+        for stage in (plan.stages if plan is not None else [])
+        for role in (stage.required_roles or [])
+    }
+    mine = {
+        plans._normalize_stage_role(role)  # noqa: SLF001
+        for role in viewer.roles
+    }
+    if routed:
+        return bool(routed & mine)
+    # No role routing on the plan: fall back to who is allowed to decide.
+    caps = _serialize_request(request, db, viewer=viewer)["viewer_capabilities"]
+    return bool(caps.get("can_approve") or caps.get("can_reject"))
+
+
 @router.post("/approval-requests", status_code=201)
 def create_approval_request(
     payload: ApprovalRequestCreate,
@@ -415,7 +446,11 @@ def list_approval_requests(
         risk_tier=risk_tier,
         search=search,
     )
-    serialized = [_serialize_request(r, db, viewer=tenant) for r in requests]
+    serialized = [
+        _serialize_request(r, db, viewer=tenant)
+        for r in requests
+        if _viewer_can_see_request(r, db, tenant)
+    ]
     if not view:
         return serialized
 
@@ -455,6 +490,8 @@ def get_approval_request(
 ) -> dict[str, Any]:
     try:
         request = svc.get_request(request_id)
+        if not _viewer_can_see_request(request, db, tenant):
+            raise ApprovalNotFoundError(str(request_id))
         return _serialize_detail(request, db, consumption, viewer=tenant)
     except ApprovalError as exc:
         raise _handle_error(exc) from exc

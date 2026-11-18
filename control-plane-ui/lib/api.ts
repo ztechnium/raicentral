@@ -293,6 +293,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
     path !== "/v1/auth/refresh" &&
     path !== "/v1/auth/forgot-password" &&
     path !== "/v1/auth/reset-password" &&
+    path !== "/v1/auth/verify-email" &&
     path !== "/admin/api/auth/login"
   ) {
     const refreshed = await refreshAccessTokenIfNeeded();
@@ -1474,10 +1475,34 @@ export function getEnforcementReceipts(params?: {
   client_type?: string;
   started_after?: string;
   started_before?: string;
+  agent_version_id?: string;
+  model?: string;
+  department_id?: string;
+  delegator_id?: string;
+  /** Numeric comparisons, formatted "<eq|ne|gt|gte|lt|lte>:<number>". */
+  events?: string;
+  findings?: string;
+  completeness?: string;
+  tokens?: string;
+  cost?: string;
   limit?: number;
   offset?: number;
 }) {
   const query = new URLSearchParams();
+  for (const key of [
+    "agent_version_id",
+    "model",
+    "department_id",
+    "delegator_id",
+    "events",
+    "findings",
+    "completeness",
+    "tokens",
+    "cost",
+  ] as const) {
+    const value = params?.[key];
+    if (value) query.set(key, value);
+  }
   if (params?.ai_system_id) query.set("ai_system_id", params.ai_system_id);
   if (params?.agent_id) query.set("agent_id", params.agent_id);
   if (params?.runtime_identity_id) query.set("runtime_identity_id", params.runtime_identity_id);
@@ -1614,21 +1639,19 @@ export function getTrajectories(params?: {
   status?: string;
   started_after?: string;
   started_before?: string;
+  model?: string;
+  department_id?: string;
+  delegator_id?: string;
   limit?: number;
   offset?: number;
+  /** Metric conditions, e.g. `{ tokens: "gt:1000" }`. */
+  [metric: string]: string | number | undefined;
 }) {
   const query = new URLSearchParams();
-  if (params?.ai_system_id) query.set("ai_system_id", params.ai_system_id);
-  if (params?.agent_id) query.set("agent_id", params.agent_id);
-  if (params?.runtime_identity_id) query.set("runtime_identity_id", params.runtime_identity_id);
-  if (params?.client_integration_id) {
-    query.set("client_integration_id", params.client_integration_id);
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value === undefined || value === "" || value === 0) continue;
+    query.set(key, String(value));
   }
-  if (params?.status) query.set("status", params.status);
-  if (params?.started_after) query.set("started_after", params.started_after);
-  if (params?.started_before) query.set("started_before", params.started_before);
-  if (params?.limit) query.set("limit", String(params.limit));
-  if (params?.offset) query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiGet<TrajectoryListResponse>(`/v1/trajectories${suffix}`);
 }
@@ -1821,6 +1844,13 @@ export function getRiskFindings(params?: {
   severity?: string;
   status?: string;
   finding_type?: string;
+  agent_id?: string;
+  model_id?: string;
+  runtime_identity_id?: string;
+  department_id?: string;
+  member_id?: string;
+  date_from?: string;
+  date_to?: string;
   limit?: number;
   offset?: number;
 }) {
@@ -1830,6 +1860,13 @@ export function getRiskFindings(params?: {
   if (params?.severity) query.set("severity", params.severity);
   if (params?.status) query.set("status", params.status);
   if (params?.finding_type) query.set("finding_type", params.finding_type);
+  if (params?.agent_id) query.set("agent_id", params.agent_id);
+  if (params?.model_id) query.set("model_id", params.model_id);
+  if (params?.runtime_identity_id) query.set("runtime_identity_id", params.runtime_identity_id);
+  if (params?.department_id) query.set("department_id", params.department_id);
+  if (params?.member_id) query.set("member_id", params.member_id);
+  if (params?.date_from) query.set("date_from", params.date_from);
+  if (params?.date_to) query.set("date_to", params.date_to);
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
@@ -2444,6 +2481,33 @@ export function listOrganizationTeam(params?: {
 /** Departments of the active organization. Defaults are created the first time this is read. */
 export function listOrganizationDepartments() {
   return apiGet<{ items: Department[]; organization_id: string }>("/v1/organization/departments");
+}
+
+export function createOrganizationDepartment(payload: {
+  name: string;
+  description?: string;
+}) {
+  return apiPost<Department>("/v1/organization/departments", payload);
+}
+
+export function updateOrganizationDepartment(
+  departmentId: string,
+  payload: { name?: string; description?: string },
+) {
+  return apiPatch<Department>(`/v1/organization/departments/${departmentId}`, payload);
+}
+
+export function deleteOrganizationDepartment(departmentId: string) {
+  return apiDelete<{ id: string; deleted: boolean }>(
+    `/v1/organization/departments/${departmentId}`,
+  );
+}
+
+export function moveOrganizationPerson(userId: string, departmentId: string | null) {
+  return apiPatch<{ user_id: string; department_id: string | null; updated: number }>(
+    `/v1/organization/people/${encodeURIComponent(userId)}/department`,
+    { department_id: departmentId },
+  );
 }
 
 /** Invite into the active organization only. Organization id is not accepted from the client. */
@@ -3088,6 +3152,24 @@ function buildReportingQuery(params?: ReportingQueryParams): string {
   });
   const query = queryParams.toString();
   return query ? `?${query}` : "";
+}
+
+export interface GatewayTrafficShare {
+  period_start: string;
+  period_end: string;
+  observed_ai_connections: number;
+  via_gateway: number;
+  direct: number;
+  unclassified_ai_destinations: number;
+  /** null means no network telemetry was observed, not 0% coverage. */
+  share_pct: number | null;
+  last_observed_at: string | null;
+}
+
+export function getGatewayTrafficShare(params: { period_start: string; period_end: string }) {
+  return apiGet<GatewayTrafficShare>(
+    `/v1/enforcement-assurance/traffic-share${buildReportingQuery(params)}`,
+  );
 }
 
 export function getReportSummary(params?: ReportingQueryParams) {

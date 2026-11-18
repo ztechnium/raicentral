@@ -1,6 +1,6 @@
 # Development Guide
 
-Local setup for the VigilRAI community edition. This tree is one organization. Do not add company registration or an organization header. To run the full stack in containers, use [Deploy with Docker](docs/deployment/docker.md). The shortest path, including the examples, is the [README](README.md).
+Local setup for the RaiCentral community edition. This tree is one organization. Do not add company registration or an organization header. To run the full stack in containers, use [Deploy with Docker](docs/deployment/docker.md). The shortest path, including the examples, is the [README](README.md).
 
 ## Prerequisites
 

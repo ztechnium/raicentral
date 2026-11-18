@@ -310,7 +310,7 @@ export class Session {
     );
   }
 
-  /** Preferred alias — report tokens; VigilRAI prices them. */
+  /** Preferred alias — report tokens; RaiCentral prices them. */
   reportModelUsage(
     opts: Omit<RecordUsageOptions, "spanType"> = {}
   ): Promise<Record<string, unknown>> {

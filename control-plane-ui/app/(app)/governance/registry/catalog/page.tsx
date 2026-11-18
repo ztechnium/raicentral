@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { MetricStrip } from "@/components/console/page-parts";
+import { KpiCard } from "@/components/kpi-card";
 import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,6 +83,14 @@ export default function CatalogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [systems, setSystems] = useState<AISystemSummary[]>([]);
+  const [stats, setStats] = useState({
+    all: 0,
+    models: 0,
+    mcps: 0,
+    dataSources: 0,
+    services: 0,
+    active: 0,
+  });
 
   const [search, setSearch] = useState("");
   const [aiSystemId, setAiSystemId] = useState("");
@@ -123,6 +133,26 @@ export default function CatalogPage() {
     },
     [search, aiSystemId, resourceType, status, environment, provider],
   );
+
+  const loadStats = useCallback(async () => {
+    const count = (extra: { resource_type?: string; status?: string }) =>
+      getResourceCatalog({ ...extra, limit: 1, offset: 0 })
+        .then((res) => res.data.total ?? 0)
+        .catch(() => 0);
+    const [all, models, mcps, dataSources, services, active] = await Promise.all([
+      count({}),
+      count({ resource_type: "MODEL" }),
+      count({ resource_type: "MCP" }),
+      count({ resource_type: "DATA_SOURCE" }),
+      count({ resource_type: "SERVICE" }),
+      count({ status: "ACTIVE" }),
+    ]);
+    setStats({ all, models, mcps, dataSources, services, active });
+  }, []);
+
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats, total]);
 
   useEffect(() => {
     void getAISystems()
@@ -187,6 +217,15 @@ export default function CatalogPage() {
       {seedMessage && <p className="text-sm text-muted-foreground">{seedMessage}</p>}
 
       <CatalogUpload downloadLabel="Download example" onImported={() => void load(0, false)} />
+
+      <MetricStrip>
+        <KpiCard title="Total Resources" value={String(stats.all)} />
+        <KpiCard title="Active" value={String(stats.active)} />
+        <KpiCard title="Models" value={String(stats.models)} />
+        <KpiCard title="MCP Servers" value={String(stats.mcps)} />
+        <KpiCard title="Data Sources" value={String(stats.dataSources)} />
+        <KpiCard title="External Services" value={String(stats.services)} />
+      </MetricStrip>
 
       <Panel>
         <div className="flex flex-wrap gap-3">

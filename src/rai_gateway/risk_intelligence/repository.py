@@ -10,6 +10,11 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from rai_gateway.models.evidence import EvidenceFinding, RuntimeTrajectory
+from rai_gateway.models.governance import (
+    AISystemAccountability,
+    OrganizationMembership,
+)
+from rai_gateway.models.registry import AgentVersionDependency
 from rai_gateway.models.risk_intelligence import (
     ContentEvaluationResult,
     ContentEvaluatorConfig,
@@ -235,6 +240,77 @@ class RiskIntelligenceRepository:
             .first()
         )
 
+
+    _ACCOUNTABILITY_COLUMNS = (
+        "business_owner_membership_id",
+        "technical_owner_membership_id",
+        "rai_officer_membership_id",
+        "risk_owner_membership_id",
+        "incident_owner_membership_id",
+    )
+
+    def _apply_scope_filters(
+        self,
+        q: Any,
+        *,
+        system_col: Any,
+        agent_col: Any,
+        version_col: Any,
+        identity_col: Any,
+        created_col: Any,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> Any:
+        """Filters shared by runtime findings and trajectory evidence findings."""
+        if agent_id:
+            q = q.filter(agent_col == agent_id)
+        if runtime_identity_id:
+            q = q.filter(identity_col == runtime_identity_id)
+        if model_id:
+            q = q.filter(
+                version_col.in_(
+                    self._db.query(AgentVersionDependency.agent_version_id).filter(
+                        AgentVersionDependency.resource_type == "model",
+                        AgentVersionDependency.resource_id == model_id,
+                    )
+                )
+            )
+        if member_id or department_id:
+            owner_cols = [
+                getattr(AISystemAccountability, name)
+                for name in self._ACCOUNTABILITY_COLUMNS
+            ]
+            acc = self._db.query(AISystemAccountability.ai_system_id)
+            if member_id:
+                acc = acc.filter(or_(*[c == member_id for c in owner_cols]))
+            if department_id:
+                dept_members = self._db.query(OrganizationMembership.id).filter(
+                    OrganizationMembership.department_id == department_id
+                )
+                acc = acc.filter(or_(*[c.in_(dept_members) for c in owner_cols]))
+            q = q.filter(system_col.in_(acc))
+        if date_from:
+            q = q.filter(created_col >= date_from)
+        if date_to:
+            q = q.filter(created_col <= date_to)
+        return q
+
+    def _runtime_findings_query(self, q: Any, **scope: Any) -> Any:
+        return self._apply_scope_filters(
+            q,
+            system_col=RuntimeRiskFinding.ai_system_id,
+            agent_col=RuntimeRiskFinding.agent_id,
+            version_col=RuntimeRiskFinding.agent_version_id,
+            identity_col=RuntimeRiskFinding.runtime_identity_id,
+            created_col=RuntimeRiskFinding.created_at,
+            **scope,
+        )
+
     def list_findings(
         self,
         *,
@@ -243,6 +319,13 @@ class RiskIntelligenceRepository:
         severity: str | None = None,
         status: str | None = None,
         finding_type: str | None = None,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[RuntimeRiskFinding]:
@@ -252,11 +335,21 @@ class RiskIntelligenceRepository:
         if trajectory_id:
             q = q.filter(RuntimeRiskFinding.trajectory_id == trajectory_id)
         if severity:
-            q = q.filter(RuntimeRiskFinding.severity == severity)
+            q = q.filter(func.upper(RuntimeRiskFinding.severity) == severity.upper())
         if status:
-            q = q.filter(RuntimeRiskFinding.status == status)
+            q = q.filter(func.upper(RuntimeRiskFinding.status) == status.upper())
         if finding_type:
             q = q.filter(RuntimeRiskFinding.finding_type == finding_type)
+        q = self._runtime_findings_query(
+            q,
+            agent_id=agent_id,
+            model_id=model_id,
+            runtime_identity_id=runtime_identity_id,
+            department_id=department_id,
+            member_id=member_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
         return (
             q.order_by(RuntimeRiskFinding.created_at.desc())
             .offset(offset)
@@ -272,6 +365,13 @@ class RiskIntelligenceRepository:
         status: str | None = None,
         severity: str | None = None,
         finding_type: str | None = None,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> int:
         q = self._db.query(func.count(RuntimeRiskFinding.id))
         if ai_system_id:
@@ -279,11 +379,21 @@ class RiskIntelligenceRepository:
         if trajectory_id:
             q = q.filter(RuntimeRiskFinding.trajectory_id == trajectory_id)
         if status:
-            q = q.filter(RuntimeRiskFinding.status == status)
+            q = q.filter(func.upper(RuntimeRiskFinding.status) == status.upper())
         if severity:
-            q = q.filter(RuntimeRiskFinding.severity == severity)
+            q = q.filter(func.upper(RuntimeRiskFinding.severity) == severity.upper())
         if finding_type:
             q = q.filter(RuntimeRiskFinding.finding_type == finding_type)
+        q = self._runtime_findings_query(
+            q,
+            agent_id=agent_id,
+            model_id=model_id,
+            runtime_identity_id=runtime_identity_id,
+            department_id=department_id,
+            member_id=member_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
         return int(q.scalar() or 0)
 
     def _evidence_findings_query(
@@ -294,6 +404,13 @@ class RiskIntelligenceRepository:
         severity: str | None = None,
         status: str | None = None,
         finding_type: str | None = None,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ):
         """Trajectory evidence findings, the same set reports count as open findings."""
         query = self._db.query(EvidenceFinding, RuntimeTrajectory).join(
@@ -311,7 +428,21 @@ class RiskIntelligenceRepository:
             )
         if finding_type:
             query = query.filter(EvidenceFinding.finding_type == finding_type)
-        return query
+        return self._apply_scope_filters(
+            query,
+            system_col=RuntimeTrajectory.ai_system_id,
+            agent_col=RuntimeTrajectory.agent_id,
+            version_col=RuntimeTrajectory.agent_version_id,
+            identity_col=RuntimeTrajectory.runtime_identity_id,
+            created_col=EvidenceFinding.created_at,
+            agent_id=agent_id,
+            model_id=model_id,
+            runtime_identity_id=runtime_identity_id,
+            department_id=department_id,
+            member_id=member_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
     def list_evidence_findings(
         self,
@@ -321,6 +452,13 @@ class RiskIntelligenceRepository:
         severity: str | None = None,
         status: str | None = None,
         finding_type: str | None = None,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[tuple[EvidenceFinding, RuntimeTrajectory]]:
@@ -331,6 +469,13 @@ class RiskIntelligenceRepository:
                 severity=severity,
                 status=status,
                 finding_type=finding_type,
+                agent_id=agent_id,
+                model_id=model_id,
+                runtime_identity_id=runtime_identity_id,
+                department_id=department_id,
+                member_id=member_id,
+                date_from=date_from,
+                date_to=date_to,
             )
             .order_by(EvidenceFinding.created_at.desc())
             .offset(offset)
@@ -346,6 +491,13 @@ class RiskIntelligenceRepository:
         severity: str | None = None,
         status: str | None = None,
         finding_type: str | None = None,
+        agent_id: UUID | None = None,
+        model_id: UUID | None = None,
+        runtime_identity_id: UUID | None = None,
+        department_id: UUID | None = None,
+        member_id: UUID | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> int:
         return int(
             self._evidence_findings_query(
@@ -354,6 +506,13 @@ class RiskIntelligenceRepository:
                 severity=severity,
                 status=status,
                 finding_type=finding_type,
+                agent_id=agent_id,
+                model_id=model_id,
+                runtime_identity_id=runtime_identity_id,
+                department_id=department_id,
+                member_id=member_id,
+                date_from=date_from,
+                date_to=date_to,
             )
             .with_entities(func.count(EvidenceFinding.id))
             .scalar()

@@ -7,6 +7,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
+  listOrganizationDepartments: vi.fn().mockResolvedValue({ data: { items: [] } }),
+  listOrganizationTeam: vi.fn().mockResolvedValue({ data: { items: [] } }),
   getAISystems: vi.fn().mockResolvedValue({
     data: [
       {
@@ -46,7 +48,7 @@ describe("RegistryPage", () => {
     expect(drawer).toHaveTextContent("System Key");
     expect(drawer).toHaveTextContent("Display Name");
     expect(drawer).toHaveTextContent("Business Unit");
-    expect(drawer).toHaveTextContent("Owner ID");
+    expect(drawer).toHaveTextContent("Owner");
     expect(drawer).toHaveTextContent("Risk Tier");
     expect(drawer).toHaveTextContent("Business Purpose");
   });

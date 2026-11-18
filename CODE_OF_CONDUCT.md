@@ -1,6 +1,6 @@
 # Code of Conduct
 
-This applies to VigilRAI Community Edition, powered by [Ztechnium](https://ztechnium.com).
+This applies to RaiCentral Community Edition, powered by [Ztechnium](https://ztechnium.com).
 
 ## Our pledge
 

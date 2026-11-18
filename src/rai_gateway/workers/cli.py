@@ -1,4 +1,4 @@
-"""CLI for VigilRAI background workers."""
+"""CLI for RaiCentral background workers."""
 
 from __future__ import annotations
 
