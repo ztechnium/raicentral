@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FreshnessMode(str, Enum):
@@ -73,6 +73,24 @@ class ReportFilters(BaseModel):
     budget_id: UUID | None = None
     budget_metric: str | None = None
 
+    @field_validator("period_start", "period_end", mode="after")
+    @classmethod
+    def _normalize_utc(cls, value: datetime | None) -> datetime | None:
+        # Imported lazily: filters.py imports this module for typing only.
+        from rai_gateway.reporting.filters import to_naive_utc
+
+        return to_naive_utc(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def _validate_period(self) -> ReportFilters:
+        if (
+            self.period_start is not None
+            and self.period_end is not None
+            and self.period_start > self.period_end
+        ):
+            raise ValueError("period_start must not be after period_end")
+        return self
+
 
 class ComparisonMetric(BaseModel):
     """Metric with previous period comparison."""
@@ -123,11 +141,13 @@ class AttentionItem(BaseModel):
     title: str
     ai_system_id: UUID | None = None
     source_type: str
-    source_id: UUID
+    source_id: str
     reason: str
     recommended_action: str | None = None
     due_at: datetime | None = None
-    created_at: datetime
+    created_at: datetime | None = None
+    # Authoritative drill-down route supplied by the source queue; never invented.
+    drill_down: str | None = None
 
 
 class TimeSeriesPoint(BaseModel):
@@ -156,14 +176,28 @@ class ReportSummary(BaseModel):
     period: ReportPeriod
     freshness: Freshness
 
-    # Top-level KPIs
+    # Top-level KPIs. See docs/reporting-metric-dictionary.md for definitions.
+    #
+    # ai_systems_governed: distinct AI systems with at least one enforcement
+    #   receipt in the period (observed governed activity), compared with the
+    #   previous equivalent period. It is NOT a coverage ratio on its own; the
+    #   denominator is ai_systems_registered.
     ai_systems_governed: ComparisonMetric
+    ai_systems_registered: ComparisonMetric | None = None
     governed_actions: ComparisonMetric
+    # Open findings right now (current state; no previous value is reported
+    # because findings carry no resolution timestamp to reconstruct history).
     current_risk_exposure: ComparisonMetric
     policy_intervention_rate: ComparisonMetric
-    budget_utilization_pct: ComparisonMetric
-    assurance_coverage_pct: ComparisonMetric
+    # Highest utilization among enabled COST-metric budgets; null when none.
+    budget_utilization_pct: ComparisonMetric | None = None
+    # Systems whose current assurance is effectively VALID / registered
+    # systems; null when there are no registered systems.
+    assurance_coverage_pct: ComparisonMetric | None = None
     open_critical_findings: ComparisonMetric
+    open_high_findings: ComparisonMetric | None = None
+    # Findings created in the period vs the previous equivalent period.
+    new_findings: ComparisonMetric | None = None
 
     # Risk breakdown
     risk_by_severity: SeverityDistribution
@@ -204,6 +238,17 @@ class RiskReport(BaseModel):
     # Trends
     finding_trends: list[TimeSeriesPoint] = []
 
+    # Open findings per independent source (design_time, runtime, evidence).
+    # The headline counts are the plain sum of these with no deduplication.
+    findings_by_source: dict[str, int] = {}
+    # Plain-language definitions of the state/period semantics of each count.
+    semantics: dict[str, str] = {}
+
+    # Dimensions the current data model cannot attribute findings to (for
+    # example "tool", "model"). Lets clients show "not supported" rather than
+    # an empty chart that reads as "no risk".
+    unavailable_dimensions: list[str] = []
+
     # Attention
     attention: list[AttentionItem] = []
 
@@ -222,8 +267,13 @@ class PolicyReport(BaseModel):
     intervention_rate: float
     deny_rate: float
 
-    # Effect distribution
+    # Effect distribution: the effect of the matched rule (not a final decision)
     effects: EffectDistribution
+
+    # Finalized enforcement decision per evaluation, keyed by decision value.
+    decision_distribution: dict[str, int] = {}
+    # What happened after the decision (execution outcome), keyed by status.
+    execution_outcome_distribution: dict[str, int] = {}
 
     # Top policies
     top_policies: list[RankedItem] = []
@@ -262,6 +312,15 @@ class BudgetReport(BaseModel):
     budgets_exceeded: int
     total_cost: float = 0.0
     total_tokens: int = 0
+    # How total_cost is composed. It sums known cost across BILLED, METERED,
+    # ACTUAL and ESTIMATED spans (estimates included; unavailable cost counts
+    # as 0). It is NOT the FinOps authoritative total; use /v1/finops/dashboard
+    # for state-separated spend.
+    cost_basis: str = (
+        "Sum of BILLED/METERED/ACTUAL/ESTIMATED known cost; estimates are "
+        "included and unavailable cost is omitted. See /v1/finops/dashboard "
+        "for state-separated spend."
+    )
 
     # Budget statuses
     budgets: list[BudgetStatus] = []
@@ -291,6 +350,15 @@ class RuntimeReport(BaseModel):
     denied: int
     runtime_suspensions: int
 
+    # Execution status of trajectories started in the period, keyed by status.
+    # Lets clients separate in-flight/pending work from failures instead of
+    # treating "not COMPLETED" as "failed".
+    execution_status_distribution: dict[str, int] = {}
+    # Approval requests currently awaiting a decision (current state).
+    approvals_pending: int = 0
+    # Daily policy-evaluation volume for the period.
+    activity_trends: list[TimeSeriesPoint] = []
+
 
 class AssuranceReport(BaseModel):
     """Assurance and control coverage report."""
@@ -299,22 +367,33 @@ class AssuranceReport(BaseModel):
     period: ReportPeriod
     freshness: Freshness
 
-    # Summary metrics
-    assurance_coverage_pct: float
+    # Denominator for coverage: AI systems in scope (registered systems).
+    total_systems: int = 0
+    # Systems with no current assurance record at all.
+    unassessed_systems: int = 0
+    # True when any assurance record or deployment gate evaluation exists, so
+    # clients can tell "not configured" from "configured, nothing to report".
+    has_assurance_data: bool = False
+
+    # Systems by effective status of their current assurance record
+    # (current state, not period-derived). null coverage = no denominator.
+    assurance_coverage_pct: float | None = None
     valid_assurance: int
     conditional_assurance: int
     expired_assurance: int
     failed_assurance: int
 
-    # Evaluations
-    evaluation_pass_rate: float
+    # Deployment gate evaluations in the period. null rate = no evaluations.
+    gate_evaluations: int = 0
+    evaluation_pass_rate: float | None = None
     failed_deployment_gates: int
 
-    # Waivers and exceptions
+    # Waivers and exceptions (current state)
     active_waivers: int
     expiring_waivers: int
     open_exceptions: int
     expiring_exceptions: int
+    active_exceptions: int = 0
 
 
 class AISystemReport(BaseModel):
@@ -424,6 +503,8 @@ class ReportSnapshot(BaseModel):
     data_snapshot: dict[str, Any]
     source_manifest: dict[str, list[UUID]] | None
     content_digest: str
+    # Set on single-snapshot reads: whether stored data still matches the digest.
+    integrity_verified: bool | None = None
 
 
 class ReportSnapshotCreate(BaseModel):

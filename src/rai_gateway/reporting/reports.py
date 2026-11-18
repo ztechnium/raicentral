@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from rai_gateway.models.approval import ApprovalRequest
 from rai_gateway.models.evaluations import (
     AssuranceRecord,
-    DeploymentGateEvaluation,
     EvaluationWaiver,
 )
 from rai_gateway.models.evidence import RuntimeConversation, RuntimeTrajectory
@@ -65,104 +64,124 @@ def _severity_distribution(data: dict[str, int]) -> SeverityDistribution:
     )
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _current_state(filters: ReportFilters, **updates) -> ReportFilters:
+    """Filters for *current-state* counts: the period never narrows them."""
+    scoped = filters.model_copy(update={"period_start": None, "period_end": None})
+    return scoped.model_copy(update=updates) if updates else scoped
+
+
+def _period_filters(filters: ReportFilters, start: datetime, end: datetime, **updates):
+    scoped = filters.model_copy(update={"period_start": start, "period_end": end})
+    return scoped.model_copy(update=updates) if updates else scoped
+
+
 def build_report_summary(
     db: Session,
     filters: ReportFilters,
 ) -> ReportSummary:
-    """Build executive summary report."""
-    # Determine period
-    if filters.period_start and filters.period_end:
-        start, end = filters.period_start, filters.period_end
-    else:
-        start, end = get_default_period(days=30)
+    """Build executive summary report.
 
-    # Get previous period for comparison
+    Period-derived KPIs (governed activity, actions, new findings, intervention
+    rate, policy effects) use [period_start, period_end] and are compared with
+    the previous equivalent period. Current-state KPIs (open findings,
+    assurance coverage, budget pressure) ignore the period and carry no
+    previous value.
+    """
+    scoped, start, end = _with_default_period(filters)
     prev_start, prev_end = get_previous_period(start, end)
+    current = _period_filters(scoped, start, end)
+    previous = _period_filters(scoped, prev_start, prev_end)
 
-    # Set up previous period filters
-    prev_filters = filters.model_copy()
-    prev_filters.period_start = prev_start
-    prev_filters.period_end = prev_end
+    # AI systems: registered (denominator) vs observed governed activity.
+    registered = queries.count_ai_systems(db, scoped)
+    governed_now = queries.count_systems_with_governed_activity(db, current)
+    governed_prev = queries.count_systems_with_governed_activity(db, previous)
 
-    # AI Systems
-    current_systems = queries.count_ai_systems(db, filters)
-    prev_systems = queries.count_ai_systems(db, prev_filters)
+    current_actions = queries.count_governed_actions(db, current)
+    prev_actions = queries.count_governed_actions(db, previous)
 
-    # Governed Actions
-    current_actions = queries.count_governed_actions(db, filters)
-    prev_actions = queries.count_governed_actions(db, prev_filters)
+    # Open findings: present state, never narrowed by the period.
+    open_state = _current_state(scoped, finding_status=list(OPEN_FINDING_STATUSES))
+    open_findings = queries.count_risk_findings(db, open_state)
+    severity_dist = queries.get_severity_distribution(db, open_state)
 
-    # Risk Exposure (open findings)
-    risk_filters = filters.model_copy()
-    risk_filters.finding_status = list(OPEN_FINDING_STATUSES)
-    current_risk = queries.count_risk_findings(db, risk_filters)
-    prev_risk_filters = prev_filters.model_copy()
-    prev_risk_filters.finding_status = list(OPEN_FINDING_STATUSES)
-    prev_risk = queries.count_risk_findings(db, prev_risk_filters)
+    # New findings: period event, compared with the previous period.
+    created_now = queries.count_risk_findings(
+        db, current.model_copy(update={"finding_status": None})
+    )
+    created_prev = queries.count_risk_findings(
+        db, previous.model_copy(update={"finding_status": None})
+    )
 
-    # Policy Intervention Rate
-    policy_triggers = queries.count_policy_triggers(db, filters)
-    policy_evaluations = queries.count_policy_evaluations(db, filters)
+    policy_triggers = queries.count_policy_triggers(db, current)
+    policy_evaluations = queries.count_policy_evaluations(db, current)
     intervention_rate = metrics.calculate_rate(policy_triggers, policy_evaluations)
-
-    prev_triggers = queries.count_policy_triggers(db, prev_filters)
-    prev_evaluations = queries.count_policy_evaluations(db, prev_filters)
-    prev_intervention_rate = metrics.calculate_rate(prev_triggers, prev_evaluations)
-
-    # Budget Utilization
-    budgets_data = queries.get_budget_utilization(db, filters)
-    avg_utilization = (
-        sum(b["utilization_pct"] for b in budgets_data) / len(budgets_data)
-        if budgets_data
-        else 0.0
+    prev_intervention_rate = metrics.calculate_rate(
+        queries.count_policy_triggers(db, previous),
+        queries.count_policy_evaluations(db, previous),
     )
 
-    # Assurance Coverage
-    total_systems = queries.count_ai_systems(db, filters)
-    systems_with_assurance = queries.count_assurance_records(
-        db, filters, status_filter="VALID"
+    # Budget pressure: only COST-metric budgets share a unit, so only they are
+    # comparable. Never average action/token/cost/amount budgets together.
+    cost_budgets = [
+        b
+        for b in queries.get_budget_utilization(db, scoped)
+        if (b["metric"] or "").upper() == "COST"
+    ]
+    max_cost_utilization = (
+        max(b["utilization_pct"] for b in cost_budgets) if cost_budgets else None
     )
-    assurance_coverage = metrics.calculate_assurance_coverage(
-        systems_with_assurance, total_systems
+
+    # Assurance coverage: systems whose current assurance is effectively VALID.
+    assurance = queries.get_effective_assurance_by_system(db, scoped)
+    valid_systems = sum(1 for status in assurance.values() if status == "VALID")
+    assurance_coverage = (
+        metrics.calculate_assurance_coverage(valid_systems, registered)
+        if registered
+        else None
     )
 
-    # Critical Findings
-    critical_filters = filters.model_copy()
-    critical_filters.risk_severity = ["CRITICAL"]
-    critical_filters.finding_status = ["OPEN"]
-    critical_findings = queries.count_risk_findings(db, critical_filters)
-
-    # Severity Distribution
-    severity_dist_data = queries.get_severity_distribution(db, risk_filters)
-
-    # Effect Distribution
-    effects_data = queries.get_effect_distribution(db, filters)
-
-    # Build attention items
-    attention_items = build_attention_items(db, filters)
+    effects_data = queries.get_effect_distribution(db, current)
 
     return ReportSummary(
         scope=ReportScope(
-            ai_system_id=filters.ai_system_id,
-            agent_id=filters.agent_id,
-            runtime_identity_id=filters.runtime_identity_id,
+            ai_system_id=scoped.ai_system_id,
+            agent_id=scoped.agent_id,
+            runtime_identity_id=scoped.runtime_identity_id,
         ),
         period=ReportPeriod(start=start, end=end),
-        freshness=Freshness(
-            mode=FreshnessMode.LIVE, last_refreshed_at=datetime.utcnow()
-        ),
+        freshness=Freshness(mode=FreshnessMode.LIVE, last_refreshed_at=_utc_now()),
         ai_systems_governed=metrics.build_comparison_metric(
-            current_systems, prev_systems
+            governed_now, governed_prev
         ),
+        ai_systems_registered=metrics.build_comparison_metric(registered),
         governed_actions=metrics.build_comparison_metric(current_actions, prev_actions),
-        current_risk_exposure=metrics.build_comparison_metric(current_risk, prev_risk),
+        current_risk_exposure=metrics.build_comparison_metric(open_findings),
         policy_intervention_rate=metrics.build_comparison_metric(
             intervention_rate, prev_intervention_rate
         ),
-        budget_utilization_pct=metrics.build_comparison_metric(avg_utilization),
-        assurance_coverage_pct=metrics.build_comparison_metric(assurance_coverage),
-        open_critical_findings=metrics.build_comparison_metric(critical_findings),
-        risk_by_severity=_severity_distribution(severity_dist_data),
+        budget_utilization_pct=(
+            metrics.build_comparison_metric(max_cost_utilization)
+            if max_cost_utilization is not None
+            else None
+        ),
+        assurance_coverage_pct=(
+            metrics.build_comparison_metric(assurance_coverage)
+            if assurance_coverage is not None
+            else None
+        ),
+        open_critical_findings=metrics.build_comparison_metric(
+            severity_dist.get("CRITICAL", 0)
+        ),
+        open_high_findings=metrics.build_comparison_metric(
+            severity_dist.get("HIGH", 0)
+        ),
+        new_findings=metrics.build_comparison_metric(created_now, created_prev),
+        risk_by_severity=_severity_distribution(severity_dist),
         policy_effects=EffectDistribution(
             allow=effects_data.get("allow", 0),
             monitor=effects_data.get("monitor", 0),
@@ -170,54 +189,44 @@ def build_report_summary(
             deny=effects_data.get("deny", 0),
             suspend=effects_data.get("suspend", 0),
         ),
-        attention=attention_items,
+        attention=build_attention_items(db, scoped),
     )
+
+
+RISK_SEMANTICS = {
+    "open_findings": "Current state: findings in an open status right now. The period does not narrow it.",
+    "new_findings": "Period event: findings created inside the period.",
+    "resolved_findings": (
+        "Period cohort: findings created inside the period that are no longer open. "
+        "Findings have no resolution timestamp, so findings closed in the period "
+        "but created earlier cannot be counted."
+    ),
+    "severity_distribution": "Current state, open findings only.",
+    "category_distribution": "Current state, open findings only (design-time and runtime sources).",
+    "status_distribution": "Findings created inside the period, grouped by current status.",
+    "risk_by_entity": "Current state, open findings only, ranked by count then highest severity.",
+}
 
 
 def build_risk_report(
     db: Session,
     filters: ReportFilters,
 ) -> RiskReport:
-    """Build risk analysis report."""
-    # Determine period
-    if filters.period_start and filters.period_end:
-        start, end = filters.period_start, filters.period_end
-    else:
-        start, end = get_default_period(days=30)
+    """Build risk analysis report (current state vs period events kept apart)."""
+    scoped, start, end = _with_default_period(filters)
+    in_period = _period_filters(scoped, start, end, finding_status=None)
+    open_state = _current_state(scoped, finding_status=list(OPEN_FINDING_STATUSES))
 
-    # Open findings
-    open_filters = filters.model_copy()
-    open_filters.finding_status = list(OPEN_FINDING_STATUSES)
-    open_findings = queries.count_risk_findings(db, open_filters)
+    open_findings = queries.count_risk_findings(db, open_state)
+    new_findings = queries.count_risk_findings(db, in_period)
+    still_open_from_period = queries.count_risk_findings(
+        db, in_period.model_copy(update={"finding_status": list(OPEN_FINDING_STATUSES)})
+    )
+    resolved_findings = max(0, new_findings - still_open_from_period)
 
-    # New findings
-    new_filters = filters.model_copy()
-    new_filters.period_start = start
-    new_filters.period_end = end
-    new_findings = queries.count_risk_findings(db, new_filters)
+    severity_dist = queries.get_severity_distribution(db, open_state)
 
-    # Resolved findings
-    # Note: Would need resolved_at timestamp for accurate count
-    # For now, use difference between total and open as proxy
-    total_findings = queries.count_risk_findings(db, filters)
-    resolved_findings = max(0, total_findings - open_findings)
-
-    # Critical and High findings
-    critical_filters = filters.model_copy()
-    critical_filters.risk_severity = ["CRITICAL"]
-    critical_filters.finding_status = ["OPEN"]
-    critical_findings = queries.count_risk_findings(db, critical_filters)
-
-    high_filters = filters.model_copy()
-    high_filters.risk_severity = ["HIGH"]
-    high_filters.finding_status = ["OPEN"]
-    high_findings = queries.count_risk_findings(db, high_filters)
-
-    # Severity distribution
-    severity_dist_data = queries.get_severity_distribution(db, open_filters)
-
-    # Risk by AI System
-    risk_by_system_data = queries.get_risk_by_ai_system(db, open_filters, limit=10)
+    risk_by_system_data = queries.get_risk_by_ai_system(db, open_state, limit=10)
     risk_by_ai_system = [
         RankedItem(
             id=system_id,
@@ -228,33 +237,37 @@ def build_risk_report(
         )
         for system_id, name, finding_count, highest_severity in risk_by_system_data
     ]
+    risk_by_agent = [
+        RankedItem(id=agent_id, name=name, value=count)
+        for agent_id, name, count in queries.get_risk_by_agent(db, open_state)
+    ]
 
-    # Trends
-    finding_trends_data = trends.get_finding_trends(db, filters, start, end)
-
-    # Attention items
-    attention_items = build_attention_items(db, filters, risk_focused=True)
+    finding_trends_data = trends.get_finding_trends(db, in_period, start, end)
 
     return RiskReport(
         scope=ReportScope(
-            ai_system_id=filters.ai_system_id,
-            agent_id=filters.agent_id,
-            runtime_identity_id=filters.runtime_identity_id,
+            ai_system_id=scoped.ai_system_id,
+            agent_id=scoped.agent_id,
+            runtime_identity_id=scoped.runtime_identity_id,
         ),
         period=ReportPeriod(start=start, end=end),
-        freshness=Freshness(
-            mode=FreshnessMode.LIVE, last_refreshed_at=datetime.utcnow()
-        ),
+        freshness=Freshness(mode=FreshnessMode.LIVE, last_refreshed_at=_utc_now()),
         open_findings=open_findings,
         new_findings=new_findings,
         resolved_findings=resolved_findings,
-        critical_findings=critical_findings,
-        high_findings=high_findings,
-        severity_distribution=_severity_distribution(severity_dist_data),
-        status_distribution=queries.get_finding_status_distribution(db, filters),
+        critical_findings=severity_dist.get("CRITICAL", 0),
+        high_findings=severity_dist.get("HIGH", 0),
+        mean_time_to_resolution_hours=None,
+        severity_distribution=_severity_distribution(severity_dist),
+        category_distribution=queries.get_category_distribution(db, open_state),
+        status_distribution=queries.get_finding_status_distribution(db, in_period),
         risk_by_ai_system=risk_by_ai_system,
+        risk_by_agent=risk_by_agent,
         finding_trends=finding_trends_data.get("new_findings", []),
-        attention=attention_items,
+        findings_by_source=queries.get_findings_by_source(db, open_state),
+        semantics=RISK_SEMANTICS,
+        unavailable_dimensions=["tool", "model", "data_source"],
+        attention=build_attention_items(db, scoped),
     )
 
 
@@ -262,26 +275,23 @@ def build_policy_report(
     db: Session,
     filters: ReportFilters,
 ) -> PolicyReport:
-    """Build policy effectiveness report."""
-    # Determine period
-    if filters.period_start and filters.period_end:
-        start, end = filters.period_start, filters.period_end
-    else:
-        start, end = get_default_period(days=30)
+    """Build policy effectiveness report.
 
-    # Policy metrics
-    evaluations = queries.count_policy_evaluations(db, filters)
-    triggers = queries.count_policy_triggers(db, filters)
+    ``effects`` is the effect of the matched rule; ``decision_distribution`` is
+    the finalized enforcement decision; ``execution_outcome_distribution`` is
+    what happened afterwards. They are different facts and are reported apart.
+    """
+    scoped, start, end = _with_default_period(filters)
+
+    evaluations = queries.count_policy_evaluations(db, scoped)
+    triggers = queries.count_policy_triggers(db, scoped)
     trigger_rate = metrics.calculate_rate(triggers, evaluations)
 
-    # Denied actions
-    denied = queries.count_denied_actions(db, filters)
+    denied = queries.count_denied_actions(db, scoped)
     deny_rate = metrics.calculate_rate(denied, evaluations)
 
-    # Effect distribution
-    effects_data = queries.get_effect_distribution(db, filters)
+    effects_data = queries.get_effect_distribution(db, scoped)
 
-    # Intervention rate
     intervention_rate = metrics.calculate_intervention_rate(
         effects_data.get("monitor", 0),
         effects_data.get("require_approval", 0),
@@ -290,20 +300,17 @@ def build_policy_report(
         evaluations,
     )
 
-    # Trends
-    eval_trends = trends.get_policy_evaluation_trends(db, filters, start, end)
-    trigger_trends = trends.get_policy_trigger_trends(db, filters, start, end)
+    eval_trends = trends.get_policy_evaluation_trends(db, scoped, start, end)
+    trigger_trends = trends.get_policy_trigger_trends(db, scoped, start, end)
 
     return PolicyReport(
         scope=ReportScope(
-            ai_system_id=filters.ai_system_id,
-            agent_id=filters.agent_id,
-            runtime_identity_id=filters.runtime_identity_id,
+            ai_system_id=scoped.ai_system_id,
+            agent_id=scoped.agent_id,
+            runtime_identity_id=scoped.runtime_identity_id,
         ),
         period=ReportPeriod(start=start, end=end),
-        freshness=Freshness(
-            mode=FreshnessMode.LIVE, last_refreshed_at=datetime.utcnow()
-        ),
+        freshness=Freshness(mode=FreshnessMode.LIVE, last_refreshed_at=_utc_now()),
         evaluations=evaluations,
         triggers=triggers,
         trigger_rate=round(trigger_rate, 2),
@@ -315,6 +322,12 @@ def build_policy_report(
             require_approval=effects_data.get("require_approval", 0),
             deny=effects_data.get("deny", 0),
             suspend=effects_data.get("suspend", 0),
+        ),
+        decision_distribution=queries.get_receipt_distribution(
+            db, scoped, "enforcement_decision"
+        ),
+        execution_outcome_distribution=queries.get_receipt_distribution(
+            db, scoped, "execution_status"
         ),
         evaluation_trends=eval_trends,
         trigger_trends=trigger_trends,
@@ -520,7 +533,12 @@ def build_runtime_report(
     db: Session,
     filters: ReportFilters,
 ) -> RuntimeReport:
-    """Build runtime governance activity for the organization."""
+    """Build runtime governance activity.
+
+    Count units differ and are not interchangeable: governed actions and policy
+    evaluations are enforcement receipts, executions are trajectories, and
+    conversations are conversation projections.
+    """
     scoped, start, end = _with_default_period(filters)
     scope, period, freshness = _scope_header(scoped, start, end)
     effects = queries.get_effect_distribution(db, scoped)
@@ -542,24 +560,14 @@ def build_runtime_report(
         approvals_required=int(effects.get("require_approval", 0)),
         denied=queries.count_denied_actions(db, scoped),
         runtime_suspensions=int(effects.get("suspend", 0)),
+        execution_status_distribution=queries.get_execution_status_distribution(
+            db, scoped
+        ),
+        approvals_pending=queries.count_approval_requests(
+            db, _current_state(scoped), status_filter="PENDING"
+        ),
+        activity_trends=trends.get_policy_evaluation_trends(db, scoped, start, end),
     )
-
-
-def _count_gate_decisions(
-    db: Session,
-    filters: ReportFilters,
-    decision: str | None = None,
-) -> int:
-    query = db.query(func.count(DeploymentGateEvaluation.id)).join(
-        AISystem, DeploymentGateEvaluation.ai_system_id == AISystem.id
-    )
-    if decision is not None:
-        query = query.filter(DeploymentGateEvaluation.decision == decision)
-    if filters.ai_system_id:
-        query = query.filter(
-            DeploymentGateEvaluation.ai_system_id == filters.ai_system_id
-        )
-    return query.scalar() or 0
 
 
 def _count_expiring(
@@ -569,13 +577,14 @@ def _count_expiring(
     *,
     approved_status: str,
 ) -> int:
-    now = datetime.utcnow()
+    now = _utc_now()
     horizon = now + timedelta(days=14)
     query = (
         db.query(func.count(model.id))
         .join(AISystem, model.ai_system_id == AISystem.id)
         .filter(
             model.status == approved_status,
+            model.revoked_at.is_(None),
             model.valid_until.isnot(None),
             model.valid_until >= now,
             model.valid_until <= horizon,
@@ -590,43 +599,73 @@ def build_assurance_report(
     db: Session,
     filters: ReportFilters,
 ) -> AssuranceReport:
-    """Build assurance coverage from assurance records, gates, waivers, and exceptions."""
+    """Build assurance coverage from assurance records, gates, waivers, and exceptions.
+
+    Assurance status, waivers and exceptions are *current state*. Deployment
+    gate counts are period events. Coverage is
+    ``systems with effectively VALID assurance / registered systems`` and is
+    null when there are no registered systems. This is control assurance
+    evidence, not a regulatory certification.
+    """
     scoped, start, end = _with_default_period(filters)
     scope, period, freshness = _scope_header(scoped, start, end)
     total_systems = queries.count_ai_systems(db, scoped)
-    valid = queries.count_assurance_records(db, scoped, status_filter="VALID")
-    passed = _count_gate_decisions(db, scoped, "PASS")
-    failed = _count_gate_decisions(db, scoped, "FAIL")
+    effective = queries.get_effective_assurance_by_system(db, scoped)
+    by_status: dict[str, int] = {}
+    for status in effective.values():
+        by_status[status] = by_status.get(status, 0) + 1
+    valid = by_status.get("VALID", 0)
+
+    passed = queries.count_gate_evaluations(db, scoped, "PASS")
+    failed = queries.count_gate_evaluations(db, scoped, "FAIL")
+    gate_total = queries.count_gate_evaluations(db, scoped)
     scored = passed + failed
+
+    now = _utc_now()
     open_exceptions = (
         db.query(func.count(GovernanceException.id))
         .join(AISystem, GovernanceException.ai_system_id == AISystem.id)
+        .filter(GovernanceException.status.in_(["REQUESTED", "UNDER_REVIEW"]))
+    )
+    active_exceptions = (
+        db.query(func.count(GovernanceException.id))
+        .join(AISystem, GovernanceException.ai_system_id == AISystem.id)
         .filter(
-            GovernanceException.status.in_(["REQUESTED", "UNDER_REVIEW"]),
+            GovernanceException.status == "APPROVED",
+            GovernanceException.revoked_at.is_(None),
+            or_(
+                GovernanceException.valid_until.is_(None),
+                GovernanceException.valid_until >= now,
+            ),
         )
     )
     if scoped.ai_system_id:
         open_exceptions = open_exceptions.filter(
             GovernanceException.ai_system_id == scoped.ai_system_id
         )
+        active_exceptions = active_exceptions.filter(
+            GovernanceException.ai_system_id == scoped.ai_system_id
+        )
+
+    has_data = bool(effective) or gate_total > 0
     return AssuranceReport(
         scope=scope,
         period=period,
         freshness=freshness,
-        assurance_coverage_pct=round(
-            metrics.calculate_assurance_coverage(valid, total_systems), 2
+        total_systems=total_systems,
+        unassessed_systems=max(0, total_systems - len(effective)),
+        has_assurance_data=has_data,
+        assurance_coverage_pct=(
+            round(metrics.calculate_assurance_coverage(valid, total_systems), 2)
+            if total_systems
+            else None
         ),
         valid_assurance=valid,
-        conditional_assurance=queries.count_assurance_records(
-            db, scoped, status_filter="CONDITIONAL"
-        ),
-        expired_assurance=queries.count_assurance_records(
-            db, scoped, status_filter="EXPIRED"
-        ),
-        failed_assurance=queries.count_assurance_records(
-            db, scoped, status_filter="FAILED"
-        ),
-        evaluation_pass_rate=round((passed / scored) * 100, 2) if scored else 0.0,
+        conditional_assurance=by_status.get("CONDITIONAL", 0),
+        expired_assurance=by_status.get("EXPIRED", 0),
+        failed_assurance=by_status.get("FAILED", 0),
+        gate_evaluations=gate_total,
+        evaluation_pass_rate=round((passed / scored) * 100, 2) if scored else None,
         failed_deployment_gates=failed,
         active_waivers=queries.count_waivers(db, scoped),
         expiring_waivers=_count_expiring(
@@ -636,6 +675,7 @@ def build_assurance_report(
         expiring_exceptions=_count_expiring(
             db, GovernanceException, scoped, approved_status="APPROVED"
         ),
+        active_exceptions=active_exceptions.scalar() or 0,
     )
 
 
@@ -778,28 +818,62 @@ def build_conversation_report(
     )
 
 
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed
+
+
 def build_attention_items(
     db: Session,
     filters: ReportFilters,
-    risk_focused: bool = False,
     limit: int = 10,
 ) -> list[AttentionItem]:
-    """Build executive attention queue items."""
-    # This is a simplified version. Full implementation would query:
-    # - CRITICAL findings
-    # - Expired assurance
-    # - Budget exceeded
-    # - Open critical incidents
-    # - Expiring exceptions/waivers
+    """Rank the portfolio attention queue; reports never invent attention items.
 
+    The portfolio queue is the single authoritative source (critical findings,
+    expired assurance, exceeded budgets, expiring waivers/exceptions, ...). It
+    is re-used as-is: owner/due fields appear only when the source supplies
+    them, and ``drill_down`` is the route the source provided.
+    """
+    from rai_gateway.portfolio.attention import build_attention_queue
+
+    queue = build_attention_queue(db, limit=200)
+    rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
     items: list[AttentionItem] = []
-
-    # Critical findings
-    critical_filters = filters.model_copy()
-    critical_filters.risk_severity = ["CRITICAL"]
-    critical_filters.finding_status = ["OPEN"]
-
-    # This would need to fetch actual finding records with details
-    # For now, just return empty list as placeholder
-
+    for raw in queue.get("items", []):
+        system_id = raw.get("ai_system_id")
+        if filters.ai_system_id and str(filters.ai_system_id) != str(system_id):
+            continue
+        try:
+            parsed_system = UUID(str(system_id)) if system_id else None
+        except ValueError:
+            parsed_system = None
+        items.append(
+            AttentionItem(
+                type=str(raw.get("type", "")),
+                severity=str(raw.get("severity", "")).upper(),
+                title=str(raw.get("title", "")),
+                ai_system_id=parsed_system,
+                source_type=str(raw.get("source_type", "")),
+                source_id=str(raw.get("source_id", "")),
+                reason=str(raw.get("reason", "")),
+                recommended_action=raw.get("recommended_action"),
+                due_at=_parse_iso(raw.get("due_at")),
+                created_at=_parse_iso(raw.get("created_at")),
+                drill_down=raw.get("drill_down"),
+            )
+        )
+    items.sort(
+        key=lambda item: (
+            rank.get(item.severity, 9),
+            item.due_at or datetime.max,
+        )
+    )
     return items[:limit]

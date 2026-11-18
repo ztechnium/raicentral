@@ -33,8 +33,11 @@ class TestFilters:
 
         prev_start, prev_end = filters.get_previous_period(start, end)
 
-        assert prev_end == start
-        assert (prev_end - prev_start).days == 30
+        # Both bounds are inclusive, so the previous period ends 1µs before the
+        # current one starts: a boundary row belongs to exactly one period.
+        assert prev_end == start - timedelta(microseconds=1)
+        assert prev_end < start
+        assert (prev_end - prev_start) == (end - start)
 
     def test_calculate_change_pct(self):
         """Test percentage change calculation."""
