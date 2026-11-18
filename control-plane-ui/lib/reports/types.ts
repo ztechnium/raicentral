@@ -140,8 +140,12 @@ export interface BudgetReport extends ReportEnvelope {
   total_budgets: number;
   budgets_warning: number;
   budgets_exceeded: number;
-  /** Known-cost sum including estimates. Prefer the FinOps dashboard. */
-  total_cost: number;
+  /** Known-cost sum incl. estimates; null = no priced usage or mixed currencies. Spend is read from FinOps. */
+  total_cost: number | null;
+  span_cost?: number | null;
+  ledger_only_cost?: number | null;
+  currency?: string | null;
+  currencies?: string[];
   total_tokens: number;
   cost_basis: string;
   budgets: BudgetStatus[];

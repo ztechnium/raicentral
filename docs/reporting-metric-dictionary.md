@@ -125,11 +125,16 @@ enforcement coverage) is **not** included.
 | Measured / estimated spend, coverage, unavailable count, budget pressure, risk-linked spend | `GET /v1/finops/dashboard` (FinOps, span-based) | Authoritative. Cost states: billed, metered, estimated, unavailable. Unavailable is never shown as 0; currency comes from the data. |
 | Budget utilization | `GET /v1/reports/budgets` `budgets[]` | Current window per budget (worst scope), grouped by metric with its unit. Never summed across metrics. |
 
-`BudgetReport.total_cost` / `get_total_cost` now use `finops.cost_expr.known_cost`
-(the same definition FinOps uses): unknown/unavailable rows contribute nothing.
-It still sums billed + metered + **estimated** into one number and omits the
-currency and per-state split, so **it does not equal the FinOps total** and the
-UI does not display it. `cost_basis` documents this. Budget counts
+`BudgetReport` cost fields (reconciled with FinOps in `5bb6553`): `span_cost`
+is known cost (billed + metered + estimated) over metering spans using
+`finops.cost_expr.known_cost`, and **equals the FinOps `total_cost` for the same
+filters and period**. `ledger_only_cost` is known cost of settlements no span
+represents (FinOps does not count these). `total_cost = span_cost +
+ledger_only_cost`. All three are `null` when there is no priced usage, and
+`total_cost` is `null` when several currencies are present (never summed; see
+`currencies`). Estimates are included, so billed/metered/estimated separation
+still comes from FinOps. The Economics view reads spend from FinOps directly and
+does not display `BudgetReport.total_cost`. Budget counts
 (`budgets_warning`, `budgets_exceeded`) use only the window containing "now".
 
 ## Snapshots

@@ -25,7 +25,7 @@ authentication + RBAC, so the audit focused on that.
 | `build_attention_items` returned an empty list (stub) | High | Reuses `portfolio/attention.py` (single authoritative queue). |
 | Previous period shared its boundary instant with the current period; naive/aware datetimes unvalidated; inverted periods accepted; invalid strings → 500 | Med | 1 µs-gap previous period, UTC normalization, typed params, 422 on inversion/garbage. |
 | `ai_systems_governed` returned the total system count (period ignored) | High | Now distinct systems with governed activity, shown against registered systems. |
-| Reports cost summed `ESTIMATED` etc. via its own expression | Med | Delegates to `finops.cost_expr.known_cost`; UI uses FinOps for spend. |
+| Reports cost summed `ESTIMATED` etc. via its own expression, defaulted to 0, mixed currencies | Med | Delegates to `finops.cost_expr.known_cost`; `5bb6553` adds `span_cost`/currency handling and null-for-unknown. UI uses FinOps for spend. |
 | Snapshot recorded `now/now` as period when none given; digest never verified | Med | Stores effective period/filters; digest verified on read (`integrity_verified`). |
 | Nav shows Reports to all roles but `reports:read` is held by `organization_admin`, `auditor` and `*` roles only | Info | UI shows an explicit not-authorized state. **Decision needed**, see §5. |
 
@@ -61,7 +61,7 @@ formatting, client, data hook, types). Single sidebar item retained.
 | Real cross-tab filters, none silently ignored | Done. Toolbar mirrors the backend allow-list; unsupported-but-active filters are called out; backend rejects strays with 422. |
 | KPIs have drill-down and provenance | Done where a destination exists. Every KPI carries a definition; assurance/waiver/exception have no console page, so they link to `/portfolio` and the registry. |
 | Errors isolated per view; no fabricated figures | Done (independent requests; tests prove one failing endpoint leaves others). |
-| Reports vs FinOps semantics reconciled | Partly. Spend comes from FinOps; Reports' own total shares the known-cost definition but is not equal and is not displayed. |
+| Reports vs FinOps semantics reconciled | Done jointly with the FinOps session (`5bb6553`): `span_cost` equals the FinOps total, currencies are never summed, unknown is `null`. Economics view still reads spend from FinOps. |
 | Tenant isolation and role access tested | Role/permission tested. Org isolation N/A (single org). |
 | No inert export/refresh/snapshot buttons | Done. No export button exists. Refresh, Copy link and snapshot actions work. |
 | Existing routes keep working | `/reports` is the only route changed; `/risk/*`, `/finops`, `/runtime/*` untouched. |
@@ -116,7 +116,6 @@ P1/P2:
 * Database-level immutability for `report_snapshots` (trigger/revoke UPDATE); today tampering is detected, not prevented.
 * Environment / business-unit filters (schema fields exist; no query support).
 * CSV export: deliberately omitted until a server-side, PII-reviewed export exists. `escapeCsvCell` is ready and tested.
-* Reconcile or retire `BudgetReport.total_cost` once FinOps stabilizes.
 
 ## 6. Process notes
 
