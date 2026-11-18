@@ -1,315 +1,339 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { KpiCard } from "@/components/kpi-card";
+import { FilterBar } from "@/components/finops/filter-bar";
+import { CostStateBadge } from "@/components/finops/cost-state-badge";
+import { MetricCard } from "@/components/finops/metric-card";
+import { SpendRankChart, SpendTrendChart } from "@/components/finops/spend-charts";
+import { WidgetBody } from "@/components/dashboard/widget-body";
 import { MetricStrip } from "@/components/console/page-parts";
-import { SectionHeader } from "@/components/section-header";
 import { Panel } from "@/components/registry/panel";
-import { NamedBarChart } from "@/components/reporting/named-bar-chart";
-import { TrendLineChart } from "@/components/reporting/trend-line-chart";
-import { Table } from "@/components/ui/table";
-import { getFinOpsBreakdown, getFinOpsDashboard, getFinOpsTimeseries } from "@/lib/api";
-import { formatCost, formatTokens } from "@/lib/finops-format";
-import type { FinOpsBreakdownItem, FinOpsDashboard } from "@/lib/types";
+import { SectionHeader } from "@/components/section-header";
+import { getFinOpsBreakdown, getFinOpsBudgets, getFinOpsDashboard, getFinOpsTimeseries } from "@/lib/api";
+import { useWidget } from "@/lib/dashboard/use-widget";
+import { formatAmount, formatChange, formatCount, formatPct } from "@/lib/finops-format";
+import {
+  BUDGET_STATUS_LABEL,
+  buildNeedsAttention,
+  comparisonSummary,
+  enforcementKind,
+  ENFORCEMENT_LABEL,
+  formatUnitValue,
+  withFilters,
+} from "@/lib/finops-insights";
+import { periodLabel } from "@/lib/finops-filters";
+import { useFinOpsFilters } from "@/lib/use-finops-filters";
+import type { FinOpsDashboard } from "@/lib/types";
 
-const USAGE_VIEWS = [
-  { id: "ai_system", label: "AI System" },
-  { id: "agent", label: "Agent" },
-  { id: "agent_version", label: "Agent version" },
-  { id: "runtime_identity", label: "Runtime identity" },
-  { id: "delegation", label: "Delegation" },
-] as const;
+function Definition({ text }: { text?: string }) {
+  if (!text) return null;
+  return <p className="mt-2 text-xs text-ink-500">{text}</p>;
+}
 
-type UsageDimension = (typeof USAGE_VIEWS)[number]["id"];
+function CurrencyBanner({ totals }: { totals: FinOpsDashboard["totals"] }) {
+  if (totals.currency !== "MIXED" || !totals.by_currency) return null;
+  return (
+    <div role="status" className="rounded-lg border border-warn-600/30 bg-warn-100 p-4 text-sm text-warn-700">
+      <p className="font-semibold">
+        Usage in this period is priced in more than one currency, so totals are not combined.
+      </p>
+      <p className="mt-1">
+        No conversion is applied. Pick a currency in the filters to see its totals; per-currency
+        known cost is shown below.
+      </p>
+      <ul className="mt-2 list-disc pl-5">
+        {totals.by_currency.map((row) => (
+          <li key={row.currency}>
+            {row.currency}: {formatAmount(row.total_cost, row.currency)} known across{" "}
+            {formatCount(row.spans)} calls
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-function BreakdownTable({
-  loading,
-  error,
-  empty,
-  columns,
-  rows,
-}: {
-  loading: boolean;
-  error: string | null;
-  empty: string;
-  columns: string[];
-  rows: Array<Array<string>>;
-}) {
-  if (loading) return <p className="text-sm text-ink-500">Loading…</p>;
-  if (error) return <p className="text-sm text-destructive">{error}</p>;
-  if (rows.length === 0) return <p className="text-sm text-ink-500">{empty}</p>;
-  return <Table columns={columns} rows={rows} />;
+function SpendCards({ dashboard }: { dashboard: FinOpsDashboard }) {
+  const { totals, coverage, budget_pressure: pressure } = dashboard;
+  const currency = totals.currency;
+  const comparison = comparisonSummary(dashboard);
+  const noData = totals.cost_state === "NO_DATA";
+  const unpriced = totals.span_counts.unavailable;
+
+  const knownDetail = noData
+    ? "No usage matched these filters."
+    : [
+        totals.billed_cost !== null ? `Billed ${formatAmount(totals.billed_cost, currency)}` : null,
+        totals.metered_cost !== null ? `Metered ${formatAmount(totals.metered_cost, currency)}` : null,
+        totals.estimated_cost !== null ? `Estimated ${formatAmount(totals.estimated_cost, currency)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || "No priced usage.";
+
+  return (
+    <MetricStrip>
+      <MetricCard
+        testId="card-known-spend"
+        title="Known spend"
+        value={noData ? "No data" : formatAmount(totals.total_cost, currency)}
+        badge={<CostStateBadge state={totals.cost_state} />}
+        detail={knownDetail}
+        caveat={
+          unpriced > 0
+            ? `${formatCount(unpriced)} call${unpriced === 1 ? "" : "s"} have no price, so this is a floor, not the full total.`
+            : null
+        }
+      />
+      <MetricCard
+        testId="card-billed"
+        title="Billed cost"
+        value={
+          noData ? "No data" : totals.billed_cost === null ? "None recorded" : formatAmount(totals.billed_cost, currency)
+        }
+        detail="Invoice- or billing-API-backed amounts only."
+      />
+      <MetricCard
+        testId="card-estimated"
+        title="Estimated spend"
+        value={
+          noData
+            ? "No data"
+            : totals.estimated_cost === null
+              ? "None"
+              : `≈ ${formatAmount(totals.estimated_cost, currency)}`
+        }
+        detail="Pre-execution estimates. Not confirmed incurred spend; excluded from billed and metered."
+      />
+      <MetricCard
+        testId="card-coverage"
+        title="Measurement coverage"
+        value={formatPct(coverage.cost_coverage_pct)}
+        detail={
+          <>
+            Calls with a price. Unattributed usage {formatPct(coverage.unattributed_pct)} · No price{" "}
+            {formatPct(coverage.unavailable_pct)}
+          </>
+        }
+        caveat="Cost measurement only, not governance control coverage."
+      />
+      <MetricCard
+        testId="card-budget-pressure"
+        title="Budget pressure"
+        value={`${pressure.warning} warning · ${pressure.exceeded} exceeded`}
+        tone={pressure.exceeded > 0 ? "danger" : pressure.warning > 0 ? "warn" : "neutral"}
+        detail={`${pressure.total} enabled budget${pressure.total === 1 ? "" : "s"} · current windows only`}
+        href="/finops/budgets"
+        hrefLabel="open budgets and forecasting"
+      />
+      <MetricCard
+        testId="card-comparison"
+        title="Vs previous period"
+        value={comparison.text}
+        detail={
+          dashboard.comparison.total_cost_change_pct === null
+            ? formatChange(null)
+            : "Change in known spend. Growth is neutral, not a defect."
+        }
+        caveat={comparison.caveat}
+      />
+    </MetricStrip>
+  );
 }
 
 export default function FinOpsOverviewPage() {
-  const [dashboard, setDashboard] = useState<FinOpsDashboard | null>(null);
-  const [series, setSeries] = useState<Array<{ timestamp: string; value: number }>>([]);
-  const [systems, setSystems] = useState<Array<{ name: string; value: number }>>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { filters, errors, query, dataKey, setFilters, refresh } = useFinOpsFilters();
 
-  const [dimension, setDimension] = useState<UsageDimension>("ai_system");
-  const [usageItems, setUsageItems] = useState<FinOpsBreakdownItem[]>([]);
-  const [usageError, setUsageError] = useState<string | null>(null);
-  const [usageLoading, setUsageLoading] = useState(true);
+  const [dash, retryDash] = useWidget(`dash:${dataKey}`, () => getFinOpsDashboard(query));
+  const [series, retrySeries] = useWidget(`series:${dataKey}`, () => getFinOpsTimeseries(query));
+  const [systems, retrySystems] = useWidget(`systems:${dataKey}`, () =>
+    getFinOpsBreakdown({ ...query, dimension: "ai_system", limit: 8 }),
+  );
+  const [budgets, retryBudgets] = useWidget(`budgets:${filters.ai_system_id ?? ""}:${dataKey}`, () =>
+    getFinOpsBudgets({ ai_system_id: filters.ai_system_id }),
+  );
 
-  const [models, setModels] = useState<FinOpsBreakdownItem[]>([]);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(true);
-
-  const [tenants, setTenants] = useState<FinOpsBreakdownItem[]>([]);
-  const [tenantsError, setTenantsError] = useState<string | null>(null);
-  const [tenantsLoading, setTenantsLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([
-      getFinOpsDashboard(),
-      getFinOpsTimeseries(),
-      getFinOpsBreakdown({ dimension: "ai_system", limit: 8 }),
-    ])
-      .then(([dash, trend, breakdown]) => {
-        if (!active) return;
-        setDashboard(dash.data);
-        setSeries(
-          trend.data.points.map((point) => ({ timestamp: point.timestamp, value: point.cost })),
-        );
-        setSystems(
-          breakdown.data.items.map((item) => ({
-            name: item.label || "Unattributed",
-            value: item.cost,
-          })),
-        );
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : "Unable to load FinOps");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    setUsageLoading(true);
-    setUsageError(null);
-    getFinOpsBreakdown({ dimension, limit: 50 })
-      .then((res) => {
-        if (active) setUsageItems(res.data.items);
-      })
-      .catch((err: unknown) => {
-        if (active) setUsageError(err instanceof Error ? err.message : "Unable to load usage");
-      })
-      .finally(() => {
-        if (active) setUsageLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [dimension]);
-
-  useEffect(() => {
-    let active = true;
-    getFinOpsBreakdown({ dimension: "model", limit: 50 })
-      .then((res) => {
-        if (active) setModels(res.data.items);
-      })
-      .catch((err: unknown) => {
-        if (active) setModelsError(err instanceof Error ? err.message : "Unable to load models");
-      })
-      .finally(() => {
-        if (active) setModelsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    getFinOpsBreakdown({ dimension: "delegation", limit: 50 })
-      .then((res) => {
-        if (active) setTenants(res.data.items);
-      })
-      .catch((err: unknown) => {
-        if (active) setTenantsError(err instanceof Error ? err.message : "Unable to load tenants");
-      })
-      .finally(() => {
-        if (active) setTenantsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const totals = dashboard?.totals;
+  const currencies = dash.status === "ready" ? dash.data.totals.currencies : [];
+  const attention = buildNeedsAttention(
+    dash.status === "ready" ? dash.data : null,
+    budgets.status === "ready" ? budgets.data : null,
+    filters,
+  );
 
   return (
     <div className="space-y-6" data-testid="finops-overview">
       <SectionHeader
         eyebrow="FinOps"
-        title="AI spend"
-        subtitle="Metered, estimated, and billed cost with explicit measurement confidence — never invent unavailable amounts."
+        title="AI economics"
+        subtitle="What AI usage cost, how confident each figure is, and where spend is under pressure. Billed, metered and estimated amounts are never merged into one number."
       />
-      {loading ? <p className="text-sm text-ink-500">Loading spend...</p> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {totals ? (
-        <MetricStrip>
-          <KpiCard
-            title="Metered Cost"
-            value={formatCost(
-              totals.metered_cost ?? totals.actual_cost,
-              "METERED",
-              totals.currency,
-            )}
-            trend={totals.cost_state}
-          />
-          <KpiCard
-            title="Estimated Outstanding"
-            value={formatCost(totals.estimated_cost, "ESTIMATED", totals.currency)}
-          />
-          <KpiCard
-            title="Billed Cost"
-            value={formatCost(
-              totals.billed_cost,
-              totals.billed_cost ? "BILLED" : "UNAVAILABLE",
-              totals.currency,
-            )}
-          />
-          <KpiCard title="Tokens" value={formatTokens(totals.total_tokens)} />
-          <KpiCard
-            title="Budget at Risk"
-            value={`${dashboard?.budget_pressure.warning ?? 0} warn / ${dashboard?.budget_pressure.exceeded ?? 0} exceeded`}
-          />
-          <KpiCard
-            title="Cost Measurement Coverage"
-            value={`${dashboard?.coverage.cost_coverage_pct ?? 0}%`}
-            trend={`Metered ${dashboard?.coverage.metered_pct ?? dashboard?.coverage.actual_pct ?? 0}% · Estimated ${dashboard?.coverage.estimated_pct ?? 0}% · Unavailable ${dashboard?.coverage.unavailable_pct ?? 0}%`}
-          />
-        </MetricStrip>
-      ) : null}
+      <FilterBar
+        filters={filters}
+        errors={errors}
+        currencies={currencies}
+        onChange={setFilters}
+        onRefresh={() => {
+          refresh();
+          retryDash();
+        }}
+      />
+
+      <WidgetBody state={dash} label="spend summary" onRetry={retryDash}>
+        {(data) => (
+          <div className="space-y-4">
+            <CurrencyBanner totals={data.totals} />
+            <SpendCards dashboard={data} />
+            <p className="text-xs text-ink-500">
+              {periodLabel(filters)} · {formatCount(data.totals.span_counts.total)} metered calls ·
+              averages divide by trajectories with a known cost (
+              {formatCount(data.totals.known_cost_trajectories)} of{" "}
+              {formatCount(data.totals.trajectories)}).
+            </p>
+          </div>
+        )}
+      </WidgetBody>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Cost over time">
-          <TrendLineChart data={series} title="Cost" />
+        <Panel title="Spend trend" description="Daily known spend, split by cost state.">
+          <WidgetBody state={series} label="spend trend" onRetry={retrySeries}>
+            {(data) => <SpendTrendChart points={data.points} currency={data.currency} />}
+          </WidgetBody>
         </Panel>
-        <Panel title="Cost by AI system">
-          <NamedBarChart
-            data={systems}
-            layout="vertical"
-            emptyLabel="No metered spend in this period"
-          />
-        </Panel>
-      </div>
-      {dashboard ? (
-        <Panel title="Cost coverage">
-          <p className="text-sm text-ink-600">
-            {dashboard.coverage.cost_coverage_pct}% of spans have a cost. Metered{" "}
-            {dashboard.coverage.metered_pct ?? dashboard.coverage.actual_pct}% · Estimated{" "}
-            {dashboard.coverage.estimated_pct}% · Unavailable {dashboard.coverage.unavailable_pct}%.
-            Missing pricing is never shown as $0.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-4 text-sm">
-            <a className="text-accent-700" href="#usage">
-              Usage & cost
-            </a>
-            <a className="text-accent-700" href="#models">
-              Models
-            </a>
-            <a className="text-accent-700" href="#tenants">
-              Tenants
-            </a>
-            <Link className="text-accent-700" href="/finops/pricing">
-              Pricing
+        <Panel
+          title="Top AI systems"
+          description="Ranked by known cost. Unpriced and unattributed usage is listed, not hidden."
+          actions={
+            <Link
+              href={withFilters("/finops/usage", filters, { dimension: "ai_system" })}
+              className="text-sm font-semibold text-accent-700"
+            >
+              Explore all
             </Link>
-            <Link className="text-accent-700" href="/risk/budgets">
-              Spend controls ({dashboard.budget_pressure.warning} warning,{" "}
-              {dashboard.budget_pressure.exceeded} exceeded)
+          }
+        >
+          <WidgetBody state={systems} label="top AI systems" onRetry={retrySystems}>
+            {(data) => {
+              const priced = data.items.filter((item) => item.cost !== null);
+              const unknown = data.items.filter((item) => item.cost === null);
+              return (
+                <div>
+                  <SpendRankChart
+                    currency={data.currency}
+                    data={priced.map((item) => ({ name: item.label || "Unattributed", value: item.cost as number }))}
+                  />
+                  {unknown.length > 0 ? (
+                    <p className="mt-2 text-xs text-ink-500">
+                      No price available for: {unknown.map((item) => item.label || "Unattributed").join(", ")}.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            }}
+          </WidgetBody>
+        </Panel>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Panel
+          title="Budget health"
+          description="Read-only view of current budget windows. Policies are edited under Risk."
+          actions={
+            <Link href="/finops/budgets" className="text-sm font-semibold text-accent-700">
+              Budgets & forecasting
             </Link>
+          }
+        >
+          <WidgetBody state={budgets} label="budget health" onRetry={retryBudgets}>
+            {(data) =>
+              data.items.length === 0 ? (
+                <p className="text-sm text-ink-500">No enabled budgets are configured.</p>
+              ) : (
+                <ul className="divide-y divide-base-200">
+                  {data.items.slice(0, 6).map((item) => (
+                    <li key={`${item.budget_id}:${item.window?.scope_id ?? ""}`} className="py-2 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Link href={`/risk/budgets/${item.budget_id}`} className="font-medium text-accent-700">
+                          {item.name}
+                        </Link>
+                        <span className="text-xs font-semibold text-ink-700">
+                          {BUDGET_STATUS_LABEL[item.status] ?? item.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-ink-500">
+                        {item.window
+                          ? `${formatUnitValue(item.window.usage, item.unit)} of ${formatUnitValue(item.limit_value, item.unit)}`
+                          : "No usage window open"}{" "}
+                        · {ENFORCEMENT_LABEL[enforcementKind(item)]}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )
+            }
+          </WidgetBody>
+        </Panel>
+
+        <Panel
+          title="Needs attention"
+          description="Known budget problems and metering gaps, each linking to its source."
+        >
+          {dash.status === "loading" || budgets.status === "loading" ? (
+            <p className="text-sm text-ink-500">Checking…</p>
+          ) : attention.length === 0 ? (
+            <p className="text-sm text-ink-500" data-testid="attention-empty">
+              Nothing needs attention for these filters.
+              {dash.status !== "ready" || budgets.status !== "ready"
+                ? " Some sources failed to load, so this list may be incomplete."
+                : ""}
+            </p>
+          ) : (
+            <ul className="space-y-3" data-testid="attention-list">
+              {attention.map((item) => (
+                <li key={item.key} className="text-sm">
+                  <p className="font-medium text-ink-900">
+                    <span className="mr-2 text-[10px] font-semibold uppercase text-ink-500">
+                      {item.severity === "high" ? "High" : item.severity === "medium" ? "Medium" : "Info"}
+                    </span>
+                    {item.title}
+                  </p>
+                  <p className="text-xs text-ink-500">{item.detail}</p>
+                  <Link href={item.href} className="text-xs font-semibold text-accent-700">
+                    {item.linkLabel}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
+      <WidgetBody state={dash} label="risk and prevented spend" onRetry={retryDash}>
+        {(data) => (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="Risk-associated spend">
+              <p className="font-mono text-lg font-semibold text-ink-900" data-testid="risk-spend">
+                {data.risk_associated_spend === null
+                  ? "Unavailable"
+                  : formatAmount(data.risk_associated_spend, data.totals.currency)}
+              </p>
+              <Definition text={data.definition.risk_associated_spend} />
+              <p className="mt-2 text-xs font-semibold text-ink-700">
+                Correlated cost, not a measure of loss.
+              </p>
+            </Panel>
+            <Panel title="Prevented estimated spend">
+              <p className="font-mono text-lg font-semibold text-ink-900" data-testid="prevented-spend">
+                {data.prevented_estimated_spend === null
+                  ? "Unavailable"
+                  : `≈ ${formatAmount(data.prevented_estimated_spend, data.prevented_estimated_currency)}`}
+              </p>
+              <Definition text={data.definition.prevented_estimated_spend} />
+              <p className="mt-2 text-xs font-semibold text-ink-700">
+                A counterfactual estimate. It is not realized savings and no invoice was reduced.
+              </p>
+            </Panel>
           </div>
-        </Panel>
-      ) : null}
-
-      <div id="usage" className="scroll-mt-6" data-testid="finops-usage">
-        <Panel
-          title="Usage & cost"
-          description="Spend attributed along the control chain: system, agent, version, runtime identity, and delegation."
-        >
-          <div className="mb-4 flex flex-wrap gap-2">
-            {USAGE_VIEWS.map((view) => (
-              <button
-                key={view.id}
-                type="button"
-                className={`rounded-md border px-3 py-1 text-sm ${dimension === view.id ? "border-accent-500 bg-accent-50" : "border-ink-200"}`}
-                onClick={() => setDimension(view.id)}
-              >
-                {view.label}
-              </button>
-            ))}
-          </div>
-          <BreakdownTable
-            loading={usageLoading}
-            error={usageError}
-            empty="No metered usage for this view."
-            columns={["Name", "Cost", "Tokens", "Trajectories", "Calls"]}
-            rows={usageItems.map((item) => [
-              item.label || "Unattributed",
-              formatCost(item.cost, item.cost ? "MIXED" : "UNAVAILABLE"),
-              formatTokens(item.tokens),
-              String(item.trajectories),
-              String(item.calls),
-            ])}
-          />
-        </Panel>
-      </div>
-
-      <div id="models" className="scroll-mt-6" data-testid="finops-models">
-        <Panel
-          title="Models"
-          description="Calls, tokens, and cost by model. Cost state stays on the trajectory that produced the call."
-        >
-          <BreakdownTable
-            loading={modelsLoading}
-            error={modelsError}
-            empty="No model usage recorded."
-            columns={["Model", "Calls", "Input tokens", "Output tokens", "Cost", "Avg / call"]}
-            rows={models.map((item) => [
-              item.label || "Unknown model",
-              String(item.calls),
-              formatTokens(item.input_tokens),
-              formatTokens(item.output_tokens),
-              formatCost(item.cost, item.cost ? "MIXED" : "UNAVAILABLE"),
-              item.avg_cost_per_call === null
-                ? "Unavailable"
-                : formatCost(item.avg_cost_per_call, "MIXED"),
-            ])}
-          />
-        </Panel>
-      </div>
-
-      <div id="tenants" className="scroll-mt-6" data-testid="finops-tenants">
-        <Panel
-          title="Tenants"
-          description="Spend separated by delegation. A friendly label is used when the delegation scope includes one."
-        >
-          <BreakdownTable
-            loading={tenantsLoading}
-            error={tenantsError}
-            empty="No delegation-attributed spend."
-            columns={["Tenant / delegation", "Cost", "Tokens", "Trajectories"]}
-            rows={tenants.map((item) => [
-              item.label || "Unattributed",
-              formatCost(item.cost, item.cost ? "MIXED" : "UNAVAILABLE"),
-              formatTokens(item.tokens),
-              String(item.trajectories),
-            ])}
-          />
-        </Panel>
-      </div>
+        )}
+      </WidgetBody>
     </div>
   );
 }

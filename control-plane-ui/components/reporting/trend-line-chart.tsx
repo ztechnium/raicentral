@@ -11,10 +11,15 @@ import {
   Legend,
 } from "recharts";
 import { CHART, chartTooltipStyle } from "@/components/reporting/chart-colors";
-import type { TimeSeriesPoint } from "@/lib/types";
+/** A null value is a gap in the line (unknown), never a point at zero. */
+export interface TrendPoint {
+  timestamp: string;
+  value: number | null;
+  label?: string | null;
+}
 
 interface TrendLineChartProps {
-  data: TimeSeriesPoint[];
+  data: TrendPoint[];
   dataKey?: string;
   color?: string;
   title?: string;
