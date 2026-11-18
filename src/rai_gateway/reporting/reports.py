@@ -334,6 +334,11 @@ def build_policy_report(
     )
 
 
+def _round_cost(value: float | None) -> float | None:
+    """Keep sub-cent LLM costs; None (unknown) must stay None, never become 0."""
+    return None if value is None else round(value, 8)
+
+
 def build_budget_report(
     db: Session,
     filters: ReportFilters,
@@ -347,7 +352,7 @@ def build_budget_report(
     budgets_exceeded = queries.count_budgets_by_status(db, scoped, "EXCEEDED")
 
     # Cost and tokens from the same metering spans trajectories display.
-    total_cost = queries.get_total_cost(db, scoped)
+    cost_summary = queries.get_cost_summary(db, scoped)
     total_tokens = queries.get_total_tokens(db, scoped)
     cost_trends, token_trends = trends.get_spend_trends(db, scoped, start, end)
 
@@ -381,7 +386,11 @@ def build_budget_report(
         total_budgets=total_budgets,
         budgets_warning=budgets_warning,
         budgets_exceeded=budgets_exceeded,
-        total_cost=round(total_cost, 2),
+        total_cost=_round_cost(cost_summary["total_cost"]),
+        span_cost=_round_cost(cost_summary["span_cost"]),
+        ledger_only_cost=_round_cost(cost_summary["ledger_only_cost"]),
+        currency=cost_summary["currency"],
+        currencies=cost_summary["currencies"],
         total_tokens=total_tokens,
         budgets=budget_statuses,
         cost_trends=cost_trends,
@@ -490,7 +499,7 @@ def build_ai_system_report(
         if budgets
         else 0.0,
         token_usage=queries.get_total_tokens(db, scoped),
-        cost=round(queries.get_total_cost(db, scoped), 2),
+        cost=_round_cost(queries.get_cost_summary(db, scoped)["total_cost"]),
         assurance_status=latest_assurance,
         evidence_completeness_pct=round(float(evidence_completeness), 2)
         if evidence_completeness is not None

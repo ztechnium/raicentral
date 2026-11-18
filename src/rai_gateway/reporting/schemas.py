@@ -310,16 +310,24 @@ class BudgetReport(BaseModel):
     total_budgets: int
     budgets_warning: int
     budgets_exceeded: int
-    total_cost: float = 0.0
+    # null = no priced usage, or several currencies (never summed, never 0).
+    total_cost: float | None = None
+    # Known cost over metering spans: equals the FinOps total_cost for the same
+    # filters and period. ledger_only_cost covers settlements no span represents.
+    span_cost: float | None = None
+    ledger_only_cost: float | None = None
+    currency: str | None = None
+    currencies: list[str] = []
     total_tokens: int = 0
-    # How total_cost is composed. It sums known cost across BILLED, METERED,
-    # ACTUAL and ESTIMATED spans (estimates included; unavailable cost counts
-    # as 0). It is NOT the FinOps authoritative total; use /v1/finops/dashboard
-    # for state-separated spend.
     cost_basis: str = (
-        "Sum of BILLED/METERED/ACTUAL/ESTIMATED known cost; estimates are "
-        "included and unavailable cost is omitted. See /v1/finops/dashboard "
-        "for state-separated spend."
+        "total_cost = span_cost + ledger_only_cost. span_cost is known cost "
+        "(billed + metered + estimated) over metering spans, using the same "
+        "definition and therefore the same value as /v1/finops/dashboard "
+        "total_cost for matching filters and period. ledger_only_cost is known "
+        "cost of settlements not represented by any span, which FinOps does not "
+        "count. Estimated amounts are included; unpriced usage contributes "
+        "nothing and is not shown as 0. Amounts in different currencies are not "
+        "summed. Use /v1/finops/dashboard for billed/metered/estimated separation."
     )
 
     # Budget statuses
@@ -423,7 +431,7 @@ class AISystemReport(BaseModel):
     # Budget metrics
     budget_usage: float = 0.0
     token_usage: int = 0
-    cost: float = 0.0
+    cost: float | None = None
 
     # Assurance
     assurance_status: str | None = None

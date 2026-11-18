@@ -826,6 +826,56 @@ def get_total_cost(
     return span_cost + settlement_cost
 
 
+def get_cost_summary(db: Session, filters: ReportFilters) -> dict:
+    """Reports cost, decomposed so it can be reconciled with FinOps.
+
+    ``span_cost`` is the same known-cost definition FinOps uses over metering spans
+    (``finops.cost_expr``), so it equals the FinOps ``total_cost`` for matching
+    filters and period. ``ledger_only_cost`` is the known cost of settlements that
+    no span represents; FinOps does not count those, which is the one legitimate
+    difference. A value is ``None`` (unknown) rather than 0 when no row carried a
+    known cost, and amounts in different currencies are never added together.
+    """
+    spans = _scoped_metering_spans(db, filters)
+    settlements = _scoped_usage_settlements(db, filters)
+    currencies = sorted(
+        {
+            code
+            for (code,) in spans.with_entities(RuntimeMeteringSpan.currency).distinct()
+            if code
+        }
+        | {
+            code
+            for (code,) in settlements.with_entities(UsageSettlement.currency).distinct()
+            if code
+        }
+    )
+    if len(currencies) > 1:
+        return {
+            "span_cost": None,
+            "ledger_only_cost": None,
+            "total_cost": None,
+            "currency": "MIXED",
+            "currencies": currencies,
+        }
+
+    def known_sum(query, model) -> float | None:
+        expr = _known_cost(model)
+        total, priced = query.with_entities(func.sum(expr), func.count(expr)).one()
+        return float(total) if priced and total is not None else None
+
+    span_cost = known_sum(spans, RuntimeMeteringSpan)
+    ledger_only = known_sum(settlements, UsageSettlement)
+    parts = [value for value in (span_cost, ledger_only) if value is not None]
+    return {
+        "span_cost": span_cost,
+        "ledger_only_cost": ledger_only,
+        "total_cost": sum(parts) if parts else None,
+        "currency": currencies[0] if currencies else None,
+        "currencies": currencies,
+    }
+
+
 def get_total_tokens(
     db: Session,
     filters: ReportFilters,

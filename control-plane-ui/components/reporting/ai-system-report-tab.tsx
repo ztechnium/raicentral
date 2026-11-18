@@ -197,8 +197,12 @@ export function AISystemReportTab({ systemId }: AISystemReportTabProps) {
         <div className="grid gap-4 md:grid-cols-3">
           <Panel title="Total Cost">
             <div className="space-y-2">
-              <p className="text-3xl font-bold text-ink-900">${report.cost.toFixed(2)}</p>
-              <p className="text-sm text-ink-500">Period total</p>
+              <p className="text-3xl font-bold text-ink-900">
+                {report.cost === null ? "Unavailable" : `$${report.cost.toFixed(2)}`}
+              </p>
+              <p className="text-sm text-ink-500">
+                {report.cost === null ? "No priced usage in this period" : "Period total"}
+              </p>
             </div>
           </Panel>
 

@@ -2889,7 +2889,15 @@ export interface BudgetReport {
   total_budgets: number;
   budgets_warning: number;
   budgets_exceeded: number;
-  total_cost: number;
+  /** null = no priced usage, or several currencies (never summed, never 0). */
+  total_cost: number | null;
+  /** Known cost over metering spans: equals the FinOps total_cost for matching filters. */
+  span_cost: number | null;
+  /** Known cost of settlements no span represents (FinOps does not count these). */
+  ledger_only_cost: number | null;
+  currency: string | null;
+  currencies: string[];
+  cost_basis: string;
   total_tokens: number;
   budgets: BudgetStatus[];
   cost_trends: TimeSeriesPoint[];
@@ -2945,7 +2953,8 @@ export interface AISystemReport {
   approval_rate: number;
   budget_usage: number;
   token_usage: number;
-  cost: number;
+  /** null when no priced usage or several currencies; never 0 for unknown. */
+  cost: number | null;
   assurance_status?: string | null;
   evidence_completeness_pct?: number | null;
   incidents: number;
