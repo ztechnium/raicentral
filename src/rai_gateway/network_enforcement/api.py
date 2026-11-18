@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -66,6 +67,24 @@ def enforcement_assurance_metrics(
         "unclassified_ai_destinations": metrics.unclassified_ai_destinations,
         "runtimes_without_network_enforcement": metrics.runtimes_without_network_enforcement,
     }
+
+
+@router.get("/v1/enforcement-assurance/traffic-share")
+def enforcement_traffic_share(
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    _tenant: TenantContext = Depends(require_permission("reports:read")),
+    svc: BypassDetectionService = Depends(_svc),
+):
+    """Gateway share of observed AI egress for a period (default: last 30 days)."""
+    end = period_end or datetime.now(timezone.utc)
+    start = period_start or end - timedelta(days=30)
+    if start >= end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="period_start must be before period_end",
+        )
+    return svc.traffic_share(period_start=start, period_end=end)
 
 
 @router.get("/v1/enforcement-assurance/runtime-attestation/{runtime_identity_id}")

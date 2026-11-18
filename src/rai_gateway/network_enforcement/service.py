@@ -269,6 +269,44 @@ class BypassDetectionService:
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
 
+    def traffic_share(
+        self, *, period_start: datetime, period_end: datetime
+    ) -> dict[str, Any]:
+        """Share of observed AI-bound connections that went through the gateway.
+
+        Only connections classified as AI providers are stored, so the denominator is
+        "observed AI egress". UNKNOWN_AI destinations are excluded from both sides and
+        reported separately. Returns share_pct=None when nothing was observed: that means
+        no collector data, not 0% coverage.
+        """
+        base = self._db.query(ObservedConnectionEvent).filter(
+            ObservedConnectionEvent.observed_at >= period_start,
+            ObservedConnectionEvent.observed_at <= period_end,
+        )
+        classified = base.filter(
+            ObservedConnectionEvent.provider_guess != "UNKNOWN_AI"
+        )
+        total = classified.count()
+        via_gateway = classified.filter(
+            ObservedConnectionEvent.gateway_used.is_(True)
+        ).count()
+        unclassified = base.filter(
+            ObservedConnectionEvent.provider_guess == "UNKNOWN_AI"
+        ).count()
+        last_observed = (
+            self._db.query(func.max(ObservedConnectionEvent.observed_at)).scalar()
+        )
+        return {
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "observed_ai_connections": total,
+            "via_gateway": via_gateway,
+            "direct": total - via_gateway,
+            "unclassified_ai_destinations": unclassified,
+            "share_pct": round(100 * via_gateway / total, 1) if total else None,
+            "last_observed_at": last_observed.isoformat() if last_observed else None,
+        }
+
     def assurance_metrics(self) -> AssuranceMetrics:
         gateway_requests = (
             self._db.query(func.count(ObservedConnectionEvent.id))

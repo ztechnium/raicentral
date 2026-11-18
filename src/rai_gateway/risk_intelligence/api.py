@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -150,11 +151,27 @@ def list_findings(
     severity: str | None = None,
     status: str | None = None,
     finding_type: str | None = None,
+    agent_id: UUID | None = None,
+    model_id: UUID | None = None,
+    runtime_identity_id: UUID | None = None,
+    department_id: UUID | None = None,
+    member_id: UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     limit: int = 50,
     offset: int = 0,
     tenant: TenantContext = Depends(require_permission("risk:read")),
     svc: RiskIntelligenceService = Depends(_svc),
 ):
+    scope = {
+        "agent_id": agent_id,
+        "model_id": model_id,
+        "runtime_identity_id": runtime_identity_id,
+        "department_id": department_id,
+        "member_id": member_id,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
     items = svc.list_findings(
         ai_system_id=ai_system_id,
         trajectory_id=trajectory_id,
@@ -164,6 +181,7 @@ def list_findings(
         limit=limit,
         offset=offset,
         include_evidence=True,
+        **scope,
     )
     total = svc.count_findings(
         ai_system_id=ai_system_id,
@@ -172,6 +190,7 @@ def list_findings(
         status=status,
         finding_type=finding_type,
         include_evidence=True,
+        **scope,
     )
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 

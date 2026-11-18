@@ -14,7 +14,12 @@ import { FormField } from "@/components/registry/form-field";
 import { StatusBadge } from "@/components/registry/status-badge";
 import { SideDrawer } from "@/components/ui/side-drawer";
 import { createAISystem, getAISystems } from "@/lib/api";
-import { BUSINESS_UNITS, RISK_TIERS } from "@/lib/registry-constants";
+import {
+  DepartmentSelect,
+  PersonSelect,
+  useOrganizationDirectory,
+} from "@/components/organization/directory-fields";
+import { RISK_TIERS } from "@/lib/registry-constants";
 import { slugifyKey } from "@/lib/slugify";
 import type { AISystemSummary } from "@/lib/types";
 
@@ -29,7 +34,11 @@ const EMPTY_FORM = {
 };
 
 export default function RegistryPage() {
+  const directory = useOrganizationDirectory();
+  const personLabel = (id?: string | null) =>
+    id ? (directory.people.find((p) => p.userId === id)?.label ?? id) : "—";
   const [systems, setSystems] = useState<AISystemSummary[]>([]);
+  const [allSystems, setAllSystems] = useState<AISystemSummary[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -51,22 +60,33 @@ export default function RegistryPage() {
     setLoading(true);
     setError(null);
     getAISystems(query)
-      .then((response) => setSystems(response.data))
+      .then((response) => {
+        setSystems(response.data);
+        if (!query) setAllSystems(response.data);
+      })
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
+    // Stat cards always reflect the full, unfiltered population (not search results).
+    if (query) {
+      getAISystems()
+        .then((response) => setAllSystems(response.data))
+        .catch(() => {});
+    }
   };
 
   useEffect(() => {
     load();
   }, []);
 
+  const statsSource = allSystems ?? systems;
   const stats = useMemo(() => {
     return {
-      total: systems.length,
-      approved: systems.filter((s) => s.status === "APPROVED").length,
-      highRisk: systems.filter((s) => s.risk_tier === "HIGH" || s.risk_tier === "CRITICAL").length,
+      total: statsSource.length,
+      approved: statsSource.filter((s) => s.status === "APPROVED").length,
+      highRisk: statsSource.filter((s) => s.risk_tier === "HIGH" || s.risk_tier === "CRITICAL")
+        .length,
     };
-  }, [systems]);
+  }, [statsSource]);
 
   const optionsFor = (values: Array<string | null | undefined>) =>
     [...new Set(values.filter((value): value is string => Boolean(value)))].sort().map((value) => ({
@@ -178,25 +198,23 @@ export default function RegistryPage() {
               className="font-mono"
             />
           </FormField>
-          <FormField label="Business Unit">
-            <Input
-              list="business-units"
+          <FormField label="Business Unit" hint="Optional. Department of the organization.">
+            <DepartmentSelect
+              directory={directory}
               value={form.business_unit}
-              onChange={(e) => setForm({ ...form, business_unit: e.target.value })}
-              placeholder="Procurement"
+              onChange={(name) => {
+                const owner = directory.people.find((p) => p.userId === form.owner_id);
+                const keep = !name || owner?.departmentName === name;
+                setForm({ ...form, business_unit: name, owner_id: keep ? form.owner_id : "" });
+              }}
             />
-            <datalist id="business-units">
-              {BUSINESS_UNITS.map((unitOption) => (
-                <option key={unitOption} value={unitOption} />
-              ))}
-            </datalist>
           </FormField>
-          <FormField label="Owner ID">
-            <Input
+          <FormField label="Owner" hint="Optional. Members of the selected department.">
+            <PersonSelect
+              directory={directory}
               value={form.owner_id}
-              onChange={(e) => setForm({ ...form, owner_id: e.target.value })}
-              placeholder="team-procurement"
-              className="font-mono"
+              departmentName={form.business_unit || undefined}
+              onChange={(id) => setForm({ ...form, owner_id: id })}
             />
           </FormField>
           <FormField label="Risk Tier">
@@ -254,7 +272,7 @@ export default function RegistryPage() {
                 setPage(0);
               },
               options: optionsFor([
-                ...BUSINESS_UNITS,
+                ...directory.departments.map((d) => d.name),
                 ...systems.map((system) => system.business_unit),
               ]),
             },
@@ -265,7 +283,9 @@ export default function RegistryPage() {
                 setOwner(value);
                 setPage(0);
               },
-              options: optionsFor(systems.map((system) => system.owner_id)),
+              options: [...new Set(systems.map((system) => system.owner_id).filter(Boolean))]
+                .map((id) => ({ value: id as string, label: personLabel(id) }))
+                .sort((a, b) => a.label.localeCompare(b.label)),
             },
           ]}
           action={
@@ -295,7 +315,7 @@ export default function RegistryPage() {
                         <p className="text-xs text-ink-400">{system.system_key}</p>
                       </div>,
                       system.business_unit ?? "—",
-                      system.owner_id ?? "—",
+                      personLabel(system.owner_id),
                       <StatusBadge key={`${system.id}-status`} status={system.status} />,
                       system.risk_tier ? (
                         <StatusBadge key={`${system.id}-risk`} status={system.risk_tier} />

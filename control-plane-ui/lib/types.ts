@@ -1255,6 +1255,13 @@ export interface TrajectoryListResponse {
   total?: number;
   limit: number;
   offset: number;
+  /** Totals across all trajectories, independent of paging and filters. */
+  metrics?: {
+    total: number;
+    active: number;
+    incomplete: number;
+    with_findings: number;
+  };
 }
 
 export interface LifecycleContentBlock {

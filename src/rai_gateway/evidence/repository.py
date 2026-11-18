@@ -6,8 +6,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from rai_gateway.models.governance import OrganizationMembership
+from rai_gateway.models.identity import DelegationGrant
+from rai_gateway.models.metering import RuntimeMeteringSpan
 from rai_gateway.models.evidence import (
     EvidenceArtifact,
     EvidenceEvent,
@@ -15,6 +19,133 @@ from rai_gateway.models.evidence import (
     EvidenceRelation,
     RuntimeTrajectory,
 )
+
+_NUMERIC_OPS = {
+    "eq": lambda c, v: c == v,
+    "ne": lambda c, v: c != v,
+    "gt": lambda c, v: c > v,
+    "gte": lambda c, v: c >= v,
+    "lt": lambda c, v: c < v,
+    "lte": lambda c, v: c <= v,
+}
+
+
+def parse_numeric_filter(raw: str | None) -> tuple[str, float] | None:
+    """Parse "gt:100" into ("gt", 100.0). Raises ValueError when malformed."""
+    if not raw:
+        return None
+    op, sep, value = raw.partition(":")
+    if not sep or op not in _NUMERIC_OPS:
+        raise ValueError(
+            f"Invalid numeric filter '{raw}'; expected <eq|ne|gt|gte|lt|lte>:<number>"
+        )
+    return op, float(value)
+
+
+def _apply_trajectory_filters(
+    query,
+    db: Session,
+    *,
+    ai_system_id=None,
+    agent_id=None,
+    agent_version_id=None,
+    runtime_identity_id=None,
+    client_integration_id=None,
+    status=None,
+    started_after=None,
+    started_before=None,
+    model: str | None = None,
+    delegator_id: str | None = None,
+    department_id: UUID | None = None,
+    events: tuple[str, float] | None = None,
+    findings: tuple[str, float] | None = None,
+    completeness: tuple[str, float] | None = None,
+    tokens: tuple[str, float] | None = None,
+    cost: tuple[str, float] | None = None,
+):
+    T = RuntimeTrajectory
+    if ai_system_id:
+        query = query.filter(T.ai_system_id == ai_system_id)
+    if agent_id:
+        query = query.filter(T.agent_id == agent_id)
+    if agent_version_id:
+        query = query.filter(T.agent_version_id == agent_version_id)
+    if runtime_identity_id:
+        query = query.filter(T.runtime_identity_id == runtime_identity_id)
+    if client_integration_id:
+        query = query.filter(T.client_integration_id == client_integration_id)
+    if status:
+        query = query.filter(T.status == status)
+    if started_after:
+        query = query.filter(T.started_at >= started_after)
+    if started_before:
+        query = query.filter(T.started_at <= started_before)
+
+    if model:
+        like = f"%{model.strip()}%"
+        query = query.filter(
+            db.query(RuntimeMeteringSpan.id)
+            .filter(
+                RuntimeMeteringSpan.trajectory_id == T.id,
+                RuntimeMeteringSpan.model.ilike(like),
+            )
+            .exists()
+        )
+
+    if delegator_id or department_id:
+        grants = db.query(DelegationGrant.id).filter(
+            DelegationGrant.id == T.delegation_id
+        )
+        if delegator_id:
+            grants = grants.filter(DelegationGrant.delegator_id == delegator_id)
+        if department_id:
+            grants = grants.filter(
+                DelegationGrant.delegator_id.in_(
+                    db.query(OrganizationMembership.user_id).filter(
+                        OrganizationMembership.department_id == department_id
+                    )
+                )
+            )
+        query = query.filter(grants.exists())
+
+    for flt, column in (
+        (events, T.event_count),
+        (findings, T.finding_count),
+        (completeness, T.completeness_pct),
+    ):
+        if flt:
+            query = query.filter(_NUMERIC_OPS[flt[0]](column, flt[1]))
+
+    # Tokens / cost live on metering spans: compare per-trajectory sums.
+    cost_expr = func.coalesce(
+        RuntimeMeteringSpan.billed_cost,
+        RuntimeMeteringSpan.actual_cost,
+        RuntimeMeteringSpan.metered_cost,
+        RuntimeMeteringSpan.estimated_cost,
+        0,
+    )
+    for flt, value_col in (
+        (tokens, func.coalesce(RuntimeMeteringSpan.total_tokens, 0)),
+        (cost, cost_expr),
+    ):
+        if not flt:
+            continue
+        total = func.sum(value_col)
+        matching = (
+            db.query(RuntimeMeteringSpan.trajectory_id)
+            .filter(RuntimeMeteringSpan.trajectory_id.isnot(None))
+            .group_by(RuntimeMeteringSpan.trajectory_id)
+            .having(_NUMERIC_OPS[flt[0]](total, flt[1]))
+        )
+        cond = T.id.in_(matching)
+        if _NUMERIC_OPS[flt[0]](0, flt[1]):
+            # Trajectories with no spans count as zero tokens / cost.
+            with_spans = db.query(RuntimeMeteringSpan.trajectory_id).filter(
+                RuntimeMeteringSpan.trajectory_id.isnot(None)
+            )
+            cond = cond | ~T.id.in_(with_spans)
+        query = query.filter(cond)
+    return query
 
 
 class EvidenceRepository:
@@ -110,70 +241,34 @@ class EvidenceRepository:
     def list_trajectories(
         self,
         *,
-        ai_system_id: UUID | None = None,
-        agent_id: UUID | None = None,
-        runtime_identity_id: UUID | None = None,
-        client_integration_id: UUID | None = None,
-        status: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
+        **filters: Any,
     ) -> list[RuntimeTrajectory]:
-        query = self._owned_trajectory_query().order_by(
-            RuntimeTrajectory.started_at.desc()
+        query = _apply_trajectory_filters(
+            self._owned_trajectory_query(), self._db, **filters
         )
-        if ai_system_id:
-            query = query.filter(RuntimeTrajectory.ai_system_id == ai_system_id)
-        if agent_id:
-            query = query.filter(RuntimeTrajectory.agent_id == agent_id)
-        if runtime_identity_id:
-            query = query.filter(
-                RuntimeTrajectory.runtime_identity_id == runtime_identity_id
-            )
-        if client_integration_id:
-            query = query.filter(
-                RuntimeTrajectory.client_integration_id == client_integration_id
-            )
-        if status:
-            query = query.filter(RuntimeTrajectory.status == status)
-        if started_after:
-            query = query.filter(RuntimeTrajectory.started_at >= started_after)
-        if started_before:
-            query = query.filter(RuntimeTrajectory.started_at <= started_before)
-        return query.offset(offset).limit(limit).all()
+        return (
+            query.order_by(RuntimeTrajectory.started_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
 
-    def count_trajectories(
-        self,
-        *,
-        ai_system_id: UUID | None = None,
-        agent_id: UUID | None = None,
-        runtime_identity_id: UUID | None = None,
-        client_integration_id: UUID | None = None,
-        status: str | None = None,
-        started_after: datetime | None = None,
-        started_before: datetime | None = None,
-    ) -> int:
-        query = self._owned_trajectory_query()
-        if ai_system_id:
-            query = query.filter(RuntimeTrajectory.ai_system_id == ai_system_id)
-        if agent_id:
-            query = query.filter(RuntimeTrajectory.agent_id == agent_id)
-        if runtime_identity_id:
-            query = query.filter(
-                RuntimeTrajectory.runtime_identity_id == runtime_identity_id
-            )
-        if client_integration_id:
-            query = query.filter(
-                RuntimeTrajectory.client_integration_id == client_integration_id
-            )
-        if status:
-            query = query.filter(RuntimeTrajectory.status == status)
-        if started_after:
-            query = query.filter(RuntimeTrajectory.started_at >= started_after)
-        if started_before:
-            query = query.filter(RuntimeTrajectory.started_at <= started_before)
-        return query.count()
+    def count_trajectories(self, **filters: Any) -> int:
+        return _apply_trajectory_filters(
+            self._owned_trajectory_query(), self._db, **filters
+        ).count()
+
+    def trajectory_metrics(self) -> dict[str, int]:
+        """Totals across all trajectories (independent of paging/filters)."""
+        base = self._owned_trajectory_query()
+        return {
+            "total": base.count(),
+            "active": base.filter(RuntimeTrajectory.status == "ACTIVE").count(),
+            "incomplete": base.filter(RuntimeTrajectory.status == "INCOMPLETE").count(),
+            "with_findings": base.filter(RuntimeTrajectory.finding_count > 0).count(),
+        }
 
     # --- Events -----------------------------------------------------------
 

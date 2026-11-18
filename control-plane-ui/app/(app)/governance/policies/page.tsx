@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  PersonSelect,
+  useOrganizationDirectory,
+} from "@/components/organization/directory-fields";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -46,6 +50,7 @@ const EMPTY_FORM = {
 };
 
 export default function PolicyLibraryPage() {
+  const directory = useOrganizationDirectory();
   const [items, setItems] = useState<PolicySourceSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -252,10 +257,12 @@ export default function PolicyLibraryPage() {
               />
             </FormField>
             <FormField label="Authority / Owner">
-              <Input
+              <PersonSelect
+                directory={directory}
                 value={form.authority}
                 disabled={saving}
-                onChange={(e) => setForm({ ...form, authority: e.target.value })}
+                emptyLabel="No authority"
+                onChange={(id) => setForm({ ...form, authority: id })}
               />
             </FormField>
             <FormField label="Jurisdiction">
@@ -370,7 +377,9 @@ export default function PolicyLibraryPage() {
                   {item.scope === "PLATFORM" ? <StatusBadge status="STANDARD" /> : null}
                 </span>,
                 item.source_type,
-                item.authority ?? "—",
+                item.authority
+                  ? (directory.people.find((p) => p.userId === item.authority)?.label ?? item.authority)
+                  : "—",
                 item.jurisdiction ?? "—",
                 item.version ?? "—",
                 item.effective_date ? new Date(item.effective_date).toLocaleDateString() : "—",

@@ -1,5 +1,6 @@
 "use client";
 
+import { ApprovalBell } from "@/components/approval-bell";
 import { Badge } from "@/components/ui/badge";
 import { useAuth, usePermissions } from "@/lib/hooks/use-auth";
 
@@ -14,6 +15,7 @@ export function Topbar() {
       <div className="mr-auto pl-10 text-xs text-ink-400 lg:pl-0">
         <span className="font-medium text-ink-700">Observe.</span> Evaluate. Enforce.
       </div>
+      {user && <ApprovalBell />}
       {user && (
         <div className="flex items-center gap-2">
           <Badge variant="neutral">{displayRole}</Badge>

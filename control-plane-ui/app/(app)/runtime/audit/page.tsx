@@ -408,7 +408,6 @@ function AuditExplorerInner() {
               "Tool",
               "AI System",
               "Agent",
-              "Conversation",
               "Assurance",
               "Detail",
             ]}
@@ -423,13 +422,6 @@ function AuditExplorerInner() {
               row.action ?? "—",
               row.ai_system_name ?? shortId(row.ai_system_id),
               row.agent_name ?? shortId(row.agent_id),
-              row.conversation_id ? (
-                <span key={`c-${row.id}`} title={row.conversation_id}>
-                  {shortId(row.conversation_id)}
-                </span>
-              ) : (
-                "—"
-              ),
               row.assurance ?? "—",
               <Link
                 key={`d-${row.id}`}

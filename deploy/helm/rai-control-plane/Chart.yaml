@@ -2,7 +2,7 @@
 
 apiVersion: v2
 name: rai-control-plane
-description: Single-instance RaiCentral Community Edition, powered by Ztechnium. Not a multi-organization service.
+description: Single-instance RaiCentral Community Edition, powered by Ztechnium.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

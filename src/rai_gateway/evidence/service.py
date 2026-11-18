@@ -81,6 +81,9 @@ class TrajectoryService:
     def count_trajectories(self, **filters: Any) -> int:
         return self._repo.count_trajectories(**filters)
 
+    def trajectory_metrics(self) -> dict[str, int]:
+        return self._repo.trajectory_metrics()
+
     def list_events(
         self, trajectory_id: UUID, *, limit: int = 500, offset: int = 0
     ) -> list[EvidenceEvent]:

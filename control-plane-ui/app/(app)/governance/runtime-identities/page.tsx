@@ -17,10 +17,16 @@ import {
   getAgents,
   getAgentVersions,
   getAISystems,
+  getDelegations,
   getRuntimeIdentities,
+  listOrganizationDepartments,
+  listOrganizationTeam,
 } from "@/lib/api";
 import type {
   AgentSummary,
+  DelegationSummary,
+  Department,
+  OrganizationMembership,
   AgentVersionSummary,
   AISystemSummary,
   RuntimeIdentitySummary,
@@ -37,6 +43,17 @@ export default function RuntimeIdentitiesPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [filterSystemId, setFilterSystemId] = useState("");
+  const [filterAgentId, setFilterAgentId] = useState("");
+  const [filterVersionId, setFilterVersionId] = useState("");
+  const [filterAgents, setFilterAgents] = useState<AgentSummary[]>([]);
+  const [filterVersions, setFilterVersions] = useState<AgentVersionSummary[]>([]);
+  const [filterDepartmentId, setFilterDepartmentId] = useState("");
+  const [filterMemberId, setFilterMemberId] = useState("");
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [members, setMembers] = useState<OrganizationMembership[]>([]);
+  const [delegations, setDelegations] = useState<DelegationSummary[]>([]);
+  const [allIdentities, setAllIdentities] = useState<RuntimeIdentitySummary[]>([]);
   const [page, setPage] = useState(0);
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -55,18 +72,61 @@ export default function RuntimeIdentitiesPage() {
     getRuntimeIdentities({
       search: search || undefined,
       status: statusFilter || undefined,
+      agent_id: filterAgentId || undefined,
+      agent_version_id: filterVersionId || undefined,
     })
       .then((res) => setIdentities(res.data))
       .catch((err: Error) => setError(err.message))
       .finally(() => setLoading(false));
+    // Stat cards always reflect the full, unfiltered population.
+    getRuntimeIdentities()
+      .then((res) => setAllIdentities(res.data))
+      .catch(() => {});
   };
 
   useEffect(() => {
-    load();
     getAISystems()
       .then((res) => setSystems(res.data))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    listOrganizationDepartments()
+      .then((res) => setDepartments(res.items))
+      .catch(() => {});
+    listOrganizationTeam()
+      .then((res) => setMembers(res.items))
+      .catch(() => {});
+    getDelegations()
+      .then((res) => setDelegations(res.data))
+      .catch(() => {});
+  }, []);
+
+  // Reload whenever a dropdown filter changes (search text uses the Apply button).
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, filterAgentId, filterVersionId]);
+
+  useEffect(() => {
+    if (!filterSystemId) {
+      setFilterAgents([]);
+      return;
+    }
+    getAgents(filterSystemId)
+      .then((res) => setFilterAgents(res.data))
+      .catch(() => setFilterAgents([]));
+  }, [filterSystemId]);
+
+  useEffect(() => {
+    if (!filterAgentId) {
+      setFilterVersions([]);
+      return;
+    }
+    getAgentVersions(filterAgentId)
+      .then((res) => setFilterVersions(res.data))
+      .catch(() => setFilterVersions([]));
+  }, [filterAgentId]);
 
   useEffect(() => {
     if (!form.systemId) {
@@ -91,15 +151,53 @@ export default function RuntimeIdentitiesPage() {
 
   const stats = useMemo(
     () => ({
-      total: identities.length,
-      active: identities.filter((i) => i.status === "ACTIVE").length,
-      suspended: identities.filter((i) => i.status === "SUSPENDED").length,
+      total: allIdentities.length,
+      active: allIdentities.filter((i) => i.status === "ACTIVE").length,
+      suspended: allIdentities.filter((i) => i.status === "SUSPENDED").length,
     }),
-    [identities],
+    [allIdentities],
   );
 
+  // Backend filters by a single agent; an AI-system filter alone narrows client-side
+  // to the agents that belong to the selected system.
+  const memberOptions = useMemo(
+    () =>
+      members.filter((m) => !filterDepartmentId || m.department_id === filterDepartmentId),
+    [members, filterDepartmentId],
+  );
+
+  const visibleIdentities = useMemo(() => {
+    let rows = identities;
+    if (filterSystemId && !filterAgentId) {
+      const ids = new Set(filterAgents.map((a) => a.id));
+      rows = rows.filter((i) => ids.has(i.agent_id));
+    }
+    if (filterDepartmentId || filterMemberId) {
+      // Department / member are properties of the delegator of a delegation grant.
+      const userIds = new Set(
+        filterMemberId ? [filterMemberId] : memberOptions.map((m) => m.user_id),
+      );
+      const identityIds = new Set(
+        delegations
+          .filter((d) => userIds.has(d.delegator_id))
+          .map((d) => d.delegate_runtime_identity_id),
+      );
+      rows = rows.filter((i) => identityIds.has(i.id));
+    }
+    return rows;
+  }, [
+    identities,
+    filterSystemId,
+    filterAgentId,
+    filterAgents,
+    filterDepartmentId,
+    filterMemberId,
+    memberOptions,
+    delegations,
+  ]);
+
   const pageSize = 10;
-  const pageRows = identities.slice(page * pageSize, page * pageSize + pageSize);
+  const pageRows = visibleIdentities.slice(page * pageSize, page * pageSize + pageSize);
 
   const handleCreate = async () => {
     if (!form.agentId || !form.agentVersionId || !form.name.trim()) return;
@@ -239,6 +337,61 @@ export default function RuntimeIdentitiesPage() {
           placeholder="Search by name or key..."
           filters={[
             {
+              label: "AI System",
+              value: filterSystemId,
+              onChange: (value) => {
+                setFilterSystemId(value);
+                setFilterAgentId("");
+                setFilterVersionId("");
+                setPage(0);
+              },
+              options: systems.map((s) => ({ value: s.id, label: s.name })),
+            },
+            {
+              label: "Agent",
+              value: filterAgentId,
+              onChange: (value) => {
+                setFilterAgentId(value);
+                setFilterVersionId("");
+                setPage(0);
+              },
+              options: filterAgents.map((a) => ({ value: a.id, label: a.name })),
+            },
+            {
+              label: "Version",
+              value: filterVersionId,
+              onChange: (value) => {
+                setFilterVersionId(value);
+                setPage(0);
+              },
+              options: filterVersions.map((v) => ({
+                value: v.id,
+                label: `v${v.version_number} — ${v.lifecycle_status}`,
+              })),
+            },
+            {
+              label: "Department",
+              value: filterDepartmentId,
+              onChange: (value) => {
+                setFilterDepartmentId(value);
+                setFilterMemberId("");
+                setPage(0);
+              },
+              options: departments.map((d) => ({ value: d.id, label: d.name })),
+            },
+            {
+              label: "Delegation Member",
+              value: filterMemberId,
+              onChange: (value) => {
+                setFilterMemberId(value);
+                setPage(0);
+              },
+              options: memberOptions.map((m) => ({
+                value: m.user_id,
+                label: m.user_name || m.user_email || m.user_id,
+              })),
+            },
+            {
               label: "Status",
               value: statusFilter,
               onChange: (value) => {
@@ -270,7 +423,7 @@ export default function RuntimeIdentitiesPage() {
         {error && (
           <div className="rounded-lg bg-danger-50 p-4 text-sm text-danger-600">{error}</div>
         )}
-        {!loading && !error && identities.length === 0 && (
+        {!loading && !error && visibleIdentities.length === 0 && (
           <div className="py-12 text-center">
             <p className="text-sm text-ink-500">No runtime identities yet.</p>
             <Button variant="primary" className="mt-4" onClick={() => setShowCreate(true)}>
@@ -278,7 +431,7 @@ export default function RuntimeIdentitiesPage() {
             </Button>
           </div>
         )}
-        {!loading && identities.length > 0 && (
+        {!loading && visibleIdentities.length > 0 && (
           <Table
             columns={["Name", "Version", "Environment", "Type", "Status", "Last Auth", ""]}
             rows={pageRows.map((identity) => [
@@ -305,7 +458,7 @@ export default function RuntimeIdentitiesPage() {
             ])}
           />
         )}
-        <PaginationBar total={identities.length} page={page} pageSize={pageSize} onPage={setPage} />
+        <PaginationBar total={visibleIdentities.length} page={page} pageSize={pageSize} onPage={setPage} />
       </Panel>
     </div>
   );

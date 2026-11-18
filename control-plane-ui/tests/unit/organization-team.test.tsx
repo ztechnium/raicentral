@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OrganizationTeamPage from "@/app/(app)/organization/team/page";
 
@@ -126,12 +126,17 @@ describe("Organization team page", () => {
 
     expect((await screen.findAllByText("Jane Doe")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Bob Other").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("organization-hierarchy")).toHaveTextContent("Marketing");
+    expect(screen.getByRole("combobox", { name: "Move Jane Doe" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     expect(
       screen.queryByText("Team records outside this organization were withheld."),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send invite" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Department" })).toBeInTheDocument();
-    expect(screen.getByTestId("organization-hierarchy")).toHaveTextContent("Marketing");
+    expect(screen.getAllByRole("option", { name: /Auditor/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("option", { name: "Incident manager" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit Organization admin" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Remove" }).length).toBeGreaterThan(0);
     expect(window.localStorage.getItem("rai.cp.activeOrganizationId")).toBe("org-a");
@@ -150,6 +155,7 @@ describe("Organization team page", () => {
 
     render(<OrganizationTeamPage />);
 
+    fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     await waitFor(() => {
       expect(screen.getByText(/An organization admin sends invites/i)).toBeInTheDocument();
     });

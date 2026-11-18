@@ -389,6 +389,100 @@ class GovernanceService:
         rows = ensure_default_departments(self._db)
         return [serialize_department(row) for row in rows]
 
+    def create_department(
+        self, *, name: str, description: str | None, created_by: str
+    ) -> dict[str, Any]:
+        from rai_gateway.governance.departments import (
+            ensure_default_departments,
+            serialize_department,
+        )
+
+        clean = name.strip()
+        if not clean:
+            raise GovernanceConflictError("Department name is required")
+        rows = ensure_default_departments(self._db)
+        if any(row.name.lower() == clean.lower() for row in rows):
+            raise GovernanceConflictError("A department with that name already exists")
+        row = Department(
+            name=clean,
+            description=(description or "").strip() or None,
+            sort_order=max((r.sort_order for r in rows), default=-1) + 1,
+            created_by=created_by,
+        )
+        self._db.add(row)
+        self._db.commit()
+        self._db.refresh(row)
+        return serialize_department(row)
+
+    def update_department(
+        self, department_id: UUID, *, name: str | None, description: str | None
+    ) -> dict[str, Any]:
+        from rai_gateway.governance.departments import (
+            require_department,
+            serialize_department,
+        )
+
+        row = require_department(self._db, department_id)
+        if name is not None:
+            clean = name.strip()
+            if not clean:
+                raise GovernanceConflictError("Department name is required")
+            clash = (
+                self._db.query(Department)
+                .filter(Department.name == clean, Department.id != row.id)
+                .first()
+            )
+            if clash is not None:
+                raise GovernanceConflictError(
+                    "A department with that name already exists"
+                )
+            row.name = clean
+        if description is not None:
+            row.description = description.strip() or None
+        self._db.commit()
+        self._db.refresh(row)
+        return serialize_department(row)
+
+    def delete_department(self, department_id: UUID) -> dict[str, Any]:
+        from rai_gateway.governance.departments import require_department
+
+        row = require_department(self._db, department_id)
+        in_use = (
+            self._db.query(OrganizationMembership)
+            .filter(OrganizationMembership.department_id == row.id)
+            .count()
+        )
+        if in_use:
+            raise GovernanceConflictError(
+                "Move or remove the members of this department before deleting it"
+            )
+        self._db.delete(row)
+        self._db.commit()
+        return {"id": str(department_id), "deleted": True}
+
+    def assign_person_department(
+        self, user_id: str, department_id: UUID | None
+    ) -> dict[str, Any]:
+        if department_id is not None:
+            from rai_gateway.governance.departments import require_department
+
+            require_department(self._db, department_id)
+        rows = (
+            self._db.query(OrganizationMembership)
+            .filter(OrganizationMembership.user_id == user_id)
+            .all()
+        )
+        if not rows:
+            raise GovernanceNotFoundError("Person not found in this organization")
+        for row in rows:
+            row.department_id = department_id
+        self._db.commit()
+        return {
+            "user_id": user_id,
+            "department_id": str(department_id) if department_id else None,
+            "updated": len(rows),
+        }
+
     def _assign_user_department(self, user_id: str, department_id: UUID) -> None:
         rows = (
             self._db.query(OrganizationMembership)
