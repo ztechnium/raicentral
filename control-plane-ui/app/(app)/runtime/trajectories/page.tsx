@@ -106,10 +106,10 @@ export default function TrajectoriesPage() {
       .then((res) => setSystems(res.data))
       .catch(() => {});
     listOrganizationDepartments()
-      .then((res) => setDepartments(res.items))
+      .then((res) => setDepartments(res.data.items))
       .catch(() => {});
-    listOrganizationTeam()
-      .then((res) => setMembers(res.items))
+    listOrganizationTeam({ limit: 500 })
+      .then((res) => setMembers(res.data.items))
       .catch(() => {});
   }, []);
 

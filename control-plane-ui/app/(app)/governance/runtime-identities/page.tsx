@@ -92,10 +92,10 @@ export default function RuntimeIdentitiesPage() {
 
   useEffect(() => {
     listOrganizationDepartments()
-      .then((res) => setDepartments(res.items))
+      .then((res) => setDepartments(res.data.items))
       .catch(() => {});
-    listOrganizationTeam()
-      .then((res) => setMembers(res.items))
+    listOrganizationTeam({ limit: 500 })
+      .then((res) => setMembers(res.data.items))
       .catch(() => {});
     getDelegations()
       .then((res) => setDelegations(res.data))

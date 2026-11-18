@@ -1639,21 +1639,19 @@ export function getTrajectories(params?: {
   status?: string;
   started_after?: string;
   started_before?: string;
+  model?: string;
+  department_id?: string;
+  delegator_id?: string;
   limit?: number;
   offset?: number;
+  /** Metric conditions, e.g. `{ tokens: "gt:1000" }`. */
+  [metric: string]: string | number | undefined;
 }) {
   const query = new URLSearchParams();
-  if (params?.ai_system_id) query.set("ai_system_id", params.ai_system_id);
-  if (params?.agent_id) query.set("agent_id", params.agent_id);
-  if (params?.runtime_identity_id) query.set("runtime_identity_id", params.runtime_identity_id);
-  if (params?.client_integration_id) {
-    query.set("client_integration_id", params.client_integration_id);
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value === undefined || value === "" || value === 0) continue;
+    query.set(key, String(value));
   }
-  if (params?.status) query.set("status", params.status);
-  if (params?.started_after) query.set("started_after", params.started_after);
-  if (params?.started_before) query.set("started_before", params.started_before);
-  if (params?.limit) query.set("limit", String(params.limit));
-  if (params?.offset) query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiGet<TrajectoryListResponse>(`/v1/trajectories${suffix}`);
 }
