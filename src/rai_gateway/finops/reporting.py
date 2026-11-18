@@ -248,7 +248,9 @@ class FinOpsReportingService:
             "trajectories": func.count(func.distinct(_M.trajectory_id)),
         }[sort]
         order = (
-            order_expr.desc().nullslast() if descending else order_expr.asc().nullslast()
+            order_expr.desc().nullslast()
+            if descending
+            else order_expr.asc().nullslast()
         )
 
         rows = (
@@ -258,7 +260,12 @@ class FinOpsReportingService:
                 func.count(func.distinct(_M.trajectory_id)),
                 func.count(
                     func.distinct(
-                        case((_M.cost_state.in_(cost_expr.KNOWN_STATES), _M.trajectory_id))
+                        case(
+                            (
+                                _M.cost_state.in_(cost_expr.KNOWN_STATES),
+                                _M.trajectory_id,
+                            )
+                        )
                     )
                 ),
                 func.sum(case((_M.span_type == "MODEL_CALL", 1), else_=0)),

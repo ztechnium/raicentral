@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { shorten } from "@/components/finops/spend-charts";
 import { spendKpi } from "@/lib/dashboard/overview";
 import {
   DIMENSIONS,
@@ -262,6 +263,17 @@ describe("needs attention", () => {
     expect(withFilters("/finops/usage", f, { dimension: "model" })).toBe(
       "/finops/usage?period=7d&model=gpt&dimension=model",
     );
+  });
+});
+
+describe("chart labels", () => {
+  it("keeps the start of a long name rather than clipping its head", () => {
+    expect(shorten("short", 20)).toBe("short");
+    const long = "anthropic.claude-3-5-sonnet-20241022-v2:0-regional";
+    const out = shorten(long, 20);
+    expect(out).toHaveLength(20);
+    expect(out.startsWith("anthropic.claude-3")).toBe(true);
+    expect(out.endsWith("…")).toBe(true);
   });
 });
 

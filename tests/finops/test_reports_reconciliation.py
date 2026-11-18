@@ -60,12 +60,14 @@ def test_reports_span_cost_equals_finops_total_for_matching_filters(db_session):
     _span(db_session, system, state="BILLED", cost=1.5)
     _span(db_session, system, state="METERED", cost=0.25)
     _span(db_session, system, state="ESTIMATED", cost=0.125)
-    _span(db_session, system, state="UNAVAILABLE", estimated_cost=99.0)  # must not count
+    _span(
+        db_session, system, state="UNAVAILABLE", estimated_cost=99.0
+    )  # must not count
     finops_filters, report_filters = _both_filters(system)
 
-    finops_total = FinOpsReportingService(db_session).dashboard(finops_filters)["totals"][
-        "total_cost"
-    ]
+    finops_total = FinOpsReportingService(db_session).dashboard(finops_filters)[
+        "totals"
+    ]["total_cost"]
     summary = queries.get_cost_summary(db_session, report_filters)
 
     assert finops_total == 1.875
@@ -102,9 +104,9 @@ def test_ledger_only_settlements_are_the_explained_difference(db_session):
     db_session.flush()
     finops_filters, report_filters = _both_filters(system)
 
-    finops_total = FinOpsReportingService(db_session).dashboard(finops_filters)["totals"][
-        "total_cost"
-    ]
+    finops_total = FinOpsReportingService(db_session).dashboard(finops_filters)[
+        "totals"
+    ]["total_cost"]
     summary = queries.get_cost_summary(db_session, report_filters)
 
     assert finops_total == 2.0
@@ -144,7 +146,9 @@ def test_a_valid_zero_is_zero_not_unknown(db_session):
     assert queries.get_cost_summary(db_session, report_filters)["total_cost"] == 0.0
 
 
-def test_budget_report_exposes_the_decomposition_and_keeps_sub_cent_precision(db_session):
+def test_budget_report_exposes_the_decomposition_and_keeps_sub_cent_precision(
+    db_session,
+):
     system = _system(db_session)
     _span(db_session, system, state="METERED", cost=0.0000465)
     _, report_filters = _both_filters(system)

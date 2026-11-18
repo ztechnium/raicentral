@@ -108,7 +108,11 @@ def project_window(
         "projected_exhaustion_at": exhaustion.isoformat() if exhaustion else None,
         "will_exceed_before_reset": bool(projected > limit),
         # Honest, coarse confidence: how much of the window the rate rests on.
-        "confidence": "high" if fraction >= 0.5 else "medium" if fraction >= 0.25 else "low",
+        "confidence": "high"
+        if fraction >= 0.5
+        else "medium"
+        if fraction >= 0.25
+        else "low",
         "reason": (
             "Assumes the average rate so far continues until this window resets. "
             "Spikes, idle periods and a reset at "
@@ -250,7 +254,9 @@ def _item(
     }
     # Honest enforcement summary: configured vs. observed.
     if not blocking:
-        item["enforcement_summary"] = "Monitor only: exceeding the limit is recorded, not blocked."
+        item["enforcement_summary"] = (
+            "Monitor only: exceeding the limit is recorded, not blocked."
+        )
     elif item["evidence"]["checks"] == 0:
         item["enforcement_summary"] = (
             f"Configured to {budget.effect_on_exceed}, but no enforcement check was "

@@ -47,6 +47,10 @@ export function describeSpend(rows: SpendRow[], currency: string | null): string
   return `Known spend over ${rows.length} days. Peak ${formatAmount(dayTotal(peak), currency)} on ${peak.day}. ${rows.length - priced.length} days had no priced usage.`;
 }
 
+export function shorten(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 const compact = (value: number) =>
   value >= 1000 ? `${(value / 1000).toFixed(1)}k` : Number(value.toPrecision(3)).toString();
 
@@ -90,7 +94,8 @@ export function SpendTrendChart({
             />
             <Legend />
             <Bar dataKey="billed" name="Billed" stackId="spend" fill={CHART.accent} />
-            <Bar dataKey="metered" name="Metered" stackId="spend" fill={CHART.accentSoft} />
+            {/* Neutral grey, not a second blue: billed and metered must stay distinguishable. */}
+            <Bar dataKey="metered" name="Metered" stackId="spend" fill={CHART.ink} />
             <Bar
               dataKey="estimated"
               name="Estimated"
@@ -169,6 +174,8 @@ export function SpendRankChart({
               dataKey="name"
               width={130}
               tick={{ fill: CHART.tick, fontSize: 11 }}
+              // Keep the start of a long name; the full text is in the tooltip and caption.
+              tickFormatter={(value: string) => shorten(value, 20)}
             />
             <Tooltip
               contentStyle={chartTooltipStyle}

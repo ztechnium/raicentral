@@ -216,9 +216,9 @@ def test_tokens_are_null_when_no_span_reported_them(db_session):
         output_tokens=None,
         total_tokens=None,
     )
-    item = FinOpsReportingService(db_session).breakdown(
-        _filters(), dimension="model"
-    )["items"][0]
+    item = FinOpsReportingService(db_session).breakdown(_filters(), dimension="model")[
+        "items"
+    ][0]
     assert item["tokens"] is None
     assert item["token_reported_calls"] == 0
 
@@ -286,9 +286,7 @@ def test_budget_health_reports_current_window_headroom_and_enforcement(
     assert health["summary"]["warning"] == 1
 
 
-def test_historical_windows_do_not_count_as_budget_pressure(
-    db_session, runtime_stack
-):
+def test_historical_windows_do_not_count_as_budget_pressure(db_session, runtime_stack):
     from rai_gateway.models.risk_intelligence import RuntimeBudgetWindow
 
     svc, budget = _budget(db_session, runtime_stack)
@@ -358,7 +356,10 @@ _END = _START + timedelta(hours=24)
 
 def test_projection_requires_enough_elapsed_window():
     out = project_window(
-        usage=5, limit=10, window_start=_START, window_end=_END,
+        usage=5,
+        limit=10,
+        window_start=_START,
+        window_end=_END,
         now=_START + timedelta(minutes=5),
     )
     assert out["status"] == "insufficient_data"
@@ -367,7 +368,10 @@ def test_projection_requires_enough_elapsed_window():
 
 def test_projection_without_usage_is_insufficient_not_zero():
     out = project_window(
-        usage=0, limit=10, window_start=_START, window_end=_END,
+        usage=0,
+        limit=10,
+        window_start=_START,
+        window_end=_END,
         now=_START + timedelta(hours=12),
     )
     assert out["status"] == "insufficient_data"
@@ -375,7 +379,10 @@ def test_projection_without_usage_is_insufficient_not_zero():
 
 def test_projection_flags_exhaustion_before_reset():
     out = project_window(
-        usage=8, limit=10, window_start=_START, window_end=_END,
+        usage=8,
+        limit=10,
+        window_start=_START,
+        window_end=_END,
         now=_START + timedelta(hours=12),
     )
     assert out["status"] == "projected"
@@ -388,7 +395,10 @@ def test_projection_flags_exhaustion_before_reset():
 
 def test_projection_under_limit_has_no_exhaustion_and_never_crosses_reset():
     out = project_window(
-        usage=2, limit=10, window_start=_START, window_end=_END,
+        usage=2,
+        limit=10,
+        window_start=_START,
+        window_end=_END,
         now=_START + timedelta(hours=12),
     )
     assert out["will_exceed_before_reset"] is False
@@ -398,7 +408,10 @@ def test_projection_under_limit_has_no_exhaustion_and_never_crosses_reset():
 
 def test_projection_for_invalid_limit_is_insufficient():
     out = project_window(
-        usage=2, limit=0, window_start=_START, window_end=_END,
+        usage=2,
+        limit=0,
+        window_start=_START,
+        window_end=_END,
         now=_START + timedelta(hours=12),
     )
     assert out["status"] == "insufficient_data"
@@ -459,7 +472,9 @@ def test_api_rejects_inverted_oversized_and_unknown_filters(finops_client):
         == 400
     )
     assert (
-        client.get("/v1/finops/breakdown", params={"agent_id": "not-a-uuid"}).status_code
+        client.get(
+            "/v1/finops/breakdown", params={"agent_id": "not-a-uuid"}
+        ).status_code
         == 422
     )
 
@@ -472,7 +487,9 @@ def test_api_requires_finops_read_permission(finops_client):
         assert response.status_code in (401, 403), path
 
 
-def test_api_accepts_every_supported_filter_on_every_read_view(db_session, finops_client):
+def test_api_accepts_every_supported_filter_on_every_read_view(
+    db_session, finops_client
+):
     client, _ = finops_client
     _span(db_session, state="METERED", cost=1.0, model="gpt-x")
     db_session.commit()
@@ -490,7 +507,9 @@ def test_api_accepts_every_supported_filter_on_every_read_view(db_session, finop
 
 def test_api_export_requires_permission_and_allowlists_views(finops_client):
     client, holder = finops_client
-    assert client.get("/v1/finops/export", params={"view": "summary"}).status_code == 200
+    assert (
+        client.get("/v1/finops/export", params={"view": "summary"}).status_code == 200
+    )
     assert client.get("/v1/finops/export", params={"view": "spans"}).status_code == 403
     assert client.get("/v1/finops/export", params={"view": "../x"}).status_code == 400
     holder["permissions"] = frozenset({"finops:read", "finops:export"})
@@ -500,7 +519,7 @@ def test_api_export_requires_permission_and_allowlists_views(finops_client):
 def test_csv_export_neutralises_formula_injection(db_session, finops_client):
     client, holder = finops_client
     holder["permissions"] = frozenset({"finops:read", "finops:export"})
-    _span(db_session, state="METERED", cost=1.0, model="=HYPERLINK(\"http://x\")")
+    _span(db_session, state="METERED", cost=1.0, model='=HYPERLINK("http://x")')
     db_session.commit()
     response = client.get(
         "/v1/finops/export", params={"view": "models", "format": "csv"}

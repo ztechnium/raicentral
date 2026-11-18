@@ -104,7 +104,9 @@ function Projection({ budget }: { budget: FinOpsBudgetItem }) {
         {projection.projected_utilization_pct}% of limit) by {formatWhen(budget.window.end)}
       </p>
       <p>
-        {exceeds
+        {budget.window.usage >= budget.limit_value
+          ? "The limit has already been reached in this window."
+          : exceeds
           ? projection.projected_exhaustion_at
             ? `At this pace the limit is reached around ${formatWhen(projection.projected_exhaustion_at)}, before the window resets.`
             : "At this pace the limit would be passed before the window resets."

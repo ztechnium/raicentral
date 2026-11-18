@@ -145,6 +145,29 @@ describe("Budgets & Forecasting", () => {
     expect(screen.queryByTestId("projection")).not.toBeInTheDocument();
   });
 
+  it("does not describe an already-exceeded budget as a future event", async () => {
+    vi.mocked(api.getFinOpsBudgets).mockReturnValue(
+      health([
+        budget({
+          status: "EXCEEDED",
+          window: {
+            start: "2026-11-18T00:00:00Z",
+            end: "2026-11-19T00:00:00Z",
+            usage: 112,
+            reserved: 0,
+            headroom: -12,
+            utilization_pct: 112,
+            scope_id: "r1",
+          },
+        }),
+      ]),
+    );
+    render(<FinOpsBudgetsPage />);
+    const projection = await screen.findByTestId("projection");
+    expect(projection).toHaveTextContent("The limit has already been reached in this window.");
+    expect(projection).not.toHaveTextContent(/limit is reached around/);
+  });
+
   it("does not assume a budget with no active window is healthy", async () => {
     vi.mocked(api.getFinOpsBudgets).mockReturnValue(
       health([budget({ status: "NO_ACTIVE_WINDOW", window: null, projection: null })]),
