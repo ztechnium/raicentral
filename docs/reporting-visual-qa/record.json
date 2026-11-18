@@ -1,0 +1,142 @@
+[
+  {
+    "file": "desktop-executive.png",
+    "view": "executive",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-executive.png",
+    "view": "executive",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-risk.png",
+    "view": "risk",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-risk.png",
+    "view": "risk",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-controls.png",
+    "view": "controls",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-controls.png",
+    "view": "controls",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-assurance.png",
+    "view": "assurance",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-assurance.png",
+    "view": "assurance",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-runtime.png",
+    "view": "runtime",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-runtime.png",
+    "view": "runtime",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-economics.png",
+    "view": "economics",
+    "mode": "ok",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "mobile-economics.png",
+    "view": "economics",
+    "mode": "ok",
+    "viewport": "390x844",
+    "horizontalOverflow": false,
+    "scrollWidth": 390,
+    "innerWidth": 390,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-executive-partial-failure.png",
+    "view": "executive",
+    "mode": "partial",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  },
+  {
+    "file": "desktop-not-authorized.png",
+    "view": "executive",
+    "mode": "denied",
+    "viewport": "1440x900",
+    "horizontalOverflow": false,
+    "scrollWidth": 1440,
+    "innerWidth": 1440,
+    "pageErrors": []
+  }
+]

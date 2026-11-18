@@ -39,7 +39,7 @@ export function ReportTabs({
     <div
       role="tablist"
       aria-label="Report views"
-      className="flex gap-1 overflow-x-auto border-b border-base-200"
+      className="relative flex gap-1 overflow-x-auto border-b border-base-200"
     >
       {REPORT_VIEWS.map((view, index) => {
         const selected = view === active;

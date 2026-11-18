@@ -26,8 +26,24 @@ def _system(db_session) -> AISystem:
     return system
 
 
+def _purge(db_session, system) -> None:
+    """The test commits real rows; remove them so other suites see an empty table."""
+    db_session.rollback()
+    for model in (UsageSettlement, RuntimeMeteringSpan, RuntimeRiskFinding):
+        db_session.query(model).filter(model.ai_system_id == system.id).delete()
+    db_session.query(AISystem).filter(AISystem.id == system.id).delete()
+    db_session.commit()
+
+
 def test_reports_include_runtime_findings_and_trajectory_cost(db_session):
     system = _system(db_session)
+    try:
+        _assert_live_sources(db_session, system)
+    finally:
+        _purge(db_session, system)
+
+
+def _assert_live_sources(db_session, system):
     now = datetime.utcnow()
     db_session.add(
         RuntimeRiskFinding(

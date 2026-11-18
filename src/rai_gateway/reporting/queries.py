@@ -846,7 +846,9 @@ def get_cost_summary(db: Session, filters: ReportFilters) -> dict:
         }
         | {
             code
-            for (code,) in settlements.with_entities(UsageSettlement.currency).distinct()
+            for (code,) in settlements.with_entities(
+                UsageSettlement.currency
+            ).distinct()
             if code
         }
     )

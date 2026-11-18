@@ -36,7 +36,7 @@ function formatDue(iso?: string | null): string {
 
 function AttentionTable({ items, ctx }: { items: AttentionItem[]; ctx: ViewContext }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[640px] text-left text-sm">
         <caption className="sr-only">
           Items requiring attention, ranked by severity then due date
