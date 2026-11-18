@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { SectionHeader } from "@/components/section-header";
 import { Panel } from "@/components/registry/panel";
 import { Table } from "@/components/ui/table";
+import Link from "next/link";
+import { WidgetBody } from "@/components/dashboard/widget-body";
 import { apiGet } from "@/lib/api";
+import { useWidget } from "@/lib/dashboard/use-widget";
+import { pricingStatus, verificationLabel } from "@/lib/finops-pricing";
 
 type PricingRow = {
   id: string;
@@ -18,6 +22,10 @@ type PricingRow = {
   effective_from?: string | null;
   effective_to?: string | null;
   enabled: boolean;
+  region?: string | null;
+  service_tier?: string | null;
+  verified_at?: string | null;
+  source_url?: string | null;
 };
 
 type CursorPlan = {
@@ -62,6 +70,55 @@ function formatPlan(plan: CursorPlan): string {
   const per = plan.per ? `/${plan.per}` : "";
   const audience = plan.audience ? ` (${plan.audience})` : "";
   return `${plan.name} ${amount}${per}/mo${audience}`;
+}
+
+type UnpricedModel = { key: string | null; label: string | null; calls: number };
+
+/** Models with usage but no price, from real metering: these need a catalog entry. */
+function MissingRates() {
+  const [state, retry] = useWidget("pricing-gaps", () =>
+    apiGet<{ items: UnpricedModel[] }>(
+      "/v1/finops/breakdown?dimension=model&cost_state=UNAVAILABLE&limit=50",
+    ),
+  );
+  return (
+    <Panel
+      title="Models with usage but no price"
+      description="Last 30 days. These calls are reported as unavailable, never as zero, until a rate is added."
+    >
+      <WidgetBody state={state} label="pricing gaps" onRetry={retry}>
+        {(data) =>
+          data.items.length === 0 ? (
+            <p className="text-sm text-ink-500" data-testid="no-missing-rates">
+              No unpriced model usage in the last 30 days.
+            </p>
+          ) : (
+            <ul className="divide-y divide-base-200" data-testid="missing-rates">
+              {data.items.map((row) => (
+                <li key={row.key ?? "none"} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <span className="break-words font-medium text-ink-900">
+                    {row.label ?? "Calls with no model name"}
+                  </span>
+                  <span className="text-xs text-ink-600">
+                    {row.calls.toLocaleString("en-US")} unpriced call{row.calls === 1 ? "" : "s"}
+                    {row.key === null ? " · cannot be priced without a model name" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </WidgetBody>
+      <p className="mt-3 text-xs text-ink-500">
+        <Link
+          href="/finops/usage?dimension=model&cost_state=UNAVAILABLE"
+          className="font-semibold text-accent-700"
+        >
+          Explore unpriced usage
+        </Link>
+      </p>
+    </Panel>
+  );
 }
 
 export default function FinOpsPricingPage() {
@@ -178,7 +235,11 @@ export default function FinOpsPricingPage() {
           </div>
         )}
       </Panel>
-      <Panel title="Active and historical versions">
+      <MissingRates />
+      <Panel
+        title="Active and historical versions"
+        description="Rates are per the unit shown, in the row's own currency. Superseded versions are kept for history; they do not price new usage."
+      >
         {loading ? (
           <p className="text-sm text-ink-500">Loading…</p>
         ) : items.length === 0 ? (
@@ -188,24 +249,38 @@ export default function FinOpsPricingPage() {
             columns={[
               "Provider",
               "Model",
+              "Status",
               "Effective from",
+              "Effective to",
               "Input",
               "Output",
-              "Cache",
-              "Unit",
+              "Cache read",
+              "Per (tokens)",
               "Currency",
-              "Status",
+              "Region / tier",
+              "Last verified",
+              "Source",
             ]}
             rows={items.map((row) => [
               row.provider,
-              row.model,
-              row.effective_from ? new Date(row.effective_from).toLocaleDateString() : "—",
+              <span key="m" className="break-words">{row.model}</span>,
+              pricingStatus(row),
+              row.effective_from ? new Date(row.effective_from).toLocaleDateString("en-GB") : "—",
+              row.effective_to ? new Date(row.effective_to).toLocaleDateString("en-GB") : "Open-ended",
               row.input_token_price,
               row.output_token_price,
               row.cached_input_token_price ?? "—",
-              (row.pricing_unit ?? 1000).toLocaleString(),
+              (row.pricing_unit ?? 1000).toLocaleString("en-US"),
               row.currency,
-              row.enabled && !row.effective_to ? "Active" : "Closed",
+              [row.region, row.service_tier].filter(Boolean).join(" / ") || "—",
+              verificationLabel(row.verified_at),
+              row.source_url ? (
+                <a key="s" href={row.source_url} target="_blank" rel="noreferrer" className="text-accent-700 underline">
+                  Source
+                </a>
+              ) : (
+                "—"
+              ),
             ])}
           />
         )}

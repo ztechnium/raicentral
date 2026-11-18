@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -19,6 +19,18 @@ from rai_gateway.reporting.schemas import ReportSnapshot, ReportSnapshotCreate
 
 if TYPE_CHECKING:
     pass
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed
 
 
 def generate_snapshot_digest(data: dict[str, Any]) -> str:
@@ -47,9 +59,16 @@ def create_snapshot(
     # Generate content digest for immutability
     digest = generate_snapshot_digest(report_data)
 
-    # Extract period from filters
-    period_start = request.filters.period_start or datetime.utcnow()
-    period_end = request.filters.period_end or datetime.utcnow()
+    # Record the period the report actually used (the builder resolves a default
+    # when the caller sent none), not the moment the snapshot was taken.
+    report_period = report_data.get("period") or {}
+    period_start = _parse_dt(report_period.get("start")) or request.filters.period_start
+    period_end = _parse_dt(report_period.get("end")) or request.filters.period_end
+    if period_start is None or period_end is None:
+        period_start = period_end = datetime.now(UTC).replace(tzinfo=None)
+    effective_filters = request.filters.model_copy(
+        update={"period_start": period_start, "period_end": period_end}
+    )
 
     # Build source manifest if possible
     source_manifest = extract_source_manifest(report_data)
@@ -67,8 +86,8 @@ def create_snapshot(
         scope_id=request.scope_id,
         period_start=period_start,
         period_end=period_end,
-        filters_json=request.filters.model_dump(mode="json", exclude_none=True),
-        generated_at=datetime.utcnow(),
+        filters_json=effective_filters.model_dump(mode="json", exclude_none=True),
+        generated_at=datetime.now(UTC).replace(tzinfo=None),
         generated_by=generated_by,
         schema_version="1.0",
         data_snapshot=report_data,

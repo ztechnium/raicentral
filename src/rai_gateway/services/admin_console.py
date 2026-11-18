@@ -166,6 +166,7 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
             "rag:write",
             "rag:approve",
             "reports:read",
+            "reports:snapshot",
             "finops:read",
             "finops:export",
             "finops:manage_budgets",

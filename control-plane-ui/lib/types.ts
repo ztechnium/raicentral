@@ -2889,7 +2889,15 @@ export interface BudgetReport {
   total_budgets: number;
   budgets_warning: number;
   budgets_exceeded: number;
-  total_cost: number;
+  /** null = no priced usage, or several currencies (never summed, never 0). */
+  total_cost: number | null;
+  /** Known cost over metering spans: equals the FinOps total_cost for matching filters. */
+  span_cost: number | null;
+  /** Known cost of settlements no span represents (FinOps does not count these). */
+  ledger_only_cost: number | null;
+  currency: string | null;
+  currencies: string[];
+  cost_basis: string;
   total_tokens: number;
   budgets: BudgetStatus[];
   cost_trends: TimeSeriesPoint[];
@@ -2945,7 +2953,8 @@ export interface AISystemReport {
   approval_rate: number;
   budget_usage: number;
   token_usage: number;
-  cost: number;
+  /** null when no priced usage or several currencies; never 0 for unknown. */
+  cost: number | null;
   assurance_status?: string | null;
   evidence_completeness_pct?: number | null;
   incidents: number;
@@ -3021,60 +3030,240 @@ export interface ReportFilters {
   budget_metric?: string | null;
 }
 
+/** Cost states the backend can report. NO_DATA means no spans matched; it is not zero. */
+export type FinOpsCostState =
+  | "BILLED"
+  | "METERED"
+  | "ACTUAL"
+  | "ESTIMATED"
+  | "MIXED"
+  | "UNAVAILABLE"
+  | "NO_DATA";
+
+export interface FinOpsSpanCounts {
+  total: number;
+  billed: number;
+  metered: number;
+  estimated: number;
+  unavailable: number;
+}
+
+export interface FinOpsCurrencyTotal {
+  currency: string;
+  total_cost: number | null;
+  billed_cost: number | null;
+  metered_cost: number | null;
+  estimated_cost: number | null;
+  cost_state: FinOpsCostState;
+  spans: number;
+}
+
+/**
+ * Every cost field is null when unknown (no span of that state, or mixed currencies).
+ * null is never the same as 0: a valid zero is 0, unknown is null.
+ */
 export interface FinOpsTotals {
   total_cost: number | null;
-  billed_cost?: number;
-  metered_cost?: number;
-  actual_cost: number;
-  estimated_cost: number;
+  billed_cost: number | null;
+  metered_cost: number | null;
+  actual_cost: number | null;
+  estimated_cost: number | null;
   unavailable_cost_count: number;
-  currency: string;
-  cost_state: string;
-  total_tokens: number;
-  input_tokens: number;
-  output_tokens: number;
-  cached_tokens: number;
-  reasoning_tokens: number;
+  span_counts: FinOpsSpanCounts;
+  /** False when some spans are unpriced, so total_cost is a floor. */
+  cost_complete: boolean;
+  /** Single currency code, "MIXED" when several are present, null when no data. */
+  currency: string | null;
+  currencies: string[];
+  by_currency: FinOpsCurrencyTotal[] | null;
+  cost_state: FinOpsCostState;
+  total_tokens: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+  token_reported_spans: number;
   model_calls: number;
   tool_calls: number;
   trajectories: number;
   conversations: number;
+  known_cost_trajectories: number;
+  known_cost_conversations: number;
   avg_cost_per_trajectory: number | null;
   avg_cost_per_conversation: number | null;
+  avg_cost_denominator: string;
   avg_tokens_per_trajectory: number | null;
+}
+
+export interface FinOpsCoverage {
+  span_count: number;
+  /** Percent fields are null when there are no spans (no denominator). */
+  cost_coverage_pct: number | null;
+  billed_pct: number | null;
+  metered_pct: number | null;
+  actual_pct: number | null;
+  estimated_pct: number | null;
+  unavailable_pct: number | null;
+  token_coverage_pct: number | null;
+  model_attribution_pct: number | null;
+  tenant_attribution_pct: number | null;
+  system_attribution_pct: number | null;
+  unattributed_pct: number | null;
 }
 
 export interface FinOpsDashboard {
   period: { start: string; end: string };
+  previous_period: { start: string; end: string };
   totals: FinOpsTotals;
-  comparison: { total_cost_change_pct: number | null; total_tokens_change_pct: number | null };
-  coverage: {
-    span_count: number;
-    cost_coverage_pct: number;
-    billed_pct?: number;
-    metered_pct?: number;
-    actual_pct: number;
-    estimated_pct: number;
-    unavailable_pct: number;
-    token_coverage_pct: number;
-    model_attribution_pct: number;
-    tenant_attribution_pct: number;
+  previous_totals: {
+    total_cost: number | null;
+    cost_state: FinOpsCostState;
+    currency: string | null;
+    total_tokens: number | null;
   };
-  budget_pressure: { healthy: number; warning: number; exceeded: number };
-  risk_associated_spend: number;
-  prevented_estimated_spend: number;
+  comparison: {
+    total_cost_change_pct: number | null;
+    total_tokens_change_pct: number | null;
+    like_for_like: boolean;
+    basis: string;
+  };
+  coverage: FinOpsCoverage;
+  budget_pressure: {
+    healthy: number;
+    warning: number;
+    exceeded: number;
+    unavailable: number;
+    no_active_window: number;
+    total: number;
+  };
+  risk_associated_spend: number | null;
+  risk_breakdown: Record<string, number | null>;
+  prevented_estimated_spend: number | null;
+  prevented_estimated_currency: string | null;
+  definition: Record<string, string>;
 }
 
 export interface FinOpsBreakdownItem {
   key: string | null;
   label: string | null;
-  cost: number;
-  tokens: number;
-  trajectories: number;
+  cost: number | null;
+  billed_cost: number | null;
+  metered_cost: number | null;
+  estimated_cost: number | null;
+  cost_state: FinOpsCostState;
+  currency: string | null;
   calls: number;
-  input_tokens: number;
-  output_tokens: number;
+  model_calls: number;
+  tool_calls: number;
+  trajectories: number;
+  priced_calls: number;
+  unpriced_calls: number;
+  unpriced_share_pct: number | null;
+  tokens: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_tokens: number | null;
+  reasoning_tokens: number | null;
+  token_reported_calls: number;
   avg_cost_per_call: number | null;
+  avg_cost_per_trajectory: number | null;
+}
+
+export interface FinOpsBreakdown {
+  dimension: string;
+  items: FinOpsBreakdownItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  sort: string;
+  order: "asc" | "desc";
+  currency: string | null;
+  currencies: string[];
+}
+
+export interface FinOpsTimeseriesPoint {
+  timestamp: string | null;
+  cost: number | null;
+  billed_cost: number | null;
+  metered_cost: number | null;
+  estimated_cost: number | null;
+  cost_state: FinOpsCostState;
+  priced_spans: number;
+  unavailable_spans: number;
+  tokens: number | null;
+  trajectories: number;
+  model_calls: number;
+}
+
+export interface FinOpsTimeseries {
+  period: { start: string; end: string };
+  bucket: "day";
+  currency: string | null;
+  currencies: string[];
+  total_cost: number | null;
+  points: FinOpsTimeseriesPoint[];
+}
+
+export interface FinOpsProjection {
+  method: string;
+  status: "projected" | "insufficient_data";
+  observation_seconds: number | null;
+  burn_rate_per_hour: number | null;
+  projected_window_usage: number | null;
+  projected_utilization_pct: number | null;
+  projected_exhaustion_at: string | null;
+  will_exceed_before_reset: boolean | null;
+  confidence: "low" | "medium" | "high" | null;
+  reason: string | null;
+}
+
+export interface FinOpsBudgetItem {
+  budget_id: string;
+  name: string;
+  metric: "ACTION_COUNT" | "TOOL_COUNT" | "AMOUNT" | "TOKEN_USAGE" | "COST" | string;
+  unit: string;
+  scope_type: string;
+  scope_id: string | null;
+  ai_system_id: string | null;
+  ai_system_name: string | null;
+  tool_name: string | null;
+  limit_value: number;
+  window_seconds: number;
+  warning_threshold: number;
+  effect_on_exceed: string;
+  enforcement_mode: string;
+  blocking: boolean;
+  enforcement_summary: string;
+  evidence: {
+    lookback_days: number;
+    checks: number;
+    last_check_at: string | null;
+    blocking_interventions: number;
+  };
+  window: {
+    start: string;
+    end: string;
+    usage: number;
+    reserved: number;
+    headroom: number;
+    utilization_pct: number | null;
+    scope_id: string | null;
+  } | null;
+  projection: FinOpsProjection | null;
+  status: "OK" | "WARNING" | "EXCEEDED" | "UNAVAILABLE" | "NO_ACTIVE_WINDOW" | string;
+}
+
+export interface FinOpsBudgetHealth {
+  as_of: string;
+  items: FinOpsBudgetItem[];
+  summary: {
+    total: number;
+    exceeded: number;
+    warning: number;
+    healthy: number;
+    unavailable: number;
+    no_active_window: number;
+  };
 }
 
 export interface TrajectoryEconomics {

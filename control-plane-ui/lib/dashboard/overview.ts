@@ -148,30 +148,46 @@ export type SpendKpi = {
 export function spendKpi(dashboard: FinOpsDashboard | null | undefined): SpendKpi {
   const totals = dashboard?.totals;
   if (!totals) return { value: "Unavailable", detail: "Spend data could not be loaded.", available: false };
-  const currency = totals.currency || "USD";
-  const measured = totals.billed_cost || totals.metered_cost || totals.actual_cost || 0;
-  const estimated = totals.estimated_cost || 0;
+  const currency = totals.currency;
+  if (currency === "MIXED") {
+    return {
+      value: "Mixed currencies",
+      detail: `Spend is recorded in ${totals.currencies?.join(", ")}; amounts are not combined. See FinOps.`,
+      available: false,
+    };
+  }
   const unavailableCount = totals.unavailable_cost_count || 0;
-  if (totals.cost_state === "UNAVAILABLE" || (measured <= 0 && estimated <= 0)) {
+  // State comes from the backend's per-state counts. Whether an amount is zero says nothing
+  // about whether it is known: a genuine $0.00 billed amount is still a known amount.
+  const state = totals.cost_state;
+  const settled = totals.actual_cost ?? null; // billed + metered, null when neither exists
+  const estimated = totals.estimated_cost ?? null;
+  if (state === "NO_DATA" || state === "UNAVAILABLE" || (settled === null && estimated === null)) {
     return {
       value: "Unavailable",
       detail:
-        unavailableCount > 0
-          ? `${unavailableCount} calls have no cost. Check pricing in FinOps.`
-          : "No priced usage in this period.",
+        state === "NO_DATA"
+          ? "No usage in this period."
+          : unavailableCount > 0
+            ? `${unavailableCount} calls have no cost. Check pricing in FinOps.`
+            : "No priced usage in this period.",
       available: false,
     };
   }
   const parts: string[] = [];
-  const basis = totals.billed_cost ? "billed" : "metered";
-  if (measured > 0) {
-    parts.push(basis);
+  if (settled !== null) {
+    const billed = totals.billed_cost ?? null;
+    const metered = totals.metered_cost ?? null;
+    parts.push(billed !== null && metered !== null ? "billed + metered" : billed !== null ? "billed" : "metered");
   }
-  if (estimated > 0) parts.push(`+ ≈ ${formatMoney(estimated, currency)} estimated`);
+  if (settled !== null && estimated !== null) {
+    parts.push(`+ ≈ ${formatMoney(estimated, currency ?? undefined)} estimated`);
+  }
   if (unavailableCount > 0) parts.push(`${unavailableCount} calls unpriced`);
+  const headline = settled !== null ? settled : (estimated as number);
   return {
-    value: formatMoney(measured > 0 ? measured : estimated, currency) ?? "Unavailable",
-    detail: measured > 0 ? parts.join(" · ") : "estimated only · no metered cost yet",
+    value: formatMoney(headline, currency ?? undefined) ?? "Unavailable",
+    detail: settled !== null ? parts.join(" · ") : "estimated only · no metered cost yet",
     available: true,
   };
 }

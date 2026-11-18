@@ -116,7 +116,8 @@ function DashboardContent() {
   const spendMap = useMemo(() => {
     if (spendBySystem.status !== "ready") return null;
     const map = new Map<string, number>();
-    for (const item of spendBySystem.data.items) if (item.key) map.set(item.key, item.cost);
+    // Unpriced systems stay absent (unknown), never recorded as 0.
+    for (const item of spendBySystem.data.items) if (item.key && item.cost !== null) map.set(item.key, item.cost);
     return map;
   }, [spendBySystem]);
   const reviewRows = useMemo(
@@ -369,7 +370,9 @@ function DashboardContent() {
               ) : (
                 <TrendLineChart
                   title={`Cost (${currency})`}
-                  data={data.points.map((point) => ({ timestamp: point.timestamp, value: point.cost }))}
+                  data={data.points.flatMap((point) =>
+                    point.timestamp ? [{ timestamp: point.timestamp, value: point.cost }] : [],
+                  )}
                 />
               )
             }

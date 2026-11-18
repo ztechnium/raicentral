@@ -29,6 +29,11 @@ router = APIRouter(prefix="/v1/finops", tags=["finops"])
 
 PLATFORM_ROLES = ["platform_admin", "platform_support", "admin"]
 
+# Aggregate views only. Prompts and message content are never part of a FinOps export.
+EXPORT_VIEWS = frozenset(
+    {"summary", "trajectories", "spans", "systems", "models", "tenants"}
+)
+
 
 def _validate_org_membership(
     db: Session,
@@ -301,26 +306,52 @@ def create_settlement(
     return svc.serialize_settlement(row)
 
 
-def _filters(
-    period_start: datetime | None,
-    period_end: datetime | None,
-    ai_system_id: UUID | None,
-    agent_id: UUID | None,
-    agent_version_id: UUID | None,
-    runtime_identity_id: UUID | None,
-    delegation_id: UUID | None,
-    provider: str | None,
-    model: str | None,
-    environment: str | None,
-    cost_state: str | None,
-    metering_source: str | None,
+def finops_filters(
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+    ai_system_id: UUID | None = None,
+    agent_id: UUID | None = None,
+    agent_version_id: UUID | None = None,
+    runtime_identity_id: UUID | None = None,
+    delegation_id: UUID | None = None,
+    provider: str | None = Query(default=None, max_length=200),
+    model: str | None = Query(default=None, max_length=300),
+    environment: str | None = Query(default=None, max_length=100),
+    cost_state: str | None = Query(default=None, max_length=20),
+    metering_source: str | None = Query(default=None, max_length=60),
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
 ):
-    from rai_gateway.finops.reporting import FinOpsFilters, default_window
+    """One validated filter set shared by every FinOps read endpoint.
+
+    Every supported filter is accepted everywhere, so the UI can carry the same
+    context from Overview to Usage to drill-down. Unknown values are rejected
+    rather than silently ignored.
+    """
+    from rai_gateway.finops.reporting import (
+        MAX_PERIOD_DAYS,
+        VALID_COST_STATES,
+        FinOpsFilters,
+        default_window,
+    )
 
     start, end = default_window()
+    start, end = period_start or start, period_end or end
+    if start >= end:
+        raise HTTPException(
+            status_code=400, detail="period_start must be before period_end"
+        )
+    if (end - start).days > MAX_PERIOD_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Period may not exceed {MAX_PERIOD_DAYS} days",
+        )
+    if cost_state and cost_state.upper() not in VALID_COST_STATES:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported cost_state: {cost_state}"
+        )
     return FinOpsFilters(
-        period_start=period_start or start,
-        period_end=period_end or end,
+        period_start=start,
+        period_end=end,
         ai_system_id=ai_system_id,
         agent_id=agent_id,
         agent_version_id=agent_version_id,
@@ -329,8 +360,9 @@ def _filters(
         provider=provider,
         model=model,
         environment=environment,
-        cost_state=cost_state,
+        cost_state=cost_state.upper() if cost_state else None,
         metering_source=metering_source,
+        currency=currency.upper() if currency else None,
     )
 
 
@@ -339,35 +371,10 @@ def _filters(
 def finops_dashboard(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    ai_system_id: UUID | None = None,
-    agent_id: UUID | None = None,
-    agent_version_id: UUID | None = None,
-    runtime_identity_id: UUID | None = None,
-    delegation_id: UUID | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    environment: str | None = None,
-    cost_state: str | None = None,
-    metering_source: str | None = None,
+    filters=Depends(finops_filters),
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        ai_system_id,
-        agent_id,
-        agent_version_id,
-        runtime_identity_id,
-        delegation_id,
-        provider,
-        model,
-        environment,
-        cost_state,
-        metering_source,
-    )
     return FinOpsReportingService(db).dashboard(filters)
 
 
@@ -376,32 +383,32 @@ def finops_dashboard(
 def finops_timeseries(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    ai_system_id: UUID | None = None,
-    agent_id: UUID | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    environment: str | None = None,
-    delegation_id: UUID | None = None,
+    filters=Depends(finops_filters),
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        ai_system_id,
-        agent_id,
-        None,
-        None,
-        delegation_id,
-        provider,
-        model,
-        environment,
-        None,
-        None,
-    )
     return FinOpsReportingService(db).timeseries(filters)
+
+
+@router.get("/dimensions")
+def finops_dimensions(
+    tenant: TenantContext = Depends(require_permission("finops:read")),
+) -> dict[str, Any]:
+    """Supported breakdown dimensions and which ones support server-side search."""
+    from rai_gateway.finops.reporting import (
+        DIMENSIONS,
+        SORT_KEYS,
+        STRING_DIMENSIONS,
+        VALID_COST_STATES,
+    )
+
+    return {
+        "dimensions": [
+            {"id": d, "searchable": d in STRING_DIMENSIONS} for d in DIMENSIONS
+        ],
+        "sort_keys": sorted(SORT_KEYS),
+        "cost_states": sorted(VALID_COST_STATES),
+    }
 
 
 @router.get("/breakdown")
@@ -410,38 +417,25 @@ def finops_timeseries(
 def finops_breakdown(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
+    filters=Depends(finops_filters),
     dimension: str = Query(default="ai_system"),
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    ai_system_id: UUID | None = None,
-    agent_id: UUID | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    environment: str | None = None,
-    delegation_id: UUID | None = None,
-    cost_state: str | None = None,
+    sort: str = Query(default="cost"),
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    search: str | None = Query(default=None, max_length=100),
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        ai_system_id,
-        agent_id,
-        None,
-        None,
-        delegation_id,
-        provider,
-        model,
-        environment,
-        cost_state,
-        None,
-    )
     try:
         return FinOpsReportingService(db).breakdown(
-            filters, dimension=dimension, limit=limit, offset=offset
+            filters,
+            dimension=dimension,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            descending=order == "desc",
+            search=search or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -451,27 +445,12 @@ def finops_breakdown(
 def finops_top_spenders(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
+    filters=Depends(finops_filters),
     dimension: str = Query(default="ai_system"),
     limit: int = Query(default=10, ge=1, le=50),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
     try:
         return FinOpsReportingService(db).breakdown(
             filters, dimension=dimension, limit=limit
@@ -480,35 +459,31 @@ def finops_top_spenders(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/budgets")
+def finops_budgets(
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_permission("finops:read")),
+    ai_system_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Read-only current-window health, headroom, enforcement and projection.
+
+    Budget configuration lives in /risk/budgets; this endpoint never edits it.
+    """
+    from rai_gateway.finops.budget_health import budget_health
+
+    return budget_health(db, ai_system_id=ai_system_id)
+
+
 @router.get("/trajectories")
 def finops_trajectories(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
+    filters=Depends(finops_filters),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    ai_system_id: UUID | None = None,
-    provider: str | None = None,
-    model: str | None = None,
-    cost_state: str | None = None,
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        ai_system_id,
-        None,
-        None,
-        None,
-        None,
-        provider,
-        model,
-        None,
-        cost_state,
-        None,
-    )
     return FinOpsReportingService(db).trajectories(filters, limit=limit, offset=offset)
 
 
@@ -527,28 +502,12 @@ def finops_trajectory_detail(
 def finops_models(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
+    filters=Depends(finops_filters),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    provider: str | None = None,
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        None,
-        None,
-        None,
-        None,
-        None,
-        provider,
-        None,
-        None,
-        None,
-        None,
-    )
     return FinOpsReportingService(db).breakdown(
         filters, dimension="model", limit=limit, offset=offset
     )
@@ -558,28 +517,12 @@ def finops_models(
 def finops_tenants(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("finops:read")),
+    filters=Depends(finops_filters),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
-    ai_system_id: UUID | None = None,
 ) -> dict[str, Any]:
     from rai_gateway.finops.reporting import FinOpsReportingService
 
-    filters = _filters(
-        period_start,
-        period_end,
-        ai_system_id,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
     return FinOpsReportingService(db).breakdown(
         filters, dimension="delegation", limit=limit, offset=offset
     )
@@ -591,10 +534,9 @@ def finops_export(
     tenant: TenantContext = Depends(
         require_any_permission("finops:export", "finops:read")
     ),
+    filters=Depends(finops_filters),
     view: str = Query(default="summary"),
-    export_format: str = Query(default="json", alias="format"),
-    period_start: datetime | None = None,
-    period_end: datetime | None = None,
+    export_format: str = Query(default="json", alias="format", pattern="^(json|csv)$"),
 ):
     import csv
     import io
@@ -604,22 +546,10 @@ def finops_export(
 
     from rai_gateway.finops.reporting import FinOpsReportingService
 
+    if view not in EXPORT_VIEWS:
+        raise HTTPException(status_code=400, detail=f"Unsupported export view: {view}")
     if not tenant.has_permission("finops:export") and view != "summary":
         raise HTTPException(status_code=403, detail="finops:export required")
-    filters = _filters(
-        period_start,
-        period_end,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
     rows = FinOpsReportingService(db).export_rows(filters, view)
     if export_format == "csv":
         buffer = io.StringIO()
@@ -641,10 +571,20 @@ def finops_export(
     )
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def _csv_safe(value: Any) -> Any:
+    """Neutralise spreadsheet formula injection from user-supplied labels."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _flatten(row: dict[str, Any]) -> dict[str, Any]:
     flat: dict[str, Any] = {}
     for key, value in row.items():
         if isinstance(value, (dict, list)):
             continue
-        flat[key] = value
+        flat[key] = _csv_safe(value)
     return flat

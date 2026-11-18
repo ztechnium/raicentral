@@ -68,7 +68,17 @@ describe("dashboard overview logic", () => {
     expect(kpi.value).toBe("$12.50");
     expect(kpi.detail).toContain("estimated");
     expect(kpi.detail).toContain("$3.00");
-    const estimatedOnly = spendKpi(finops({ metered_cost: 0, actual_cost: 0, estimated_cost: 3 }));
+    // Estimated-only: no metered or billed spans exist, so those amounts are null (unknown),
+    // not 0. A genuine zero is covered in finops-spend-kpi.test.ts.
+    const estimatedOnly = spendKpi(
+      finops({
+        cost_state: "ESTIMATED",
+        billed_cost: null,
+        metered_cost: null,
+        actual_cost: null,
+        estimated_cost: 3,
+      }),
+    );
     expect(estimatedOnly.detail).toContain("estimated only");
   });
 

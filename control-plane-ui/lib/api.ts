@@ -3233,14 +3233,24 @@ export interface FinOpsQuery {
   period_end?: string;
   ai_system_id?: string;
   agent_id?: string;
+  agent_version_id?: string;
+  runtime_identity_id?: string;
+  delegation_id?: string;
   provider?: string;
   model?: string;
   environment?: string;
-  delegation_id?: string;
   cost_state?: string;
+  metering_source?: string;
+  currency?: string;
+}
+
+export interface FinOpsBreakdownQuery extends FinOpsQuery {
   dimension?: string;
   limit?: number;
   offset?: number;
+  sort?: "cost" | "calls" | "tokens" | "trajectories";
+  order?: "asc" | "desc";
+  search?: string;
 }
 
 export function getFinOpsDashboard(params?: FinOpsQuery) {
@@ -3250,15 +3260,47 @@ export function getFinOpsDashboard(params?: FinOpsQuery) {
 }
 
 export function getFinOpsTimeseries(params?: FinOpsQuery) {
-  return apiGet<{
-    points: Array<{ timestamp: string; cost: number; tokens: number; trajectories: number }>;
-  }>(`/v1/finops/timeseries${buildReportingQuery(params as never)}`);
+  return apiGet<import("@/lib/types").FinOpsTimeseries>(
+    `/v1/finops/timeseries${buildReportingQuery(params as never)}`,
+  );
 }
 
-export function getFinOpsBreakdown(params?: FinOpsQuery) {
-  return apiGet<{ items: import("@/lib/types").FinOpsBreakdownItem[] }>(
+export function getFinOpsBreakdown(params?: FinOpsBreakdownQuery) {
+  return apiGet<import("@/lib/types").FinOpsBreakdown>(
     `/v1/finops/breakdown${buildReportingQuery(params as never)}`,
   );
+}
+
+/** Read-only current-window budget health. Budgets are edited under /risk/budgets. */
+export function getFinOpsBudgets(params?: { ai_system_id?: string }) {
+  return apiGet<import("@/lib/types").FinOpsBudgetHealth>(
+    `/v1/finops/budgets${buildReportingQuery(params as never)}`,
+  );
+}
+
+export interface FinOpsTrajectoryRow {
+  trajectory_id: string;
+  /** null when no span of the trajectory had a price. Never 0 for unknown. */
+  cost: number | null;
+  tokens: number | null;
+  started_at: string | null;
+}
+
+/** Top trajectories by known cost for the same filters as the breakdown. */
+export function getFinOpsTrajectories(
+  params?: FinOpsQuery & {
+    agent_version_id?: string;
+    runtime_identity_id?: string;
+    limit?: number;
+    offset?: number;
+  },
+) {
+  return apiGet<{
+    items: FinOpsTrajectoryRow[];
+    total: number;
+    limit: number;
+    offset: number;
+  }>(`/v1/finops/trajectories${buildReportingQuery(params as never)}`);
 }
 
 export function getTrajectoryEconomics(trajectoryId: string) {

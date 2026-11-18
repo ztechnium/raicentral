@@ -194,3 +194,13 @@ Report queries run against the single instance and should be indexed appropriate
 - status (filtering by state)
 - severity (risk/incident severity)
 - All FK relationships used in joins
+
+## Verified limitations (supersedes the "Available Metrics" lists above)
+
+The lists above name what the source tables *could* support. Verified against
+the implementation, several are **not** available: resolved findings in a period
+and time-to-resolution (no `resolved_at`), risk by tool/model/data source, top
+policies, approval latency/escalation, incident and review metrics, models/tools
+in use. Open-state vs period semantics, denominators and units are defined in
+[docs/reporting-metric-dictionary.md](../../../docs/reporting-metric-dictionary.md),
+which is authoritative.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Query
@@ -11,17 +11,36 @@ if TYPE_CHECKING:
     from rai_gateway.reporting.schemas import ReportFilters
 
 
+def to_naive_utc(value: datetime) -> datetime:
+    """Normalize a datetime to naive UTC, the convention used by report queries.
+
+    Timezone-aware values are converted to UTC then stripped of tzinfo; naive
+    values are assumed to already be UTC. Doing this once at the API boundary
+    prevents offset drift between the period shown, the SQL bounds and the
+    previous-period comparison.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
+
+
 def get_default_period(days: int = 30) -> tuple[datetime, datetime]:
-    """Get default reporting period (last N days)."""
-    end = datetime.utcnow()
+    """Get default reporting period (last N days), naive UTC."""
+    end = datetime.now(UTC).replace(tzinfo=None)
     start = end - timedelta(days=days)
     return start, end
 
 
 def get_previous_period(start: datetime, end: datetime) -> tuple[datetime, datetime]:
-    """Calculate equivalent previous period for comparison."""
+    """Calculate the equivalent, non-overlapping previous period.
+
+    Report queries treat both bounds as inclusive (``>= start`` and
+    ``<= end``). The previous period therefore ends one microsecond before the
+    current period starts so a row exactly on the boundary is counted in
+    exactly one period, and both periods have the same duration.
+    """
     duration = end - start
-    previous_end = start
+    previous_end = start - timedelta(microseconds=1)
     previous_start = previous_end - duration
     return previous_start, previous_end
 
