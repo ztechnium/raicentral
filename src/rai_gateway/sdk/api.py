@@ -638,15 +638,23 @@ def patch_onboarding_checklist(
 ):
     from rai_gateway.public_product.onboarding import OnboardingError, OnboardingService
 
+    # omitted = preserve, explicit null = clear: forward only supplied ID fields.
+    supplied = {
+        name: getattr(body, name)
+        for name in (
+            "first_ai_system_id",
+            "first_integration_id",
+            "first_trajectory_id",
+        )
+        if name in body.model_fields_set
+    }
     try:
         return OnboardingService(db).update(
             current_step=body.current_step,
             complete_step=body.complete_step,
             completed_steps=body.completed_steps,
-            first_ai_system_id=body.first_ai_system_id,
-            first_integration_id=body.first_integration_id,
-            first_trajectory_id=body.first_trajectory_id,
             status=body.status,
+            **supplied,
         )
     except OnboardingError as exc:
         raise HTTPException(
@@ -707,6 +715,16 @@ def enqueue_job(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("sdk:manage")),
 ):
+    from rai_gateway.sdk.jobs import is_reserved_job
+
+    if is_reserved_job(body.job_type, body.idempotency_key):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESERVED_JOB_TYPE",
+                "message": "This job type or idempotency key is reserved for internal use",
+            },
+        )
     return JobQueue(db).enqueue(
         job_type=body.job_type,
         payload=body.payload,

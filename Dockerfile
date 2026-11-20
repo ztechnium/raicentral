@@ -34,6 +34,10 @@ COPY scripts/attach_seeded_mcp_to_version.py ./scripts/attach_seeded_mcp_to_vers
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN sed -i 's/\r$//' /app/scripts/docker-entrypoint.sh && chmod +x /app/scripts/docker-entrypoint.sh
 RUN chown -R appuser:appuser /app
+# Private original-source storage shared by the API and the onboarding worker.
+# A new named volume inherits this ownership, so no world-writable bits are needed.
+RUN mkdir -p /var/lib/rai/onboarding-sources     && chown -R appuser:appuser /var/lib/rai     && chmod 700 /var/lib/rai/onboarding-sources
+ENV ONBOARDING_SOURCE_STORAGE_ROOT=/var/lib/rai/onboarding-sources
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

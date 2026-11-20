@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 from uuid import UUID
@@ -9,16 +10,22 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from rai_gateway.models.governance import (
-    ControlAssessment,
     OrganizationGovernanceProfile,
     OrganizationMembership,
 )
+from rai_gateway.models.identity import AgentRuntimeIdentity
+from rai_gateway.models.policy_engine import ContentRule, PolicyCollection, ToolRule
 from rai_gateway.models.productization import (
     OrganizationOnboarding,
     SdkDecisionRecord,
     SdkIntegration,
 )
-from rai_gateway.models.registry import AgentVersion, AgentVersionDependency, AISystem
+from rai_gateway.models.registry import (
+    Agent,
+    AgentVersion,
+    AgentVersionDependency,
+    AISystem,
+)
 
 _SINGLETON_KEY = "default"
 
@@ -28,6 +35,25 @@ class OnboardingStatus(StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     INTEGRATED = "INTEGRATED"
     READY = "READY"
+
+
+class CompletionSource(StrEnum):
+    """Why a checklist item is done. Provenance only; never an attestation."""
+
+    NONE = "NONE"
+    MANUAL = "MANUAL"
+    RECORD = "RECORD"
+    OBSERVATION = "OBSERVATION"
+
+
+class ConnectionState(StrEnum):
+    UNSCOPED = "UNSCOPED"
+    NOT_OBSERVED = "NOT_OBSERVED"
+    OBSERVED = "OBSERVED"
+
+
+class VerificationState(StrEnum):
+    NOT_RUN = "NOT_RUN"
 
 
 ONBOARDING_STEP_DEFS: list[tuple[str, str]] = [
@@ -54,6 +80,48 @@ LEGACY_ONBOARDING_STEPS: list[tuple[str, str]] = [
 ]
 
 ONBOARDING_STEP_IDS = {step_id for step_id, _ in ONBOARDING_STEP_DEFS}
+
+# Steps whose completion can only come from server-side evidence. A stored
+# manual flag (including a historical one) never completes them.
+EVIDENCE_ONLY_STEP_IDS = frozenset(
+    {
+        "connect_application",
+        "test_connection",
+        "first_governed_action",
+        "production_readiness",
+    }
+)
+
+# Steps the product cannot establish yet (a later verification phase). They
+# stay incomplete, are informational, and are never a "next action".
+UNSUPPORTED_STEP_IDS = frozenset({"test_connection", "production_readiness"})
+
+
+class _Unset:
+    """Sentinel type: argument omitted (preserve) as opposed to None (clear)."""
+
+    _instance: "_Unset | None" = None
+
+    def __new__(cls) -> "_Unset":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+UNSET = _Unset()
+
+
+@dataclass(frozen=True)
+class _Selection:
+    system_id: UUID
+    integration: SdkIntegration
+    runtime: AgentRuntimeIdentity
 
 
 class OnboardingError(Exception):
@@ -122,11 +190,16 @@ class OnboardingService:
         current_step: str | None = None,
         complete_step: str | None = None,
         completed_steps: list[str] | None = None,
-        first_ai_system_id: UUID | None = None,
-        first_integration_id: UUID | None = None,
-        first_trajectory_id: UUID | None = None,
+        first_ai_system_id: UUID | None | _Unset = UNSET,
+        first_integration_id: UUID | None | _Unset = UNSET,
+        first_trajectory_id: UUID | None | _Unset = UNSET,
         status: str | None = None,
     ) -> dict[str, Any]:
+        """Apply a setup patch.
+
+        Selected-ID arguments: ``UNSET`` (omitted) preserves the stored value,
+        ``None`` clears it, and a UUID sets it.
+        """
         record = self.get_or_create()
 
         if current_step is not None:
@@ -148,11 +221,11 @@ class OnboardingService:
             if record.status == OnboardingStatus.NOT_STARTED.value:
                 record.status = OnboardingStatus.IN_PROGRESS.value
 
-        if first_ai_system_id is not None:
+        if not isinstance(first_ai_system_id, _Unset):
             record.first_ai_system_id = first_ai_system_id
-        if first_integration_id is not None:
+        if not isinstance(first_integration_id, _Unset):
             record.first_integration_id = first_integration_id
-        if first_trajectory_id is not None:
+        if not isinstance(first_trajectory_id, _Unset):
             record.first_trajectory_id = first_trajectory_id
 
         if status is not None:
@@ -171,31 +244,32 @@ class OnboardingService:
         if record is None:
             record = self.get_record()
 
-        persisted_completed = set(record.completed_steps or []) if record else set()
-        computed = self._compute_step_completion(record)
+        selection = self._resolve_selection(record)
+        summary = self._build_summary(record, selection)
+        sources = self._completion_sources(record, selection)
 
         steps: list[dict[str, Any]] = []
-        blocked: list[str] = []
         for step_id, label in ONBOARDING_STEP_DEFS:
-            done = step_id in persisted_completed or computed.get(step_id, False)
-            blocked_reason = None
-            if not done and step_id in computed and computed.get(f"{step_id}_blocked"):
-                blocked_reason = computed[f"{step_id}_blocked"]
-                blocked.append(step_id)
+            source = sources[step_id]
             steps.append(
                 {
                     "id": step_id,
                     "label": label,
-                    "done": done,
-                    "blocked": blocked_reason is not None,
-                    "blocked_reason": blocked_reason,
+                    "done": source != CompletionSource.NONE,
+                    "blocked": False,
+                    "blocked_reason": None,
+                    "completion_source": source.value,
+                    "actionable": step_id not in UNSUPPORTED_STEP_IDS,
                 }
             )
 
         legacy_steps = self._legacy_steps()
 
         completed_count = sum(1 for step in steps if step["done"])
-        next_step = next((step for step in steps if not step["done"]), None)
+        next_step = next(
+            (step for step in steps if not step["done"] and step["actionable"]),
+            None,
+        )
         onboarding_payload = (
             self.serialize(record)
             if record
@@ -213,16 +287,21 @@ class OnboardingService:
             }
         )
 
+        # A stored legacy READY value is workflow history only. The returned
+        # status is never READY: it is neither derived from nor proof of
+        # runtime verification.
         status = onboarding_payload["status"]
-        if completed_count == len(steps):
-            status = OnboardingStatus.READY.value
-        elif computed.get("integrated"):
+        if (
+            summary["connection"]["state"] == ConnectionState.OBSERVED.value
+            and sources["first_governed_action"] == CompletionSource.OBSERVATION
+        ):
             status = OnboardingStatus.INTEGRATED.value
         elif completed_count > 0 or record:
             status = OnboardingStatus.IN_PROGRESS.value
 
         return {
             "onboarding": {**onboarding_payload, "status": status},
+            "summary": summary,
             "steps": steps,
             "legacy_steps": legacy_steps,
             "complete": all(step["done"] for step in steps),
@@ -232,7 +311,90 @@ class OnboardingService:
                 "total": len(steps),
             },
             "next_recommended_action": next_step["label"] if next_step else None,
-            "blocked_steps": blocked,
+            "blocked_steps": [],
+        }
+
+    # ------------------------------------------------------------------
+    # Selected-context resolution and read-only summary
+    # ------------------------------------------------------------------
+
+    def _resolve_selection(
+        self, record: OrganizationOnboarding | None
+    ) -> _Selection | None:
+        """Resolve the saved system + integration into one consistent chain.
+
+        Returns None when either is unset, missing, or they do not agree. Never
+        falls back to the first available integration or trajectory.
+        """
+        if (
+            record is None
+            or record.first_ai_system_id is None
+            or record.first_integration_id is None
+        ):
+            return None
+        integration = (
+            self._db.query(SdkIntegration)
+            .filter(SdkIntegration.id == record.first_integration_id)
+            .first()
+        )
+        if integration is None or integration.runtime_identity_id is None:
+            return None
+        runtime = (
+            self._db.query(AgentRuntimeIdentity)
+            .filter(AgentRuntimeIdentity.id == integration.runtime_identity_id)
+            .first()
+        )
+        if runtime is None:
+            return None
+        agent = self._db.query(Agent).filter(Agent.id == runtime.agent_id).first()
+        if agent is None or agent.ai_system_id != record.first_ai_system_id:
+            return None
+        version = (
+            self._db.query(AgentVersion)
+            .filter(AgentVersion.id == runtime.agent_version_id)
+            .first()
+        )
+        if version is None or version.agent_id != agent.id:
+            return None
+        system = (
+            self._db.query(AISystem.id)
+            .filter(AISystem.id == agent.ai_system_id)
+            .first()
+        )
+        if system is None:
+            return None
+        return _Selection(
+            system_id=agent.ai_system_id, integration=integration, runtime=runtime
+        )
+
+    def _build_summary(
+        self,
+        record: OrganizationOnboarding | None,
+        selection: _Selection | None,
+    ) -> dict[str, Any]:
+        connection: dict[str, Any] = {
+            "state": ConnectionState.UNSCOPED.value,
+            "integration_id": None,
+            "runtime_identity_id": None,
+            "last_observed_at": None,
+        }
+        if selection is not None:
+            observed_at = selection.integration.last_heartbeat_at
+            connection = {
+                "state": (
+                    ConnectionState.OBSERVED.value
+                    if observed_at is not None
+                    else ConnectionState.NOT_OBSERVED.value
+                ),
+                "integration_id": str(selection.integration.id),
+                "runtime_identity_id": str(selection.runtime.id),
+                "last_observed_at": observed_at.isoformat() if observed_at else None,
+            }
+        return {
+            "welcome_complete": bool(record and record.welcome_completed_at),
+            "connection": connection,
+            # Step 01 never establishes verification; a later phase extends this.
+            "verification": {"state": VerificationState.NOT_RUN.value},
         }
 
     def _legacy_steps(self) -> list[dict[str, Any]]:
@@ -262,76 +424,159 @@ class OnboardingService:
             for step_id, label in LEGACY_ONBOARDING_STEPS
         ]
 
-    def _compute_step_completion(
+    # ------------------------------------------------------------------
+    # Checklist provenance
+    # ------------------------------------------------------------------
+
+    def _scope_system_ids(self, record: OrganizationOnboarding | None) -> list[UUID]:
+        """The selected system when it exists, otherwise every system."""
+        if record is not None and record.first_ai_system_id is not None:
+            exists = (
+                self._db.query(AISystem.id)
+                .filter(AISystem.id == record.first_ai_system_id)
+                .first()
+            )
+            if exists is not None:
+                return [record.first_ai_system_id]
+        return [row[0] for row in self._db.query(AISystem.id).all()]
+
+    def _completion_sources(
         self,
         record: OrganizationOnboarding | None,
-    ) -> dict[str, Any]:
+        selection: _Selection | None,
+    ) -> dict[str, CompletionSource]:
+        persisted = set(record.completed_steps or []) if record else set()
+        recorded = self._recorded_steps(record)
+
+        observed = {"connect_application": False, "first_governed_action": False}
+        if selection is not None:
+            observed["connect_application"] = (
+                selection.integration.last_heartbeat_at is not None
+            )
+            observed["first_governed_action"] = (
+                self._db.query(SdkDecisionRecord.id)
+                .filter(SdkDecisionRecord.integration_id == selection.integration.id)
+                .first()
+                is not None
+            )
+
+        sources: dict[str, CompletionSource] = {}
+        for step_id, _label in ONBOARDING_STEP_DEFS:
+            if step_id in UNSUPPORTED_STEP_IDS:
+                source = CompletionSource.NONE
+            elif step_id in EVIDENCE_ONLY_STEP_IDS:
+                source = (
+                    CompletionSource.OBSERVATION
+                    if observed.get(step_id)
+                    else CompletionSource.NONE
+                )
+            elif step_id == "inspect_trajectory":
+                # Finding a trajectory is not review; only an explicit mark counts.
+                source = (
+                    CompletionSource.MANUAL
+                    if step_id in persisted
+                    else CompletionSource.NONE
+                )
+            elif recorded.get(step_id):
+                source = CompletionSource.RECORD
+            elif step_id in persisted:
+                source = CompletionSource.MANUAL
+            else:
+                source = CompletionSource.NONE
+            sources[step_id] = source
+        return sources
+
+    def _recorded_steps(self, record: OrganizationOnboarding | None) -> dict[str, bool]:
+        """Steps established by actual records (never by a saved UUID alone)."""
+        db = self._db
         profile = (
-            self._db.query(OrganizationGovernanceProfile)
+            db.query(OrganizationGovernanceProfile)
             .filter(OrganizationGovernanceProfile.singleton_key == _SINGLETON_KEY)
             .first()
         )
-        memberships = (
-            self._db.query(OrganizationMembership)
+        membership_roles = {
+            row[0]
+            for row in db.query(OrganizationMembership.role)
             .filter(OrganizationMembership.status == "ACTIVE")
             .all()
-        )
-        membership_roles = {row.role for row in memberships}
+        }
+        scope = self._scope_system_ids(record)
 
-        systems = self._db.query(AISystem).all()
-        system_ids = [row.id for row in systems]
-
-        agent_versions = 0
-        resources = 0
-        if system_ids:
-            from rai_gateway.models.registry import Agent
-
-            agents = (
-                self._db.query(Agent).filter(Agent.ai_system_id.in_(system_ids)).all()
+        def has_agent_versions() -> bool:
+            return (
+                db.query(AgentVersion.id)
+                .join(Agent, Agent.id == AgentVersion.agent_id)
+                .filter(Agent.ai_system_id.in_(scope))
+                .first()
+                is not None
             )
-            agent_ids = [row.id for row in agents]
-            if agent_ids:
-                agent_versions = (
-                    self._db.query(AgentVersion)
-                    .filter(AgentVersion.agent_id.in_(agent_ids))
-                    .count()
+
+        def has_resources() -> bool:
+            return (
+                db.query(AgentVersionDependency.id)
+                .join(
+                    AgentVersion,
+                    AgentVersion.id == AgentVersionDependency.agent_version_id,
                 )
-                version_ids = [
-                    row.id
-                    for row in self._db.query(AgentVersion)
-                    .filter(AgentVersion.agent_id.in_(agent_ids))
-                    .all()
-                ]
-                if version_ids:
-                    resources = (
-                        self._db.query(AgentVersionDependency)
-                        .filter(
-                            AgentVersionDependency.agent_version_id.in_(version_ids)
-                        )
-                        .count()
-                    )
-
-        integrations = self._db.query(SdkIntegration).all()
-        policies = self._db.query(ControlAssessment).count()
-
-        runtime_identities = 0
-        if integrations:
-            runtime_identities = len(
-                {
-                    row.runtime_identity_id
-                    for row in integrations
-                    if row.runtime_identity_id
-                }
+                .join(Agent, Agent.id == AgentVersion.agent_id)
+                .filter(Agent.ai_system_id.in_(scope))
+                .first()
+                is not None
             )
 
-        connected = any(row.last_heartbeat_at is not None for row in integrations)
-        tested = any(
-            (row.verification_status or "").upper()
-            in {"VERIFIED", "CONNECTED", "TESTED"}
-            for row in integrations
-        )
-        governed_actions = self._db.query(SdkDecisionRecord).count()
-        has_trajectory = record is not None and record.first_trajectory_id is not None
+        def has_rules() -> bool:
+            # A disabled rule is still a recorded configuration object; it is
+            # never reported as active or enforced. ControlAssessment is a
+            # different concept and does not count.
+            content = (
+                db.query(ContentRule.id)
+                .join(
+                    PolicyCollection,
+                    PolicyCollection.id == ContentRule.policy_collection_id,
+                )
+                .filter(
+                    PolicyCollection.ai_system_id.in_(scope),
+                    ContentRule.archived_at.is_(None),
+                )
+                .first()
+            )
+            if content is not None:
+                return True
+            return (
+                db.query(ToolRule.id)
+                .join(
+                    PolicyCollection,
+                    PolicyCollection.id == ToolRule.policy_collection_id,
+                )
+                .filter(
+                    PolicyCollection.ai_system_id.in_(scope),
+                    ToolRule.archived_at.is_(None),
+                )
+                .first()
+                is not None
+            )
+
+        def has_integrations() -> bool:
+            return (
+                db.query(SdkIntegration.id)
+                .join(
+                    AgentRuntimeIdentity,
+                    AgentRuntimeIdentity.id == SdkIntegration.runtime_identity_id,
+                )
+                .join(Agent, Agent.id == AgentRuntimeIdentity.agent_id)
+                .filter(Agent.ai_system_id.in_(scope))
+                .first()
+                is not None
+            )
+
+        def has_runtime_identities() -> bool:
+            return (
+                db.query(AgentRuntimeIdentity.id)
+                .join(Agent, Agent.id == AgentRuntimeIdentity.agent_id)
+                .filter(Agent.ai_system_id.in_(scope))
+                .first()
+                is not None
+            )
 
         return {
             "organization_profile": bool(
@@ -340,19 +585,10 @@ class OnboardingService:
             ),
             "team_roles": "RAI_OFFICER" in membership_roles
             and "ORGANIZATION_ADMIN" in membership_roles,
-            "first_ai_system": len(systems) > 0
-            or (record is not None and record.first_ai_system_id is not None),
-            "agent_version": agent_versions > 0,
-            "resources": resources > 0,
-            "first_policies": policies > 0,
-            "choose_integration": len(integrations) > 0
-            or (record is not None and record.first_integration_id is not None),
-            "runtime_identity": runtime_identities > 0,
-            "connect_application": connected,
-            "test_connection": tested or connected,
-            "first_governed_action": governed_actions > 0,
-            "inspect_trajectory": has_trajectory,
-            "production_readiness": record is not None
-            and record.status == OnboardingStatus.READY.value,
-            "integrated": connected and governed_actions > 0,
+            "first_ai_system": len(scope) > 0,
+            "agent_version": has_agent_versions(),
+            "resources": has_resources(),
+            "first_policies": has_rules(),
+            "choose_integration": has_integrations(),
+            "runtime_identity": has_runtime_identities(),
         }

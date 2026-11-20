@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -262,6 +262,45 @@ class Settings(BaseSettings):
     email_verification_ttl_minutes: int = 60
     password_reset_ttl_minutes: int = 30
     email_docs_url: str = "https://docs.rai.example.com"
+
+    # Onboarding intake (Step 02): private filesystem original-source storage.
+    onboarding_source_storage_root: str = "./data/onboarding-sources"
+    onboarding_max_file_bytes: int = 25 * 1024 * 1024
+    onboarding_max_sources_per_session: int = 20
+    onboarding_max_session_bytes: int = 200 * 1024 * 1024
+    onboarding_max_text_chars: int = 50_000
+    onboarding_upload_timeout_seconds: float = 600.0
+    onboarding_orphan_min_age_seconds: float = 24 * 3600.0
+    onboarding_multipart_overhead_bytes: int = 64 * 1024
+    onboarding_job_lease_seconds: float = 60.0
+    onboarding_job_renew_seconds: float = 15.0
+    onboarding_job_max_attempts: int = 5
+
+    @model_validator(mode="after")
+    def _validate_onboarding_limits(self) -> "Settings":
+        positive = {
+            "onboarding_max_file_bytes": self.onboarding_max_file_bytes,
+            "onboarding_max_sources_per_session": self.onboarding_max_sources_per_session,
+            "onboarding_max_session_bytes": self.onboarding_max_session_bytes,
+            "onboarding_max_text_chars": self.onboarding_max_text_chars,
+            "onboarding_upload_timeout_seconds": self.onboarding_upload_timeout_seconds,
+            "onboarding_job_lease_seconds": self.onboarding_job_lease_seconds,
+            "onboarding_job_renew_seconds": self.onboarding_job_renew_seconds,
+            "onboarding_job_max_attempts": self.onboarding_job_max_attempts,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if self.onboarding_orphan_min_age_seconds <= self.onboarding_upload_timeout_seconds:
+            raise ValueError(
+                "onboarding_orphan_min_age_seconds must exceed "
+                "onboarding_upload_timeout_seconds"
+            )
+        if self.onboarding_job_renew_seconds >= self.onboarding_job_lease_seconds:
+            raise ValueError(
+                "onboarding_job_renew_seconds must be shorter than the lease"
+            )
+        return self
 
     class Config:
         env_file = ".env"

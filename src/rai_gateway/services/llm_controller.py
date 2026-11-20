@@ -44,9 +44,10 @@ from rai_gateway.identity.api import router as identity_router
 from rai_gateway.lineage.api import router as lineage_router
 from rai_gateway.models.database import Case, ExecutionAudit
 from rai_gateway.network_enforcement.api import router as network_enforcement_router
+from rai_gateway.onboarding.api import register as register_onboarding_intake
 from rai_gateway.policy.api import router as policy_router
-from rai_gateway.provider_gateway.router import router as provider_gateway_router
 from rai_gateway.portfolio.api import router as portfolio_router
+from rai_gateway.provider_gateway.router import router as provider_gateway_router
 from rai_gateway.public_product.welcome_api import router as welcome_router
 from rai_gateway.registry.api import router as registry_router
 from rai_gateway.reporting.api import router as reporting_router
@@ -87,6 +88,7 @@ app.include_router(portfolio_router)
 app.include_router(reporting_router)
 app.include_router(sdk_router)
 app.include_router(productization_admin_router)
+register_onboarding_intake(app)
 app.include_router(data_access_router)
 app.include_router(finops_router)
 app.include_router(lineage_router)

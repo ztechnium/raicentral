@@ -45,6 +45,22 @@ curl -sf "$RAI_BASE_URL/version"
 curl -sf "$RAI_BASE_URL/sdk/v1/health"
 ```
 
+## Onboarding source files (filesystem)
+
+Onboarding intake stores **metadata in PostgreSQL** and the **original uploaded bytes on a private
+volume** (`ONBOARDING_SOURCE_STORAGE_ROOT`, the `onboarding_sources` volume in Compose). Back up
+both. A database-only restore cannot recreate original file bytes: revisions would exist with no
+file behind them, and preparation would report `SOURCE_MISSING`.
+
+- Take the PostgreSQL dump and a copy of the source volume at the same point in time (stop the
+  onboarding worker, or snapshot the volume, so no upload is mid-flight).
+- Restore the volume contents unchanged (keep the `objects/<xx>/<key>` layout and file ownership
+  for the service user) before starting the API and worker.
+- Files in `staging/` and objects with no database row are safe to omit; the worker removes them
+  after the grace period (`ONBOARDING_ORPHAN_MIN_AGE_SECONDS`, default 24 hours).
+- After a restore, preparing a session re-verifies every saved original against its recorded
+  SHA-256 and size.
+
 ## Post-restore checks
 
 1. Invited members can call the product APIs their roles allow. A user with no membership cannot.

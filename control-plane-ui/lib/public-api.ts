@@ -46,6 +46,9 @@ export interface RegisterCompanyResponse {
   verification_email_error?: string | null;
 }
 
+/** Why a checklist item is considered done. Provenance only, never an attestation. */
+export type CompletionSource = "NONE" | "MANUAL" | "RECORD" | "OBSERVATION";
+
 export interface OnboardingStep {
   id: string;
   label: string;
@@ -53,24 +56,65 @@ export interface OnboardingStep {
   blocked?: boolean;
   blocked_reason?: string | null;
   href?: string;
+  /** Absent when talking to a server from before the provenance contract. */
+  completion_source?: CompletionSource;
+  /** False for steps the product cannot yet establish (informational only). */
+  actionable?: boolean;
+}
+
+export type ConnectionState = "UNSCOPED" | "NOT_OBSERVED" | "OBSERVED";
+
+/** Read-only, server-computed projection. Never client-asserted. */
+export interface OnboardingSummary {
+  welcome_complete: boolean;
+  connection: {
+    state: ConnectionState;
+    integration_id: string | null;
+    runtime_identity_id: string | null;
+    last_observed_at: string | null;
+  };
+  verification: {
+    state: "NOT_RUN";
+  };
 }
 
 export interface OnboardingResponse {
-  organization_id: string;
-  organization_status: string;
   onboarding: {
-    organization_id: string;
     current_step: string;
     completed_steps: string[];
     first_ai_system_id: string | null;
     first_integration_id: string | null;
     first_trajectory_id: string | null;
+    /** Legacy workflow value; never evidence of verification. */
     status: string;
+    welcome_completed: boolean;
+    welcome_completed_at: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
   };
+  /** Optional only to tolerate a rolling upgrade; render "unavailable" when absent. */
+  summary?: OnboardingSummary;
   steps: OnboardingStep[];
+  legacy_steps?: { id: string; label: string; done: boolean }[];
   complete: boolean;
+  legacy_complete?: boolean;
   progress: { completed: number; total: number };
   next_recommended_action: string | null;
+  blocked_steps?: string[];
+}
+
+/**
+ * PATCH body. For the selected IDs: omitted = preserve, explicit null = clear.
+ * `summary` is intentionally not accepted: the server owns it.
+ */
+export interface OnboardingPatchBody {
+  current_step?: string;
+  complete_step?: string;
+  completed_steps?: string[];
+  first_ai_system_id?: string | null;
+  first_integration_id?: string | null;
+  first_trajectory_id?: string | null;
+  status?: string;
 }
 
 export class PublicApiError extends Error {
@@ -82,7 +126,7 @@ export class PublicApiError extends Error {
   }
 }
 
-function authHeaders(_organizationId?: string): HeadersInit {
+function authHeaders(): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json",
     "Content-Type": "application/json",
@@ -139,9 +183,9 @@ async function fetchWithAuthRetry(url: string, init: RequestInit): Promise<Respo
   return response;
 }
 
-export async function fetchOnboarding(organizationId: string): Promise<OnboardingResponse> {
+export async function fetchOnboarding(): Promise<OnboardingResponse> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/onboarding`, {
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new PublicApiError(
@@ -152,21 +196,10 @@ export async function fetchOnboarding(organizationId: string): Promise<Onboardin
   return response.json() as Promise<OnboardingResponse>;
 }
 
-export async function patchOnboarding(
-  organizationId: string,
-  body: {
-    current_step?: string;
-    complete_step?: string;
-    completed_steps?: string[];
-    first_ai_system_id?: string;
-    first_integration_id?: string;
-    first_trajectory_id?: string;
-    status?: string;
-  },
-): Promise<OnboardingResponse> {
+export async function patchOnboarding(body: OnboardingPatchBody): Promise<OnboardingResponse> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/onboarding`, {
     method: "PATCH",
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -180,7 +213,6 @@ export async function patchOnboarding(
 
 export interface SdkIntegrationSummary {
   id: string;
-  organization_id: string;
   integration_key: string;
   name: string;
   integration_type: string;
@@ -214,11 +246,11 @@ export interface CreateSdkIntegrationPayload {
   metadata?: Record<string, unknown>;
 }
 
-export async function listSdkIntegrations(organizationId: string): Promise<{
+export async function listSdkIntegrations(): Promise<{
   items: SdkIntegrationSummary[];
 }> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/integrations`, {
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new PublicApiError(
@@ -234,7 +266,7 @@ export async function createSdkIntegration(
 ): Promise<SdkIntegrationSummary> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/integrations`, {
     method: "POST",
-    headers: authHeaders(payload.organization_id),
+    headers: authHeaders(),
     body: JSON.stringify({
       integration_type: "SDK",
       environment: "production",
@@ -274,8 +306,6 @@ export interface WelcomeState {
   welcome_completed: boolean;
   welcome_completed_at?: string | null;
   organization: {
-    id?: string;
-    org_key?: string;
     name: string;
     logo?: string | null;
     industry?: string | null;
@@ -293,9 +323,9 @@ export interface WelcomeState {
   };
 }
 
-export async function fetchWelcome(organizationId: string): Promise<WelcomeState> {
+export async function fetchWelcome(): Promise<WelcomeState> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome`, {
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new PublicApiError(
@@ -306,13 +336,14 @@ export async function fetchWelcome(organizationId: string): Promise<WelcomeState
   return response.json() as Promise<WelcomeState>;
 }
 
-export async function saveWelcomeProfile(
-  organizationId: string,
-  body: { name: string; industry: string; logo?: string | null },
-): Promise<WelcomeState> {
+export async function saveWelcomeProfile(body: {
+  name: string;
+  industry: string;
+  logo?: string | null;
+}): Promise<WelcomeState> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome/profile`, {
     method: "PATCH",
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -324,13 +355,10 @@ export async function saveWelcomeProfile(
   return response.json() as Promise<WelcomeState>;
 }
 
-export async function seedWelcomeTemplate(
-  organizationId: string,
-  templateKey: string,
-): Promise<WelcomeState> {
+export async function seedWelcomeTemplate(templateKey: string): Promise<WelcomeState> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome/seed`, {
     method: "POST",
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
     body: JSON.stringify({ template_key: templateKey }),
   });
   if (!response.ok) {
@@ -342,10 +370,10 @@ export async function seedWelcomeTemplate(
   return response.json() as Promise<WelcomeState>;
 }
 
-export async function completeWelcome(organizationId: string): Promise<WelcomeState> {
+export async function completeWelcome(): Promise<WelcomeState> {
   const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome/complete`, {
     method: "POST",
-    headers: authHeaders(organizationId),
+    headers: authHeaders(),
   });
   if (!response.ok) {
     throw new PublicApiError(

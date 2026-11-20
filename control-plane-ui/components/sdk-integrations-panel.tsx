@@ -74,7 +74,7 @@ export function SdkIntegrationsPanel({
     setError(null);
     try {
       const [integrationsRes, identitiesRes] = await Promise.all([
-        listSdkIntegrations(activeOrg),
+        listSdkIntegrations(),
         runtimeIdentityId
           ? Promise.resolve({ data: [] as RuntimeIdentitySummary[] })
           : getRuntimeIdentities({ status: "ACTIVE" }).catch(() => ({

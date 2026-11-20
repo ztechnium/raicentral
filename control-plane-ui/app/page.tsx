@@ -43,7 +43,8 @@ export default function LoginPage() {
         const isPlatform = hasPlatformOperatorAccess(platformRoles);
         window.localStorage.setItem(PLATFORM_ADMIN_STORAGE_KEY, isPlatform ? "1" : "0");
 
-        router.replace(postLoginPath(isPlatform, data.welcome_completed !== false));
+        // Setup entry is resolved inside the app, where permissions are known.
+        router.replace(postLoginPath());
         return;
       } catch {
         // Legacy bootstrap admin path.

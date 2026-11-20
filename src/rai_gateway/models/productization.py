@@ -220,6 +220,11 @@ class BackgroundJob(Base):
     )
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    # Lease ownership (adopted only by handlers that opt in, e.g. onboarding).
+    worker_id = Column(String, nullable=True)
+    lease_token = Column(String, nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class OrganizationOnboarding(Base):
