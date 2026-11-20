@@ -123,3 +123,93 @@ def test_onboarding_intake_migration_upgrade_preserves_data_and_downgrades(
     command.upgrade(cfg, "head")
     assert "onboarding_runs" in set(inspect(engine).get_table_names())
     engine.dispose()
+
+
+def test_onboarding_extraction_migration_against_its_predecessor(fresh_migration_db):
+    """a3b4c5d6e7f8 on top of f2a3b4c5d6e7: preserves Step 02 rows, then reverses."""
+    cfg = Config(str(PROJECT_ROOT / "alembic.ini"))
+    _configure_alembic(cfg, fresh_migration_db)
+    command.upgrade(cfg, "f2a3b4c5d6e7")
+
+    engine = create_engine(fresh_migration_db)
+    session_id, source_id, job_id, run_id = (uuid.uuid4() for _ in range(4))
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO onboarding_sessions (id, title, lifecycle, row_version, input_revision,"
+                " created_by, updated_by) VALUES (:id, 't', 'OPEN', 1, 0, 'u', 'u')"
+            ),
+            {"id": session_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO onboarding_sources (id, session_id, kind, role, included, created_by)"
+                " VALUES (:id, :s, 'TEXT', 'USER_PROMPT', true, 'u')"
+            ),
+            {"id": source_id, "s": session_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO background_jobs (id, job_type, status, attempt_count, max_attempts)"
+                " VALUES (:id, 'ONBOARDING_PREPARE_SOURCES', 'SUCCEEDED', 1, 5)"
+            ),
+            {"id": job_id},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO onboarding_runs (id, session_id, run_number, stage, input_revision,"
+                " manifest, manifest_digest, job_id, created_by, ended_at) VALUES (:id, :s, 1,"
+                " 'PREPARE_SOURCES', 0, CAST(:m AS json), 'abc', :j, 'u', now())"
+            ),
+            {
+                "id": run_id,
+                "s": session_id,
+                "j": job_id,
+                "m": '{"version": 1, "entries": []}',
+            },
+        )
+
+    command.upgrade(cfg, "a3b4c5d6e7f8")
+    inspector = inspect(engine)
+    assert {
+        "onboarding_source_extractions",
+        "onboarding_extracted_blocks",
+        "onboarding_run_sources",
+        "onboarding_ai_configuration",
+        "onboarding_provider_probes",
+    } <= set(inspector.get_table_names())
+    run_cols = {c["name"] for c in inspector.get_columns("onboarding_runs")}
+    assert {"preparation_run_id", "plan", "plan_digest"} <= run_cols
+    with engine.connect() as conn:
+        legacy = conn.execute(
+            text("SELECT manifest, plan_digest FROM onboarding_runs WHERE id = :id"),
+            {"id": run_id},
+        ).one()
+        options = conn.execute(
+            text(
+                "SELECT parsing_options_version FROM onboarding_sources WHERE id = :id"
+            ),
+            {"id": source_id},
+        ).scalar()
+    assert (
+        legacy.plan_digest is None and options == 1
+    )  # historical v1 manifest untouched
+    assert (
+        '"version": 1' in str(legacy.manifest).replace("'", '"')
+        or legacy.manifest["version"] == 1
+    )
+    probe_indexes = {
+        i["name"] for i in inspector.get_indexes("onboarding_provider_probes")
+    }
+    assert "uq_onb_one_active_probe" in probe_indexes
+
+    command.downgrade(cfg, "f2a3b4c5d6e7")
+    inspector = inspect(engine)
+    assert "onboarding_source_extractions" not in set(inspector.get_table_names())
+    assert "plan_digest" not in {
+        c["name"] for c in inspector.get_columns("onboarding_runs")
+    }
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM onboarding_runs")).scalar() == 1
+    command.upgrade(cfg, "head")
+    engine.dispose()

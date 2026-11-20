@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 
 import pytest
+from onboarding_support import PDF, Intake
 
-from conftest import PDF, Intake
 from rai_gateway.governance.domain import GovernanceRole
 from rai_gateway.onboarding.service import SOURCES_PERMISSION
 

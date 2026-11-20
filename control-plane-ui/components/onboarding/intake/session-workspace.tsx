@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ExtractionPanel } from "@/components/onboarding/intake/extraction-panel";
 import { SourceHistory } from "@/components/onboarding/intake/source-history";
 import {
   IntakeApiError,
@@ -542,6 +543,13 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               />
             )}
           </section>
+
+          <ExtractionPanel
+            session={session}
+            canManage={access.canManage}
+            onSession={apply}
+            onReload={reload}
+          />
 
           {actions.includes("prepare") && (
             <div className="space-y-1">

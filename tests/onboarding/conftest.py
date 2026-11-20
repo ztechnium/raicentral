@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import io
 import uuid
-import zipfile
 from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from onboarding_support import PURE_MODULES, Intake
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
@@ -21,27 +20,21 @@ from rai_gateway.models.database import AdminCredential, UserAccount, UserRole
 from rai_gateway.models.governance import OrganizationMembership
 from rai_gateway.services.admin_console import _ensure_default_rbac_seed
 
-PDF = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
-
-
-def make_zip(members: dict[str, bytes]) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        for name, data in members.items():
-            archive.writestr(name, data)
-    return buffer.getvalue()
-
-
-DOCX = make_zip({"[Content_Types].xml": b"<Types/>", "word/document.xml": b"<w/>"})
-XLSX = make_zip({"[Content_Types].xml": b"<Types/>", "xl/workbook.xml": b"<w/>"})
-CSV = b"system,owner\nchatbot,alice\n"
-MD = "# Policy\n\nUse AI responsibly — é ü\n".encode("utf-8")
-
 
 @pytest.fixture(autouse=True)
-def clean_onboarding(db_engine):
+def clean_onboarding(request):
     """Isolate each test: the schema is shared across the whole test session."""
+    if request.module.__name__.rsplit(".", 1)[-1] in PURE_MODULES:
+        yield  # pure parser tests need no database
+        return
+    db_engine = request.getfixturevalue("db_engine")
     statements = [
+        "DELETE FROM onboarding_run_sources",
+        "DELETE FROM onboarding_extracted_blocks",
+        "DELETE FROM onboarding_source_extractions",
+        "DELETE FROM onboarding_provider_probes",
+        "DELETE FROM onboarding_ai_configuration",
+        "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL",
         "UPDATE onboarding_sources SET current_revision_id = NULL",
         "DELETE FROM onboarding_runs",
         "DELETE FROM onboarding_source_revisions",
@@ -140,118 +133,6 @@ def admin(make_user):
     )
 
 
-class Intake:
-    """Tiny typed wrapper over the HTTP contract."""
-
-    BASE = "/v1/productization/onboarding/sessions"
-
-    def __init__(self, client: TestClient, headers: dict[str, str]) -> None:
-        self.client = client
-        self.headers = headers
-
-    def _h(self, key: str | None = None) -> dict[str, str]:
-        return {**self.headers, "Idempotency-Key": key or uuid.uuid4().hex}
-
-    def create(self, title: str = "Q4 onboarding", key: str | None = None):
-        return self.client.post(self.BASE, json={"title": title}, headers=self._h(key))
-
-    def get(self, session_id: str):
-        return self.client.get(f"{self.BASE}/{session_id}", headers=self.headers)
-
-    def upload(
-        self,
-        session: dict,
-        name: str,
-        data: bytes,
-        content_type: str = "application/octet-stream",
-        key: str | None = None,
-        version: int | None = None,
-    ):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/sources/files",
-            files={"file": (name, data, content_type)},
-            data={"expected_row_version": str(version or session["row_version"])},
-            headers=self._h(key),
-        )
-
-    def replace_file(self, session, source_id, name, data, key=None, version=None):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/sources/{source_id}/revisions/file",
-            files={"file": (name, data, "application/octet-stream")},
-            data={"expected_row_version": str(version or session["row_version"])},
-            headers=self._h(key),
-        )
-
-    def text(
-        self,
-        session,
-        text_value,
-        role="USER_PROMPT",
-        title=None,
-        key=None,
-        version=None,
-    ):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/sources/text",
-            json={
-                "role": role,
-                "text": text_value,
-                "title": title,
-                "expected_row_version": version or session["row_version"],
-            },
-            headers=self._h(key),
-        )
-
-    def revise_text(self, session, source_id, text_value, key=None, version=None):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/sources/{source_id}/revisions/text",
-            json={
-                "text": text_value,
-                "expected_row_version": version or session["row_version"],
-            },
-            headers=self._h(key),
-        )
-
-    def include(self, session, source_id, included: bool, version=None):
-        return self.client.patch(
-            f"{self.BASE}/{session['id']}/sources/{source_id}",
-            json={
-                "included": included,
-                "expected_row_version": version or session["row_version"],
-            },
-            headers=self.headers,
-        )
-
-    def prepare(self, session, key=None, version=None, revision=None):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/prepare",
-            json={
-                "expected_row_version": version or session["row_version"],
-                "requested_input_revision": (
-                    session["input_revision"] if revision is None else revision
-                ),
-            },
-            headers=self._h(key),
-        )
-
-    def retry(self, session, run_id, key=None, version=None, revision=None):
-        return self.client.post(
-            f"{self.BASE}/{session['id']}/runs/{run_id}/retry",
-            json={
-                "expected_row_version": version or session["row_version"],
-                "requested_input_revision": (
-                    session["input_revision"] if revision is None else revision
-                ),
-            },
-            headers=self._h(key),
-        )
-
-    def cancel(self, session_id, run_id):
-        return self.client.post(
-            f"{self.BASE}/{session_id}/runs/{run_id}/cancel", headers=self.headers
-        )
-
-
 @pytest.fixture()
 def api(client, admin):
     return Intake(client, admin)
@@ -261,11 +142,4 @@ def api(client, admin):
 def session(api):
     response = api.create()
     assert response.status_code == 201, response.text
-    return response.json()
-
-
-def fresh(api: Intake, session: dict) -> dict:
-    """Reload the session from the server (it is the only authority)."""
-    response = api.get(session["id"])
-    assert response.status_code == 200, response.text
     return response.json()

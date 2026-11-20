@@ -40,7 +40,14 @@ from rai_gateway.sdk.domain import BackgroundJobStatus
 from rai_gateway.sdk.jobs import JobQueue
 
 JOB_TYPE = "ONBOARDING_PREPARE_SOURCES"
+EXTRACT_JOB_TYPE = "ONBOARDING_EXTRACT_SOURCES"
+PROBE_JOB_TYPE = "ONBOARDING_TEST_PROVIDER"
+STAGE_PREPARE = "PREPARE_SOURCES"
+STAGE_EXTRACT = "EXTRACT_SOURCES"
+# Manifest v1 (Step 02) has no parsing-option snapshots; v2 (Step 03) does.
+MANIFEST_VERSION = 2
 SOURCES_PERMISSION = "onboarding:sources:read"
+PROVIDERS_PERMISSION = "onboarding:providers:manage"
 SAFE_ERROR_CODES = frozenset(
     {
         "SOURCE_INTEGRITY_FAILED",
@@ -50,6 +57,7 @@ SAFE_ERROR_CODES = frozenset(
         "SOURCE_TOO_LARGE",
         "INVALID_RUN_BINDING",
         "LEASE_EXPIRED",
+        "PARSER_PROFILE_MISMATCH",
         "INTERNAL_ERROR",
     }
 )
@@ -114,6 +122,10 @@ def canonical_digest(entries: list[dict[str, Any]]) -> str:
     return sha256_hex(json.dumps(entries, sort_keys=True, separators=(",", ":")))
 
 
+def canonical_digest_obj(value: Any) -> str:
+    return sha256_hex(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
@@ -165,13 +177,20 @@ class IntakeService:
             .one_or_none()
         )
 
-    def _latest_run(self, session_id: uuid.UUID) -> OnboardingRun | None:
-        return (
-            self.db.query(OnboardingRun)
-            .filter(OnboardingRun.session_id == session_id)
-            .order_by(OnboardingRun.run_number.desc())
-            .first()
+    def _latest_run(
+        self, session_id: uuid.UUID, stage: str | None = None
+    ) -> OnboardingRun | None:
+        """Latest run by run_number, optionally restricted to one stage.
+
+        Preparation eligibility must always look at the latest *preparation* run: a
+        later extraction run never replaces it.
+        """
+        query = self.db.query(OnboardingRun).filter(
+            OnboardingRun.session_id == session_id
         )
+        if stage is not None:
+            query = query.filter(OnboardingRun.stage == stage)
+        return query.order_by(OnboardingRun.run_number.desc()).first()
 
     def _job(self, run: OnboardingRun) -> BackgroundJob:
         job = self.db.get(BackgroundJob, run.job_id)
@@ -188,11 +207,12 @@ class IntakeService:
             return f"{op}:{self.actor}"
         return f"{session_id}:{self.actor}:{op}:{target}"
 
-    def _lookup_receipt(
-        self, scope: str, key: str, fingerprint: str
+    @staticmethod
+    def _receipt_lookup(
+        db: Session, scope: str, key: str, fingerprint: str
     ) -> OnboardingMutationReceipt | None:
         receipt = (
-            self.db.query(OnboardingMutationReceipt)
+            db.query(OnboardingMutationReceipt)
             .filter(
                 OnboardingMutationReceipt.scope == scope,
                 OnboardingMutationReceipt.key_digest == sha256_hex(key),
@@ -209,6 +229,32 @@ class IntakeService:
             )
         return receipt
 
+    @staticmethod
+    def _receipt_add(
+        db: Session,
+        scope: str,
+        key: str,
+        fingerprint: str,
+        kind: str,
+        resource_id: uuid.UUID,
+        actor: str,
+    ) -> None:
+        db.add(
+            OnboardingMutationReceipt(
+                scope=scope,
+                key_digest=sha256_hex(key),
+                fingerprint=fingerprint,
+                resource_kind=kind,
+                resource_id=resource_id,
+                actor=actor,
+            )
+        )
+
+    def _lookup_receipt(
+        self, scope: str, key: str, fingerprint: str
+    ) -> OnboardingMutationReceipt | None:
+        return self._receipt_lookup(self.db, scope, key, fingerprint)
+
     def _add_receipt(
         self,
         scope: str,
@@ -217,15 +263,8 @@ class IntakeService:
         kind: str,
         resource_id: uuid.UUID,
     ) -> None:
-        self.db.add(
-            OnboardingMutationReceipt(
-                scope=scope,
-                key_digest=sha256_hex(key),
-                fingerprint=fingerprint,
-                resource_kind=kind,
-                resource_id=resource_id,
-                actor=self.actor,
-            )
+        self._receipt_add(
+            self.db, scope, key, fingerprint, kind, resource_id, self.actor
         )
 
     # -------------------------------------------------------------- sessions
@@ -774,6 +813,67 @@ class IntakeService:
             raise
         return self.session_view(session_id, access)
 
+    def set_parsing_options(
+        self,
+        session_id: uuid.UUID,
+        source_id: uuid.UUID,
+        *,
+        options: dict[str, Any],
+        expected_row_version: int,
+        idempotency_key: str,
+        access: Access,
+    ) -> dict[str, Any]:
+        """Versioned input change: originals and revision digests are untouched."""
+        from rai_gateway.onboarding.parsers import OptionsError, validate_options
+
+        scope = self._scope("set_options", session_id, str(source_id))
+        fingerprint = self._fingerprint(
+            {"op": "set_options", "source": str(source_id), "options": options}
+        )
+        self._get_session(session_id)
+        if self._lookup_receipt(scope, idempotency_key, fingerprint) is not None:
+            return self.session_view(session_id, access)
+        session = self._get_session(session_id, lock=True)
+        try:
+            if self._lookup_receipt(scope, idempotency_key, fingerprint) is not None:
+                self.db.rollback()
+                return self.session_view(session_id, access)
+            self._check_mutable(session, expected_row_version)
+            source = (
+                self.db.query(OnboardingSource)
+                .filter(
+                    OnboardingSource.id == source_id,
+                    OnboardingSource.session_id == session_id,
+                )
+                .with_for_update()
+                .one_or_none()
+            )
+            if source is None:
+                raise IntakeError(404, "SOURCE_NOT_FOUND", "Source not found")
+            revision = self.db.get(OnboardingSourceRevision, source.current_revision_id)
+            family = "TEXT" if source.kind == "TEXT" else revision.media_family
+            try:
+                normalized = validate_options(source.kind, family, options)
+            except OptionsError as exc:
+                raise IntakeError(422, "INVALID_PARSING_OPTIONS", str(exc)) from exc
+            if normalized != dict(source.parsing_options or {}):
+                source.parsing_options = normalized
+                source.parsing_options_version += 1
+                session.input_revision += 1
+                session.row_version += 1
+                session.updated_by = self.actor
+                self._audit(
+                    "onboarding.source.parsing_options",
+                    {"session_id": str(session_id), "source_id": str(source_id)},
+                    "PARSING_OPTIONS_CHANGED",
+                )
+            self._add_receipt(scope, idempotency_key, fingerprint, "SOURCE", source.id)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return self.session_view(session_id, access)
+
     def _revision_chain(
         self,
         session_id: uuid.UUID,
@@ -850,7 +950,9 @@ class IntakeService:
         return revision, handle
 
     # --------------------------------------------------------------- manifest
-    def build_manifest(self, session_id: uuid.UUID) -> list[dict[str, Any]]:
+    def build_manifest(
+        self, session_id: uuid.UUID, version: int = MANIFEST_VERSION
+    ) -> list[dict[str, Any]]:
         rows = (
             self.db.query(OnboardingSource, OnboardingSourceRevision)
             .join(
@@ -872,6 +974,17 @@ class IntakeService:
                 "sha256": rev.sha256,
                 "byte_length": int(rev.byte_length),
                 "media_family": rev.media_family,
+                **(
+                    {
+                        "parsing_options_version": source.parsing_options_version,
+                        "parsing_options": dict(source.parsing_options or {}),
+                        "options_digest": canonical_digest_obj(
+                            dict(source.parsing_options or {})
+                        ),
+                    }
+                    if version >= 2
+                    else {}
+                ),
             }
             for source, rev in rows
         ]
@@ -885,6 +998,7 @@ class IntakeService:
         entries: list[dict[str, Any]],
         *,
         retry_of: OnboardingRun | None,
+        version: int = MANIFEST_VERSION,
     ) -> OnboardingRun:
         run_id = uuid.uuid4()
         digest = canonical_digest(entries)
@@ -913,7 +1027,7 @@ class IntakeService:
             run_number=number,
             stage="PREPARE_SOURCES",
             input_revision=session.input_revision,
-            manifest={"version": 1, "entries": entries},
+            manifest={"version": version, "entries": entries},
             manifest_digest=digest,
             job_id=uuid.UUID(job["id"]),
             retry_of_run_id=retry_of.id if retry_of else None,
@@ -981,14 +1095,17 @@ class IntakeService:
         return self._run_result(session_id, run.id, access, replayed=False)
 
     def _reuse_or_create_prepare_run(self, session: OnboardingSession) -> OnboardingRun:
-        latest = self._latest_run(session.id)
+        latest = self._latest_run(session.id, STAGE_PREPARE)
         if latest is not None and latest.input_revision == session.input_revision:
             job = self._job(latest)
-            if (
-                latest.ended_at is None
-                or job.status == BackgroundJobStatus.SUCCEEDED.value
+            legacy = (latest.manifest or {}).get("version", 1) < MANIFEST_VERSION
+            if latest.ended_at is None or (
+                job.status == BackgroundJobStatus.SUCCEEDED.value and not legacy
             ):
                 return latest  # converge on the matching active / successful run
+            if job.status == BackgroundJobStatus.SUCCEEDED.value and legacy:
+                latest = None  # historical proof stays readable; prepare again
+        if latest is not None and latest.input_revision == session.input_revision:
             raise IntakeError(
                 409,
                 "RETRY_REQUIRED",
@@ -1054,7 +1171,7 @@ class IntakeService:
                     "Inputs changed since this request was made",
                     details={"current_input_revision": session.input_revision},
                 )
-            latest = self._latest_run(session_id)
+            latest = self._latest_run(session_id, run.stage)
             assert latest is not None
             if latest.id != run.id:
                 if latest.retry_of_run_id == run.id and latest.ended_at is None:
@@ -1076,16 +1193,24 @@ class IntakeService:
                     raise IntakeError(
                         409, "RUN_NOT_RETRYABLE", "This run already succeeded"
                     )
-                entries = self.build_manifest(session_id)
-                if run.input_revision != session.input_revision or (
-                    canonical_digest(entries) != run.manifest_digest
-                ):
-                    raise IntakeError(
-                        409,
-                        "INPUTS_CHANGED",
-                        "Inputs changed since this run. Prepare the new inputs instead.",
+                if run.stage == STAGE_EXTRACT:
+                    from rai_gateway.onboarding.extraction import ExtractionService
+
+                    new_run = ExtractionService(self).retry_run(session, run)
+                else:
+                    manifest_version = (run.manifest or {}).get("version", 1)
+                    entries = self.build_manifest(session_id, manifest_version)
+                    if run.input_revision != session.input_revision or (
+                        canonical_digest(entries) != run.manifest_digest
+                    ):
+                        raise IntakeError(
+                            409,
+                            "INPUTS_CHANGED",
+                            "Inputs changed since this run. Prepare the new inputs instead.",
+                        )
+                    new_run = self._new_run(
+                        session, entries, retry_of=run, version=manifest_version
                     )
-                new_run = self._new_run(session, entries, retry_of=run)
                 self._audit(
                     "onboarding.run.retry",
                     {
@@ -1126,6 +1251,10 @@ class IntakeService:
             job.lease_token = None
             job.lease_expires_at = None
             run.ended_at = utcnow()
+            if run.stage == STAGE_EXTRACT:
+                from rai_gateway.onboarding.extraction import finalize_pending_sources
+
+                finalize_pending_sources(self.db, run.id, "RUN_CANCELLED")
             self._audit(
                 "onboarding.run.cancel",
                 {"session_id": str(session_id), "run_id": str(run_id)},
@@ -1215,7 +1344,10 @@ class IntakeService:
             view["checked_at"] = result.get("checked_at")
         if access.can_content:
             view["manifest_digest"] = run.manifest_digest
-            view["manifest"] = {"version": 1, "entries": entries}
+            view["manifest"] = {
+                "version": (run.manifest or {}).get("version", 1),
+                "entries": entries,
+            }
         return view
 
     def _revision_view(
@@ -1251,6 +1383,48 @@ class IntakeService:
             "CANCELLED": "DRAFT",
         }[state]
 
+    def _preparation_summary(
+        self, session: OnboardingSession, prep: OnboardingRun | None
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "state": "NOT_PREPARED",
+            "run_id": None,
+            "input_revision": None,
+            "snapshot_version": None,
+            "current": False,
+            "requires_new_preparation": False,
+        }
+        if prep is None:
+            return out
+        job = self._job(prep)
+        state = {
+            "QUEUED": "QUEUED",
+            "RETRY_SCHEDULED": "QUEUED",
+            "PREPARING": "PREPARING",
+            "SUCCEEDED": "PREPARED",
+            "FAILED": "FAILED",
+            "CANCELLED": "CANCELLED",
+        }[self.run_state(job)]
+        version = (prep.manifest or {}).get("version", 1)
+        current = prep.input_revision == session.input_revision
+        out.update(
+            state=state if current else "NOT_PREPARED",
+            run_id=str(prep.id),
+            input_revision=prep.input_revision,
+            snapshot_version=version,
+            current=current,
+            # Historical v1 proof stays readable but cannot feed extraction.
+            requires_new_preparation=bool(
+                current and state == "PREPARED" and version < MANIFEST_VERSION
+            ),
+        )
+        return out
+
+    def _ai_summary(self, access: Access) -> dict[str, Any]:
+        from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+        return AIConfigService(self.db, actor=self.actor).summary(detailed=False)
+
     def session_view(self, session_id: uuid.UUID, access: Access) -> dict[str, Any]:
         session = (
             self.db.query(OnboardingSession)
@@ -1260,8 +1434,10 @@ class IntakeService:
         )
         if session is None:
             raise IntakeError(404, "SESSION_NOT_FOUND", "Session not found")
-        latest = self._latest_run(session_id)
-        view_state = self._derive_view(session, latest)
+        latest = self._latest_run(session_id)  # latest of any stage (what is active)
+        prep_latest = self._latest_run(session_id, STAGE_PREPARE)
+        # The legacy view means 'sources were prepared'; it never reflects extraction.
+        view_state = self._derive_view(session, prep_latest)
         rows = (
             self.db.query(OnboardingSource, OnboardingSourceRevision)
             .outerjoin(
@@ -1286,21 +1462,36 @@ class IntakeService:
                 item["current_revision"] = self._revision_view(
                     rev, content=access.can_content
                 )
+            if access.can_content:
+                item["parsing_options"] = dict(source.parsing_options or {})
+                item["parsing_options_version"] = source.parsing_options_version
             sources.append(item)
         active = latest is not None and latest.ended_at is None
         manageable = access.can_manage and session.lifecycle == "OPEN"
         included = [s for s in sources if s["included"]]
         actions: list[str] = []
+        preparation = self._preparation_summary(session, prep_latest)
+        from rai_gateway.onboarding.extraction import ExtractionService
+
+        extraction = ExtractionService(self).summary(session, access)
         if manageable and not active:
             actions += ["edit_inputs", "rename", "archive"]
             if view_state == "DRAFT" and included:
                 actions.append("prepare")
-            if latest is not None and latest.input_revision == session.input_revision:
-                if view_state == "PREPARATION_FAILED" or (
-                    latest.ended_at is not None
-                    and self.run_state(self._job(latest)) == "CANCELLED"
-                ):
-                    actions = [a for a in actions if a != "prepare"] + ["retry"]
+            retryable = (
+                latest is not None
+                and latest.input_revision == session.input_revision
+                and latest.ended_at is not None
+                and self.run_state(self._job(latest)) in ("FAILED", "CANCELLED")
+            )
+            if retryable:
+                actions = [a for a in actions if a != "prepare"] + ["retry"]
+            elif (
+                preparation["state"] == "PREPARED"
+                and not preparation["requires_new_preparation"]
+            ):
+                if not (extraction["current"] and extraction["state"] != "NOT_STARTED"):
+                    actions.append("extract")
         if manageable and active:
             actions.append("cancel")
         if access.can_manage and session.lifecycle == "ARCHIVED":
@@ -1320,6 +1511,9 @@ class IntakeService:
             "total_source_count": len(sources),
             "sources": sources,
             "current_run": self._run_dict(latest, access) if latest else None,
+            "preparation": preparation,
+            "extraction": extraction,
+            "ai_configuration": self._ai_summary(access),
             "allowed_actions": actions,
             "created_at": _iso(session.created_at),
             "updated_at": _iso(session.updated_at),

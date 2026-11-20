@@ -6,8 +6,8 @@ import hashlib
 import os
 
 import pytest
+from onboarding_support import CSV, DOCX, MD, PDF, XLSX, fresh  # noqa: F401
 
-from conftest import CSV, DOCX, MD, PDF, XLSX, fresh  # noqa: F401
 from rai_gateway.core.config import settings
 from rai_gateway.models.onboarding import (
     OnboardingSource,

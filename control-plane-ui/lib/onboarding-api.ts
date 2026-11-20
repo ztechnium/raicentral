@@ -31,6 +31,9 @@ export interface SourceSummary {
   included: boolean;
   created_at: string | null;
   current_revision?: RevisionSummary;
+  /** Content readers only. Versioned inputs: overrides never alter originals. */
+  parsing_options?: ParsingOptions;
+  parsing_options_version?: number;
 }
 
 export interface RunSummary {
@@ -66,6 +69,9 @@ export interface SessionDetail {
   total_source_count: number;
   sources: SourceSummary[];
   current_run: RunSummary | null;
+  preparation?: PreparationSummary;
+  extraction?: ExtractionSummary;
+  ai_configuration?: AIStatusSummary;
   allowed_actions: string[];
   created_at: string | null;
   updated_at: string | null;
@@ -399,4 +405,305 @@ export async function fetchRevisionText(
 ): Promise<string> {
   const blob = await fetchRevisionContent(id, sourceId, revisionId);
   return new TextDecoder("utf-8").decode(await blob.arrayBuffer());
+}
+
+// ---------------------------------------------------------------- Step 03 types
+export interface ParsingOptions {
+  encoding?: "utf-8" | "windows-1256";
+  delimiter?: "auto" | "," | ";" | "\t" | "|";
+  header_mode?: "preserve_all" | "first_row_header";
+}
+
+export interface PreparationSummary {
+  state: "NOT_PREPARED" | "QUEUED" | "PREPARING" | "PREPARED" | "FAILED" | "CANCELLED";
+  run_id: string | null;
+  input_revision: number | null;
+  snapshot_version: number | null;
+  current: boolean;
+  requires_new_preparation: boolean;
+}
+
+export type SourceOutcome =
+  "COMPLETE" | "PARTIAL" | "NEEDS_OCR" | "NEEDS_INPUT" | "UNSUPPORTED" | "FAILED" | "NOT_PROCESSED";
+
+export interface CoverageSummary {
+  unit?: string;
+  total?: number;
+  extracted?: number;
+  gaps?: { code: string; detail?: string }[];
+}
+
+export interface ExtractionSourceState {
+  label: string;
+  state: "PENDING" | "FINAL";
+  outcome: SourceOutcome | null;
+  block_count: number;
+  source_id?: string;
+  source_revision_id?: string;
+  extraction_id?: string | null;
+  reason?: string | null;
+  coverage?: CoverageSummary | null;
+}
+
+export interface ExtractionSummary {
+  state: "NOT_STARTED" | "QUEUED" | "EXTRACTING" | "EXTRACTED" | "FAILED" | "CANCELLED";
+  run_id: string | null;
+  current: boolean;
+  sources: ExtractionSourceState[];
+  counts: Record<string, number>;
+  attention_count: number;
+  all_sources_accounted: boolean;
+  coverage_acceptable: boolean;
+}
+
+export type AIState =
+  | "UNCONFIGURED"
+  | "DISABLED"
+  | "TARGET_UNAVAILABLE"
+  | "CONFIGURED_UNTESTED"
+  | "TEST_PENDING"
+  | "TEST_PASSED"
+  | "TEST_FAILED"
+  | "TEST_UNKNOWN"
+  | "TEST_STALE";
+
+export interface AIStatusSummary {
+  state: AIState;
+  enabled: boolean;
+  last_test_at?: string;
+}
+
+export interface ProbeView {
+  id: string;
+  probe_number: number;
+  configuration_version: number;
+  target_key: string | null;
+  model: string | null;
+  structured_mode: string | null;
+  credential_version: number;
+  target_fingerprint: string;
+  state: string;
+  outcome: "PASSED" | "FAILED" | "OUTCOME_UNKNOWN" | "CANCELLED" | null;
+  error_code: string | null;
+  dispatch_started: boolean;
+  latency_ms: number | null;
+  /** null means the provider returned no usage: unknown, never zero. */
+  usage: Record<string, number> | null;
+  created_at: string | null;
+  ended_at: string | null;
+}
+
+export interface AIConfigDetail extends AIStatusSummary {
+  configuration_version?: number;
+  target_key?: string | null;
+  model?: string | null;
+  structured_mode?: string | null;
+  max_output_tokens?: number | null;
+  target_fingerprint?: string | null;
+  credential_configured?: boolean;
+  destination_label?: string | null;
+  last_test?: ProbeView | null;
+  available_targets?: number;
+}
+
+export interface ProviderTarget {
+  key: string;
+  label: string;
+  protocol: string;
+  destination_label: string;
+  models: string[];
+  structured_modes: string[];
+  max_output_tokens: number;
+  credential_configured: boolean;
+  credential_version: number;
+}
+
+export interface ExtractionItem {
+  id: string;
+  outcome: SourceOutcome;
+  block_count: number;
+  coverage: CoverageSummary;
+  created_at: string | null;
+  is_current_input: boolean;
+  source_id?: string;
+  source_revision_id?: string;
+  revision_number?: number;
+  display_name?: string;
+  reason?: string | null;
+  warnings?: string[];
+  extractor_build?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface ExtractedBlock {
+  id: string;
+  ordinal: number;
+  kind: string;
+  text: string;
+  cell_data: Record<string, unknown> | null;
+  locator: Record<string, unknown> & { type: string };
+  content_digest: string;
+  warnings: string[];
+}
+
+export interface BlocksPage {
+  extraction: ExtractionItem & {
+    original_sha256: string;
+    source_id: string;
+    source_revision_id: string;
+    normalization: string;
+  };
+  items: ExtractedBlock[];
+  next_after: number | null;
+}
+
+export interface Citation {
+  source_id: string;
+  source_revision_id: string;
+  revision_number: number;
+  source_sha256: string;
+  display_name: string;
+  extraction_id: string;
+  extractor_build: string;
+  block_id: string;
+  locator: Record<string, unknown> & { type: string };
+  cell_data: Record<string, unknown> | null;
+  text_range: { start: number; end: number; unit: "UNICODE_CODE_POINT" };
+  excerpt: string;
+  block_text: string;
+  integrity_ok: boolean;
+  is_current_input: boolean;
+  historical: boolean;
+}
+
+export interface Capabilities {
+  formats: { family: string; extensions: string[]; outputs: string }[];
+  ocr: boolean;
+  parsing_options: { encodings: string[]; delimiters: string[]; header_modes: string[] };
+  parser_profile: {
+    fingerprint: string;
+    build: string;
+    dependencies: Record<string, string>;
+    limits: Record<string, number>;
+  };
+  ai: { approved_targets: number };
+}
+
+// -------------------------------------------------------------- Step 03 calls
+const ONBOARDING_ROOT = `${API_BASE_URL}/v1/productization/onboarding`;
+
+async function rootRequest<T>(
+  path: string,
+  init: { method?: string; body?: unknown; key?: string } = {},
+): Promise<T> {
+  const build = (): RequestInit => ({
+    method: init.method ?? "GET",
+    headers: headers(init.key ? { "Idempotency-Key": init.key } : undefined),
+    body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    cache: "no-store",
+  });
+  let response = await fetch(`${ONBOARDING_ROOT}${path}`, build());
+  if (response.status === 401 && (await refreshAccessTokenIfNeeded())) {
+    response = await fetch(`${ONBOARDING_ROOT}${path}`, build());
+  }
+  if (!response.ok) throw await toError(response);
+  return (await response.json()) as T;
+}
+
+export function getCapabilities() {
+  return rootRequest<Capabilities>("/capabilities");
+}
+
+export function setParsingOptions(
+  id: string,
+  sourceId: string,
+  args: { options: ParsingOptions; expectedRowVersion: number; key: string },
+) {
+  return request<SessionDetail>(`/${id}/sources/${sourceId}/parsing-options`, {
+    method: "PATCH",
+    key: args.key,
+    body: { options: args.options, expected_row_version: args.expectedRowVersion },
+  });
+}
+
+export function extractSources(
+  id: string,
+  args: {
+    expectedRowVersion: number;
+    inputRevision: number;
+    preparationRunId: string;
+    parserFingerprint: string;
+    key: string;
+  },
+) {
+  return request<RunMutationResult>(`/${id}/extract`, {
+    method: "POST",
+    key: args.key,
+    body: {
+      expected_row_version: args.expectedRowVersion,
+      requested_input_revision: args.inputRevision,
+      preparation_run_id: args.preparationRunId,
+      expected_parser_fingerprint: args.parserFingerprint,
+    },
+  });
+}
+
+export function listExtractions(id: string) {
+  return request<{ items: ExtractionItem[]; total: number }>(`/${id}/extractions?limit=100`);
+}
+
+export function listBlocks(id: string, extractionId: string, after = -1, limit = 50) {
+  return request<BlocksPage>(
+    `/${id}/extractions/${extractionId}/blocks?after=${after}&limit=${limit}`,
+  );
+}
+
+export function getCitation(id: string, blockId: string, range?: { start: number; end: number }) {
+  const q = range ? `?start=${range.start}&end=${range.end}` : "";
+  return request<Citation>(`/${id}/citations/${blockId}${q}`);
+}
+
+export function getAIConfiguration() {
+  return rootRequest<AIConfigDetail>("/ai-configuration");
+}
+
+export function saveAIConfiguration(body: {
+  expected_configuration_version: number;
+  enabled: boolean;
+  target_key: string | null;
+  model: string | null;
+  structured_mode: string | null;
+  max_output_tokens: number | null;
+}) {
+  return rootRequest<AIConfigDetail>("/ai-configuration", { method: "PUT", body });
+}
+
+export function listProviderTargets() {
+  return rootRequest<{ items: ProviderTarget[]; invalid_entries: number }>("/provider-targets");
+}
+
+export function testAIConnection(args: {
+  expectedConfigurationVersion: number;
+  expectedTargetFingerprint: string;
+  key: string;
+}) {
+  return rootRequest<{ probe: ProbeView; ai_configuration: AIConfigDetail }>(
+    "/ai-configuration/test",
+    {
+      method: "POST",
+      key: args.key,
+      body: {
+        expected_configuration_version: args.expectedConfigurationVersion,
+        expected_target_fingerprint: args.expectedTargetFingerprint,
+      },
+    },
+  );
+}
+
+export function listAITests() {
+  return rootRequest<{ items: ProbeView[]; total: number }>("/ai-configuration/tests?limit=10");
+}
+
+export function cancelAITest(probeId: string) {
+  return rootRequest<ProbeView>(`/ai-configuration/tests/${probeId}/cancel`, { method: "POST" });
 }

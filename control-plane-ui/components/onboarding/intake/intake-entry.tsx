@@ -19,6 +19,9 @@ export function IntakeEntry() {
           Save policies, inventories and a prompt, leave, and resume later.
         </p>
       </div>
+      <Link href="/app/onboarding/ai-setup">
+        <Button variant="ghost">AI connection</Button>
+      </Link>
       <Link href="/app/onboarding/sessions">
         <Button variant="outline">
           {access.canManage ? "Prepare onboarding sources" : "View source preparation"}

@@ -26,7 +26,13 @@ from rai_gateway.models.onboarding import (
     OnboardingSourceRevision,
 )
 from rai_gateway.models.productization import BackgroundJob
-from rai_gateway.onboarding.service import JOB_TYPE, canonical_digest
+from rai_gateway.onboarding.service import (
+    EXTRACT_JOB_TYPE,
+    JOB_TYPE,
+    PROBE_JOB_TYPE,
+    STAGE_EXTRACT,
+    canonical_digest,
+)
 from rai_gateway.onboarding.storage import (
     SUPPORTED_FAMILIES,
     OnboardingSourceStore,
@@ -36,6 +42,7 @@ from rai_gateway.onboarding.storage import (
 from rai_gateway.sdk.domain import BackgroundJobStatus
 from rai_gateway.sdk.jobs import JobQueue
 
+SUPPORTED_JOB_TYPES = [JOB_TYPE, EXTRACT_JOB_TYPE, PROBE_JOB_TYPE]
 SessionFactory = Callable[[], Session]
 
 
@@ -104,7 +111,10 @@ def _lock_owned(
 def _is_latest(db: Session, run: OnboardingRun) -> bool:
     latest = (
         db.query(func.max(OnboardingRun.run_number))
-        .filter(OnboardingRun.session_id == run.session_id)
+        .filter(
+            OnboardingRun.session_id == run.session_id,
+            OnboardingRun.stage == run.stage,
+        )
         .scalar()
     )
     return latest == run.run_number
@@ -183,6 +193,10 @@ def publish_failure(
             return True
         job.completed_at = _now()
         run.ended_at = _now()
+        if run.stage == STAGE_EXTRACT:
+            from rai_gateway.onboarding.extraction import finalize_pending_sources
+
+            finalize_pending_sources(db, run.id, "RUN_ABORTED")
         _audit(
             db,
             "onboarding.run.failed",
@@ -202,7 +216,7 @@ def reap_expired(db: Session) -> int:
     candidates = (
         db.query(BackgroundJob.id)
         .filter(
-            BackgroundJob.job_type == JOB_TYPE,
+            BackgroundJob.job_type.in_(SUPPORTED_JOB_TYPES),
             BackgroundJob.status == BackgroundJobStatus.RUNNING.value,
             BackgroundJob.lease_expires_at < now,
             BackgroundJob.attempt_count >= BackgroundJob.max_attempts,
@@ -215,6 +229,13 @@ def reap_expired(db: Session) -> int:
             db.query(OnboardingRun).filter(OnboardingRun.job_id == job_id).one_or_none()
         )
         try:
+            if run is None:
+                from rai_gateway.onboarding.provider_probe import reap_probe
+
+                handled = reap_probe(db, job_id)
+                if handled is not None:  # a provider probe owns this job
+                    reaped += int(handled)
+                    continue
             if run is not None:
                 db.query(OnboardingSession).filter(
                     OnboardingSession.id == run.session_id
@@ -242,6 +263,12 @@ def reap_expired(db: Session) -> int:
             if run is not None and run.ended_at is None:
                 db.refresh(run)
                 run.ended_at = _now()
+                if run.stage == STAGE_EXTRACT:
+                    from rai_gateway.onboarding.extraction import (
+                        finalize_pending_sources,
+                    )
+
+                    finalize_pending_sources(db, run.id, "RUN_ABORTED")
                 _audit(
                     db,
                     "onboarding.run.failed",
@@ -306,6 +333,17 @@ def process_claimed_job(
     """Run one claimed attempt. Returns an outcome label (for logs/tests)."""
     db = session_factory()
     try:
+        job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).one()
+        job_type = job.job_type
+        db.rollback()
+        if job_type == EXTRACT_JOB_TYPE:
+            from rai_gateway.onboarding.extraction import process_extraction_job
+
+            return process_extraction_job(session_factory, store, job_id, token)
+        if job_type == PROBE_JOB_TYPE:
+            from rai_gateway.onboarding.provider_probe import process_probe_job
+
+            return process_probe_job(session_factory, job_id, token)
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).one()
         try:
             run = _validate_binding(db, job)
@@ -483,7 +521,7 @@ def run_pass(
         db = session_factory()
         try:
             claimed = JobQueue(db).claim_leased(
-                job_types=[JOB_TYPE],
+                job_types=SUPPORTED_JOB_TYPES,
                 worker_id=worker_id,
                 lease_seconds=settings.onboarding_job_lease_seconds,
             )

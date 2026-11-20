@@ -28,6 +28,7 @@ from rai_gateway.core.database import get_db
 from rai_gateway.core.errors import ErrorCode, RaiException
 from rai_gateway.core.tenant_context import TenantContext
 from rai_gateway.onboarding.service import (
+    PROVIDERS_PERMISSION,
     SOURCES_PERMISSION,
     Access,
     IntakeError,
@@ -36,6 +37,7 @@ from rai_gateway.onboarding.service import (
 from rai_gateway.onboarding.storage import FAMILY_CONTENT_TYPE, get_source_store
 
 PREFIX = "/v1/productization/onboarding/sessions"
+LIMITED_PREFIX = "/v1/productization/onboarding/"
 router = APIRouter(prefix=PREFIX, tags=["onboarding-intake"])
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9._:\-]{8,128}$")
@@ -90,6 +92,14 @@ def manage_access(
     return tenant, access
 
 
+def provider_access(
+    tenant: TenantContext = Depends(require_permission("sdk:manage")),
+) -> TenantContext:
+    if not tenant.has_permission(PROVIDERS_PERMISSION):
+        raise _deny(PROVIDERS_PERMISSION)
+    return tenant
+
+
 def _service(db: Session, tenant: TenantContext) -> IntakeService:
     return IntakeService(db, get_source_store(), actor=tenant.user_id)
 
@@ -129,6 +139,34 @@ class SourcePatchBody(BaseModel):
 class RunRequestBody(BaseModel):
     expected_row_version: int = Field(ge=1)
     requested_input_revision: int = Field(ge=0)
+
+
+class ParsingOptionsBody(BaseModel):
+    options: dict[str, Any]
+    expected_row_version: int = Field(ge=1)
+
+
+class ExtractBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    requested_input_revision: int = Field(ge=0)
+    preparation_run_id: UUID
+    expected_parser_fingerprint: str = Field(min_length=8, max_length=128)
+
+
+class AIConfigBody(BaseModel):
+    expected_configuration_version: int = Field(ge=1)
+    enabled: bool
+    target_key: str | None = Field(default=None, max_length=64)
+    model: str | None = Field(default=None, max_length=128)
+    structured_mode: str | None = Field(
+        default=None, pattern="^(JSON_SCHEMA|JSON_OBJECT)$"
+    )
+    max_output_tokens: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class AITestBody(BaseModel):
+    expected_configuration_version: int = Field(ge=1)
+    expected_target_fingerprint: str = Field(min_length=8, max_length=128)
 
 
 # ------------------------------------------------------------------ sessions
@@ -566,6 +604,291 @@ def retry_run(
     )
 
 
+# ---------------------------------------------------- Step 03: extraction
+@router.patch("/{session_id}/sources/{source_id}/parsing-options")
+def set_parsing_options(
+    session_id: UUID,
+    source_id: UUID,
+    body: ParsingOptionsBody,
+    response: Response,
+    key: str = Depends(idempotency_key),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(manage_access),
+):
+    tenant, access = pair
+    _no_store(response)
+    return _service(db, tenant).set_parsing_options(
+        session_id,
+        source_id,
+        options=body.options,
+        expected_row_version=body.expected_row_version,
+        idempotency_key=key,
+        access=access,
+    )
+
+
+@router.post("/{session_id}/extract", status_code=202)
+def extract_sources(
+    session_id: UUID,
+    body: ExtractBody,
+    response: Response,
+    key: str = Depends(idempotency_key),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(manage_access),
+):
+    from rai_gateway.onboarding.extraction import ExtractionService
+
+    tenant, access = pair
+    _no_store(response)
+    result = ExtractionService(_service(db, tenant)).extract(
+        session_id,
+        expected_row_version=body.expected_row_version,
+        requested_input_revision=body.requested_input_revision,
+        preparation_run_id=body.preparation_run_id,
+        expected_parser_fingerprint=body.expected_parser_fingerprint,
+        idempotency_key=key,
+        access=access,
+    )
+    if result["run"]["state"] == "SUCCEEDED":
+        response.status_code = 200
+    return result
+
+
+@router.get("/{session_id}/extractions")
+def list_extractions(
+    session_id: UUID,
+    response: Response,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(read_access),
+):
+    from rai_gateway.onboarding.extraction import ExtractionService
+
+    tenant, access = pair
+    _no_store(response)
+    return ExtractionService(_service(db, tenant)).list_extractions(
+        session_id, access, limit=limit, offset=offset
+    )
+
+
+@router.get("/{session_id}/extractions/{extraction_id}/blocks")
+def list_blocks(
+    session_id: UUID,
+    extraction_id: UUID,
+    response: Response,
+    after: int = Query(default=-1, ge=-1),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(content_access),
+):
+    from rai_gateway.onboarding.extraction import ExtractionService
+
+    tenant, access = pair
+    _no_store(response)
+    service = _service(db, tenant)
+    result = ExtractionService(service).list_blocks(
+        session_id, extraction_id, after=after, limit=limit
+    )
+    if after == -1:  # first page open = content access
+        service._audit(
+            "onboarding.extraction.content_read",
+            {"session_id": str(session_id), "extraction_id": str(extraction_id)},
+            "CONTENT_ACCESSED",
+        )
+        db.commit()
+    return result
+
+
+@router.get("/{session_id}/citations/{block_id}")
+def get_citation(
+    session_id: UUID,
+    block_id: UUID,
+    response: Response,
+    start: int | None = Query(default=None, ge=0),
+    end: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(content_access),
+):
+    from rai_gateway.onboarding.extraction import ExtractionService
+
+    tenant, access = pair
+    _no_store(response)
+    service = _service(db, tenant)
+    result = ExtractionService(service).citation(
+        session_id, block_id, start=start, end=end
+    )
+    service._audit(
+        "onboarding.citation.read",
+        {"session_id": str(session_id), "block_id": str(block_id)},
+        "CONTENT_ACCESSED",
+    )
+    db.commit()
+    return result
+
+
+# ------------------------------------------- Step 03: capabilities and AI setup
+meta_router = APIRouter(
+    prefix="/v1/productization/onboarding", tags=["onboarding-intake"]
+)
+
+
+@meta_router.get("/capabilities")
+def capabilities(
+    response: Response,
+    pair: tuple[TenantContext, Access] = Depends(read_access),
+):
+    from rai_gateway.onboarding.ai_configuration import load_targets
+    from rai_gateway.onboarding.extraction import current_profile
+    from rai_gateway.onboarding.parsers.profile import supported_options
+
+    _no_store(response)
+    profile = current_profile()
+    targets, _ = load_targets()
+    return {
+        "formats": [
+            {"family": "PDF", "extensions": [".pdf"], "outputs": "page text"},
+            {
+                "family": "DOCX",
+                "extensions": [".docx"],
+                "outputs": "paragraphs and tables",
+            },
+            {"family": "XLSX", "extensions": [".xlsx"], "outputs": "cells"},
+            {"family": "CSV", "extensions": [".csv"], "outputs": "records"},
+            {"family": "TXT", "extensions": [".txt"], "outputs": "lines"},
+            {
+                "family": "MARKDOWN",
+                "extensions": [".md", ".markdown"],
+                "outputs": "lines",
+            },
+        ],
+        "ocr": False,
+        "parsing_options": supported_options(),
+        "parser_profile": {
+            "fingerprint": profile["fingerprint"],
+            "build": profile["build"],
+            "dependencies": profile["dependencies"],
+            "limits": profile["limits"],
+        },
+        "ai": {"approved_targets": len(targets)},
+    }
+
+
+@meta_router.get("/ai-configuration")
+def get_ai_configuration(
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(read_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    tenant, access = pair
+    _no_store(response)
+    manager = tenant.has_permission("sdk:manage") and tenant.has_permission(
+        PROVIDERS_PERMISSION
+    )
+    return AIConfigService(db, actor=tenant.user_id).summary(detailed=manager)
+
+
+@meta_router.put("/ai-configuration")
+def put_ai_configuration(
+    body: AIConfigBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    return AIConfigService(db, actor=tenant.user_id).save(
+        expected_configuration_version=body.expected_configuration_version,
+        enabled=body.enabled,
+        target_key=body.target_key,
+        model=body.model,
+        structured_mode=body.structured_mode,
+        max_output_tokens=body.max_output_tokens,
+    )
+
+
+@meta_router.get("/provider-targets")
+def provider_targets(
+    response: Response,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    return AIConfigService(db, actor=tenant.user_id).targets_view()
+
+
+@meta_router.post("/ai-configuration/test", status_code=202)
+def test_ai_connection(
+    body: AITestBody,
+    response: Response,
+    key: str = Depends(idempotency_key),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    service = AIConfigService(db, actor=tenant.user_id)
+    probe = service.request_test(
+        expected_configuration_version=body.expected_configuration_version,
+        expected_target_fingerprint=body.expected_target_fingerprint,
+        idempotency_key=key,
+    )
+    return {
+        "probe": service.probe_view(probe),
+        "ai_configuration": service.summary(detailed=True),
+    }
+
+
+@meta_router.get("/ai-configuration/tests")
+def list_ai_tests(
+    response: Response,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    return AIConfigService(db, actor=tenant.user_id).list_probes(
+        limit=limit, offset=offset
+    )
+
+
+@meta_router.get("/ai-configuration/tests/{probe_id}")
+def get_ai_test(
+    probe_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    service = AIConfigService(db, actor=tenant.user_id)
+    return service.probe_view(service.get_probe(probe_id))
+
+
+@meta_router.post("/ai-configuration/tests/{probe_id}/cancel")
+def cancel_ai_test(
+    probe_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(provider_access),
+):
+    from rai_gateway.onboarding.ai_configuration import AIConfigService
+
+    _no_store(response)
+    service = AIConfigService(db, actor=tenant.user_id)
+    return service.probe_view(service.cancel_probe(probe_id))
+
+
 # ------------------------------------------------------ errors and body limits
 async def intake_error_handler(_request: Request, exc: IntakeError) -> JSONResponse:
     return JSONResponse(
@@ -601,7 +924,7 @@ class OnboardingBodyLimitMiddleware:
         if (
             scope["type"] != "http"
             or scope["method"] not in ("POST", "PUT", "PATCH")
-            or not scope["path"].startswith(PREFIX)
+            or not scope["path"].startswith(LIMITED_PREFIX)
         ):
             await self.app(scope, receive, send)
             return
@@ -658,5 +981,6 @@ class OnboardingBodyLimitMiddleware:
 
 def register(app) -> None:
     app.include_router(router)
+    app.include_router(meta_router)
     app.add_exception_handler(IntakeError, intake_error_handler)
     app.add_middleware(OnboardingBodyLimitMiddleware)

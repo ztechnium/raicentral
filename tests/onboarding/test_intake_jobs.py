@@ -7,8 +7,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from onboarding_support import PDF, fresh
 
-from conftest import PDF, fresh
 from rai_gateway.core.config import settings
 from rai_gateway.models.onboarding import (
     OnboardingRun,
@@ -108,10 +108,9 @@ def test_prepare_queues_a_durable_job_and_a_worker_completes_it(
         done["checked_bytes"] > 0
         and done["input_revision"] == prepared["input_revision"]
     )
-    assert done["manifest"]["version"] == 1
+    assert done["manifest"]["version"] == 2  # new manifests snapshot parsing options
     assert all(
-        set(e)
-        == {
+        {
             "source_id",
             "source_revision_id",
             "kind",
@@ -119,7 +118,11 @@ def test_prepare_queues_a_durable_job_and_a_worker_completes_it(
             "sha256",
             "byte_length",
             "media_family",
+            "parsing_options",
+            "parsing_options_version",
+            "options_digest",
         }
+        == set(e)
         for e in done["manifest"]["entries"]
     )
     assert "analysis" not in str(view["allowed_actions"]).lower()

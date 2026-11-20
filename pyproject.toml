@@ -43,6 +43,9 @@ dependencies = [
     "structlog>=23.2.0",
     "openpyxl>=3.1.5",
     "click>=8.1.0",
+    "pypdf>=7.1.1",
+    "python-docx>=1.2.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.scripts]

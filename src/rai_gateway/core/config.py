@@ -276,6 +276,30 @@ class Settings(BaseSettings):
     onboarding_job_renew_seconds: float = 15.0
     onboarding_job_max_attempts: int = 5
 
+    # Onboarding extraction (Step 03): parser resource bounds. They are part of the
+    # extraction identity, so changing one produces a genuinely new extraction.
+    onboarding_parser_wall_seconds: float = 120.0
+    onboarding_parser_memory_bytes: int = 512 * 1024 * 1024
+    onboarding_pdf_max_pages: int = 300
+    onboarding_ooxml_max_entries: int = 10_000
+    onboarding_ooxml_max_total_bytes: int = 100 * 1024 * 1024
+    onboarding_ooxml_max_member_bytes: int = 25 * 1024 * 1024
+    onboarding_ooxml_max_ratio: int = 100
+    onboarding_xlsx_max_sheets: int = 50
+    onboarding_tabular_max_rows: int = 10_000
+    onboarding_tabular_max_columns: int = 200
+    onboarding_max_cells_visited: int = 200_000
+    onboarding_max_nonempty_cells: int = 50_000
+    onboarding_extract_output_bytes_per_source: int = 16 * 1024 * 1024
+    onboarding_extract_output_bytes_per_run: int = 64 * 1024 * 1024
+
+    # Explicit onboarding AI configuration (Step 03). A deployment-managed registry of
+    # approved targets (JSON list). No default provider, model or ambient credential.
+    onboarding_ai_targets_json: str = ""
+    onboarding_ai_probe_timeout_seconds: float = 30.0
+    onboarding_ai_probe_max_response_bytes: int = 64 * 1024
+    onboarding_ai_probe_default_max_tokens: int = 256
+
     @model_validator(mode="after")
     def _validate_onboarding_limits(self) -> "Settings":
         positive = {
@@ -291,7 +315,10 @@ class Settings(BaseSettings):
         for name, value in positive.items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
-        if self.onboarding_orphan_min_age_seconds <= self.onboarding_upload_timeout_seconds:
+        if (
+            self.onboarding_orphan_min_age_seconds
+            <= self.onboarding_upload_timeout_seconds
+        ):
             raise ValueError(
                 "onboarding_orphan_min_age_seconds must exceed "
                 "onboarding_upload_timeout_seconds"

@@ -134,6 +134,7 @@ describe("intake access and copy", () => {
       canRead: true,
       canContent: false,
       canManage: false,
+      canProviders: false,
     });
     expect(resolveIntakeAccess(["sdk:read", "onboarding:sources:read"]).canManage).toBe(false);
     expect(resolveIntakeAccess(["sdk:manage", "onboarding:sources:read"]).canContent).toBe(false);
@@ -141,6 +142,7 @@ describe("intake access and copy", () => {
       canRead: true,
       canContent: true,
       canManage: true,
+      canProviders: false,
     });
     expect(resolveIntakeAccess(null).canRead).toBe(false);
   });

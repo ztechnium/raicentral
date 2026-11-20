@@ -1,6 +1,12 @@
 import { useMemo } from "react";
 import { usePermissions } from "@/lib/hooks/use-auth";
-import type { RunSummary, SessionDetail, SessionView } from "@/lib/onboarding-api";
+import type {
+  AIState,
+  RunSummary,
+  SessionDetail,
+  SessionView,
+  SourceOutcome,
+} from "@/lib/onboarding-api";
 
 /**
  * Exact-permission intake capability. `sdk:read` shows sanitized progress;
@@ -12,7 +18,9 @@ export function resolveIntakeAccess(permissions: readonly string[] | null) {
   const canRead = list.includes("sdk:read");
   const canContent = canRead && list.includes("onboarding:sources:read");
   const canManage = canContent && list.includes("sdk:manage");
-  return { canRead, canContent, canManage };
+  // Provider setup needs sdk:manage plus its own dedicated permission.
+  const canProviders = list.includes("sdk:manage") && list.includes("onboarding:providers:manage");
+  return { canRead, canContent, canManage, canProviders };
 }
 
 export function useIntakeAccess() {
@@ -43,11 +51,14 @@ const ERROR_COPY: Record<string, string> = {
   SOURCE_TOO_LARGE: "A saved source exceeds the size limit.",
   INVALID_RUN_BINDING: "The preparation job was not recognized.",
   LEASE_EXPIRED: "The worker stopped responding repeatedly. Retry to start a new attempt.",
+  PARSER_PROFILE_MISMATCH:
+    "The worker uses a different parser configuration than the server. Ask an operator to align them, then extract again.",
 };
 
 /** Human status for the current run, from real server state only. */
 export function runStatus(run: RunSummary | null): { title: string; detail: string } | null {
   if (!run) return null;
+  if (run.stage === "EXTRACT_SOURCES") return extractionRunStatus(run);
   switch (run.state) {
     case "QUEUED":
       return { title: "Queued", detail: "Waiting for a worker." };
@@ -100,3 +111,143 @@ export function formatBytes(n: number): string {
 }
 
 export const SUPPORTED_ACCEPT = ".pdf,.docx,.xlsx,.csv,.txt,.md,.markdown";
+
+function extractionRunStatus(run: RunSummary): { title: string; detail: string } {
+  switch (run.state) {
+    case "QUEUED":
+      return { title: "Extraction queued", detail: "Waiting for a worker." };
+    case "RETRY_SCHEDULED":
+      return {
+        title: "Extraction retry scheduled",
+        detail: `Attempt ${run.attempt_count} of ${run.max_attempts} did not finish. Another attempt is scheduled.`,
+      };
+    case "PREPARING":
+      return {
+        title: "Extracting text and tables",
+        detail: `${run.sources_checked ?? 0} of ${run.sources_total ?? run.source_count} sources processed.`,
+      };
+    case "SUCCEEDED":
+      // Worker activity, not source quality: see each source's own outcome.
+      return {
+        title: "Extraction finished",
+        detail: "The worker recorded an outcome for every source. Check each source below.",
+      };
+    case "FAILED":
+      return {
+        title: "Extraction failed",
+        detail: (run.error_code && ERROR_COPY[run.error_code]) || "Extraction did not complete.",
+      };
+    case "CANCELLED":
+      return {
+        title: "Extraction cancelled",
+        detail: "Unprocessed sources were recorded as not processed.",
+      };
+  }
+}
+
+const OUTCOME_LABELS: Record<SourceOutcome, string> = {
+  COMPLETE: "Text extracted",
+  PARTIAL: "Partially extracted",
+  NEEDS_OCR: "Needs OCR",
+  NEEDS_INPUT: "Needs parsing options",
+  UNSUPPORTED: "Unsupported",
+  FAILED: "Failed",
+  NOT_PROCESSED: "Not processed",
+};
+
+export function outcomeLabel(outcome: SourceOutcome | null | undefined): string {
+  return outcome ? OUTCOME_LABELS[outcome] : "Pending";
+}
+
+/** Concrete guidance matched to the reason. No OCR, password or AI-repair action exists. */
+export function outcomeGuidance(
+  outcome: SourceOutcome | null,
+  reason?: string | null,
+): string | null {
+  if (!outcome || outcome === "COMPLETE") return null;
+  const byReason: Record<string, string> = {
+    ENCODING_ERROR:
+      "Choose the file encoding (for Arabic legacy exports try Windows-1256), then prepare and extract again.",
+    AMBIGUOUS_DELIMITER: "Choose the CSV delimiter explicitly, then prepare and extract again.",
+    NO_USABLE_TEXT:
+      "No readable text was found. Replace the file, or exclude it if it is not needed.",
+    SCANNED_IMAGE_ONLY:
+      "This looks scanned. OCR is not available yet: provide a searchable PDF, or exclude it.",
+    OCR_REQUIRED:
+      "Some pages are scanned images. Provide a searchable replacement, or exclude the source.",
+    PASSWORD_REQUIRED:
+      "Password-protected files are not supported. Provide a permitted, unprotected copy.",
+    MALFORMED_DOCUMENT: "The file could not be read. Replace a damaged file, or exclude it.",
+    PAGE_LIMIT: "The page limit was reached. Split the document or exclude it.",
+    ROW_LIMIT: "The row limit was reached. Split the file or exclude it.",
+    OUTPUT_LIMIT: "The output limit was reached. Split the file or exclude it.",
+    SOURCE_MISSING:
+      "The saved original is missing from storage. Ask an operator to restore it, or re-upload.",
+    SOURCE_INTEGRITY_FAILED:
+      "The saved original no longer matches its checksum. Re-upload the file.",
+    RUN_OUTPUT_LIMIT: "The run output limit was reached before this source. Extract again.",
+    RUN_CANCELLED: "The run was cancelled before this source. Extract again.",
+    RUN_ABORTED: "The run stopped before this source. Extract again.",
+  };
+  if (reason && byReason[reason]) return byReason[reason];
+  return "Replace the file, change its parsing options, or exclude it.";
+}
+
+const AI_LABELS: Record<AIState, string> = {
+  UNCONFIGURED: "Not configured",
+  DISABLED: "Disabled",
+  TARGET_UNAVAILABLE: "Approved target unavailable",
+  CONFIGURED_UNTESTED: "Configured, not tested",
+  TEST_PENDING: "Test in progress",
+  TEST_PASSED: "Last test passed",
+  TEST_FAILED: "Last test failed",
+  TEST_UNKNOWN: "Last test outcome unknown",
+  TEST_STALE: "Test is out of date",
+};
+
+export function aiStateLabel(state: AIState): string {
+  return AI_LABELS[state];
+}
+
+/**
+ * Text offsets are Unicode code points (not UTF-16 units). Array.from iterates by code
+ * point, so these slices match the server's start-inclusive/end-exclusive ranges.
+ */
+export function codePointSlice(text: string, start: number, end: number): string {
+  return Array.from(text).slice(start, end).join("");
+}
+
+export function highlightParts(
+  text: string,
+  start: number,
+  end: number,
+): { before: string; match: string; after: string } {
+  const points = Array.from(text);
+  return {
+    before: points.slice(0, start).join(""),
+    match: points.slice(start, end).join(""),
+    after: points.slice(end).join(""),
+  };
+}
+
+export function codePointLength(text: string): number {
+  return Array.from(text).length;
+}
+
+/** Human locator in one-based native coordinates. Never invents pages or columns. */
+export function describeLocator(locator: Record<string, unknown> & { type: string }): string {
+  switch (locator.type) {
+    case "PDF_PAGE":
+      return `Page ${locator.page}`;
+    case "DOCX_PATH":
+      return `${locator.part} · ${locator.path}`;
+    case "XLSX_CELL":
+      return `Sheet ${locator.sheet_index} “${locator.sheet_name}” · cell ${locator.cell}`;
+    case "CSV_RECORD":
+      return `Record ${locator.record} · lines ${locator.start_line}–${locator.end_line}`;
+    case "TEXT_LINES":
+      return `Lines ${locator.start_line}–${locator.end_line}`;
+    default:
+      return locator.type;
+  }
+}

@@ -100,6 +100,8 @@ class OnboardingSourceStore(Protocol):
 
     def verify(self, key: str, *, sha256: str, byte_length: int) -> None: ...
 
+    def local_path(self, key: str) -> Path: ...
+
     def check_writable(self) -> None: ...
 
     def cleanup_orphans(
@@ -302,6 +304,13 @@ class FilesystemSourceStore:
             raise SourceStorageError("Original is missing") from exc
         except OSError as exc:
             raise SourceStorageError("Source storage is unavailable") from exc
+
+    def local_path(self, key: str) -> Path:
+        """Contained, symlink-free path of an original (filesystem adapter only)."""
+        path = self._path_for(key)
+        if not path.is_file():
+            raise SourceStorageError("Original is missing")
+        return path
 
     def verify(self, key: str, *, sha256: str, byte_length: int) -> None:
         """Check existence, exact size and digest. Raises SourceStorageError."""
