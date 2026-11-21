@@ -186,8 +186,10 @@ class RegistrySnapshot:
 
 
 def capture_snapshot(db: Session) -> RegistrySnapshot:
-    """Capture registry state under a single REPEATABLE READ transaction."""
-    db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+    """Capture registry state under REPEATABLE READ when the transaction is still empty."""
+    conn = db.connection()
+    if not conn.in_transaction():
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
     systems = [_row_system(r) for r in db.query(AISystem).order_by(AISystem.system_key)]
     agents = [_row_agent(r) for r in db.query(Agent).order_by(Agent.agent_key)]
     versions = [
