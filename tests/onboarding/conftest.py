@@ -29,12 +29,21 @@ def clean_onboarding(request):
         return
     db_engine = request.getfixturevalue("db_engine")
     statements = [
+        "DELETE FROM onboarding_proposal_edits",
+        "UPDATE onboarding_proposal_sets SET current_reconciliation_id = NULL",
+        "DELETE FROM onboarding_reconciliation_snapshots",
+        "DELETE FROM onboarding_inventory_proposals",
+        "DELETE FROM onboarding_proposal_sets",
+        "DELETE FROM onboarding_discovery_calls",
+        "DELETE FROM onboarding_clarification_answers",
+        "DELETE FROM onboarding_discovery_plans",
         "DELETE FROM onboarding_run_sources",
         "DELETE FROM onboarding_extracted_blocks",
         "DELETE FROM onboarding_source_extractions",
         "DELETE FROM onboarding_provider_probes",
         "DELETE FROM onboarding_ai_configuration",
-        "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL",
+        "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL, "
+        "extraction_run_id = NULL, discovery_plan_id = NULL",
         "UPDATE onboarding_sources SET current_revision_id = NULL",
         "DELETE FROM onboarding_runs",
         "DELETE FROM onboarding_source_revisions",

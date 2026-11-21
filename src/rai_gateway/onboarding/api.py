@@ -29,6 +29,7 @@ from rai_gateway.core.errors import ErrorCode, RaiException
 from rai_gateway.core.tenant_context import TenantContext
 from rai_gateway.onboarding.service import (
     PROVIDERS_PERMISSION,
+    REGISTRY_PERMISSION,
     SOURCES_PERMISSION,
     Access,
     IntakeError,
@@ -92,6 +93,24 @@ def manage_access(
     return tenant, access
 
 
+def inventory_access(
+    tenant: TenantContext = Depends(require_permission("sdk:manage")),
+) -> tuple[TenantContext, Access]:
+    access = Access.from_tenant(tenant)
+    if not access.can_inventory:
+        missing = []
+        if not tenant.has_permission(SOURCES_PERMISSION):
+            missing.append(SOURCES_PERMISSION)
+        if not tenant.has_permission(REGISTRY_PERMISSION):
+            missing.append(REGISTRY_PERMISSION)
+        raise RaiException(
+            error_code=ErrorCode.NOT_ALLOWED,
+            message="Missing required permission",
+            details={"required_permissions": missing or [SOURCES_PERMISSION]},
+        )
+    return tenant, access
+
+
 def provider_access(
     tenant: TenantContext = Depends(require_permission("sdk:manage")),
 ) -> TenantContext:
@@ -151,6 +170,37 @@ class ExtractBody(BaseModel):
     requested_input_revision: int = Field(ge=0)
     preparation_run_id: UUID
     expected_parser_fingerprint: str = Field(min_length=8, max_length=128)
+
+
+class InventoryPreviewBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    requested_input_revision: int = Field(ge=0)
+    requested_clarification_revision: int = Field(ge=0)
+    extraction_run_id: UUID
+
+
+class InventoryAnalyzeBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    requested_input_revision: int = Field(ge=0)
+    requested_clarification_revision: int = Field(ge=0)
+    plan_id: UUID
+    expected_plan_digest: str = Field(min_length=64, max_length=64)
+
+
+class RefreshMatchesBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    expected_edit_version: int = Field(ge=1)
+
+
+class ClarificationAnswerBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    expected_clarification_revision: int = Field(ge=0)
+    question_id: str = Field(min_length=1, max_length=64)
+    question_snapshot: dict[str, Any]
+    answer_text: str = Field(max_length=8000)
+    unknown: bool = False
+    set_id: UUID | None = None
+    proposal_id: UUID | None = None
 
 
 class AIConfigBody(BaseModel):
@@ -725,6 +775,184 @@ def get_citation(
     )
     db.commit()
     return result
+
+
+# ------------------------------------------------------ Step 04: inventory
+@router.post("/{session_id}/inventory/preview")
+def inventory_preview(
+    session_id: UUID,
+    body: InventoryPreviewBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).preview(
+        session_id,
+        expected_row_version=body.expected_row_version,
+        requested_input_revision=body.requested_input_revision,
+        requested_clarification_revision=body.requested_clarification_revision,
+        extraction_run_id=body.extraction_run_id,
+        access=access,
+    )
+
+
+@router.post("/{session_id}/inventory/analyze", status_code=202)
+def inventory_analyze(
+    session_id: UUID,
+    body: InventoryAnalyzeBody,
+    response: Response,
+    key: str = Depends(idempotency_key),
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).analyze(
+        session_id,
+        expected_row_version=body.expected_row_version,
+        requested_input_revision=body.requested_input_revision,
+        requested_clarification_revision=body.requested_clarification_revision,
+        plan_id=body.plan_id,
+        expected_plan_digest=body.expected_plan_digest,
+        idempotency_key=key,
+        access=access,
+    )
+
+
+@router.get("/{session_id}/proposal-sets")
+def list_proposal_sets(
+    session_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).list_proposal_sets(
+        session_id, access
+    )
+
+
+@router.get("/{session_id}/proposal-sets/{set_id}")
+def get_proposal_set(
+    session_id: UUID,
+    set_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).get_proposal_set(
+        session_id, set_id, access
+    )
+
+
+@router.get("/{session_id}/proposal-sets/{set_id}/proposals")
+def list_proposals(
+    session_id: UUID,
+    set_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).list_proposals(
+        session_id, set_id, access
+    )
+
+
+@router.get("/{session_id}/proposal-sets/{set_id}/proposals/{proposal_id}")
+def get_proposal(
+    session_id: UUID,
+    set_id: UUID,
+    proposal_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).get_proposal(
+        session_id, set_id, proposal_id, access
+    )
+
+
+@router.post("/{session_id}/proposal-sets/{set_id}/refresh-matches")
+def refresh_matches(
+    session_id: UUID,
+    set_id: UUID,
+    body: RefreshMatchesBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.discovery_service import DiscoveryService
+
+    tenant, access = pair
+    _no_store(response)
+    return DiscoveryService(_service(db, tenant)).refresh_matches(
+        session_id,
+        set_id,
+        expected_edit_version=body.expected_edit_version,
+        expected_row_version=body.expected_row_version,
+        access=access,
+    )
+
+
+@router.post("/{session_id}/clarification-answers")
+def save_clarification_answer(
+    session_id: UUID,
+    body: ClarificationAnswerBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.clarifications import ClarificationService
+
+    tenant, access = pair
+    _no_store(response)
+    return ClarificationService(_service(db, tenant)).save_answer(
+        session_id,
+        question_id=body.question_id,
+        question_snapshot=body.question_snapshot,
+        answer_text=body.answer_text,
+        unknown=body.unknown,
+        expected_row_version=body.expected_row_version,
+        expected_clarification_revision=body.expected_clarification_revision,
+        set_id=body.set_id,
+        proposal_id=body.proposal_id,
+    )
+
+
+@router.get("/{session_id}/clarification-answers/{answer_id}")
+def get_clarification_answer(
+    session_id: UUID,
+    answer_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(inventory_access),
+):
+    from rai_gateway.onboarding.clarifications import ClarificationService
+
+    tenant, access = pair
+    _no_store(response)
+    return ClarificationService(_service(db, tenant)).get_answer(session_id, answer_id)
 
 
 # ------------------------------------------- Step 03: capabilities and AI setup

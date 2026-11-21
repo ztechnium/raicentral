@@ -41,9 +41,12 @@ from rai_gateway.sdk.jobs import JobQueue
 
 JOB_TYPE = "ONBOARDING_PREPARE_SOURCES"
 EXTRACT_JOB_TYPE = "ONBOARDING_EXTRACT_SOURCES"
+DISCOVER_JOB_TYPE = "ONBOARDING_DISCOVER_INVENTORY"
 PROBE_JOB_TYPE = "ONBOARDING_TEST_PROVIDER"
 STAGE_PREPARE = "PREPARE_SOURCES"
 STAGE_EXTRACT = "EXTRACT_SOURCES"
+STAGE_DISCOVER = "DISCOVER_INVENTORY"
+REGISTRY_PERMISSION = "registry:read"
 # Manifest v1 (Step 02) has no parsing-option snapshots; v2 (Step 03) does.
 MANIFEST_VERSION = 2
 SOURCES_PERMISSION = "onboarding:sources:read"
@@ -100,13 +103,21 @@ class Access:
     can_read: bool
     can_content: bool
     can_manage: bool
+    can_inventory: bool
 
     @classmethod
     def from_tenant(cls, tenant: Any) -> "Access":
         read = tenant.has_permission("sdk:read")
         content = read and tenant.has_permission(SOURCES_PERMISSION)
+        registry = read and tenant.has_permission(REGISTRY_PERMISSION)
         manage = content and tenant.has_permission("sdk:manage")
-        return cls(can_read=read, can_content=content, can_manage=manage)
+        inventory = manage and content and registry
+        return cls(
+            can_read=read,
+            can_content=content,
+            can_manage=manage,
+            can_inventory=inventory,
+        )
 
 
 def utcnow() -> datetime:

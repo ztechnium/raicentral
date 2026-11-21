@@ -299,6 +299,8 @@ class Settings(BaseSettings):
     onboarding_ai_probe_timeout_seconds: float = 30.0
     onboarding_ai_probe_max_response_bytes: int = 64 * 1024
     onboarding_ai_probe_default_max_tokens: int = 256
+    # Step 04: deterministic partition parser for CI (no live provider calls).
+    onboarding_discovery_fixture: bool = False
 
     @model_validator(mode="after")
     def _validate_onboarding_limits(self) -> "Settings":

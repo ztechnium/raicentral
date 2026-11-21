@@ -707,3 +707,68 @@ export function listAITests() {
 export function cancelAITest(probeId: string) {
   return rootRequest<ProbeView>(`/ai-configuration/tests/${probeId}/cancel`, { method: "POST" });
 }
+
+export interface InventoryPreview {
+  plan_id: string;
+  plan_digest: string;
+  status: string;
+  partition_count: number;
+  fixture_mode?: boolean;
+}
+
+export interface ProposalSummary {
+  id: string;
+  entity_type: string;
+  generated: Record<string, unknown>;
+  match_state?: string;
+  suggested_action?: string;
+}
+
+export function previewInventory(
+  sessionId: string,
+  body: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    requested_clarification_revision: number;
+    extraction_run_id: string;
+  },
+) {
+  return request<InventoryPreview>(`/${sessionId}/inventory/preview`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function analyzeInventory(
+  sessionId: string,
+  args: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    requested_clarification_revision: number;
+    plan_id: string;
+    expected_plan_digest: string;
+    key: string;
+  },
+) {
+  return request<RunMutationResult>(`/${sessionId}/inventory/analyze`, {
+    method: "POST",
+    key: args.key,
+    body: {
+      expected_row_version: args.expected_row_version,
+      requested_input_revision: args.requested_input_revision,
+      requested_clarification_revision: args.requested_clarification_revision,
+      plan_id: args.plan_id,
+      expected_plan_digest: args.expected_plan_digest,
+    },
+  });
+}
+
+export function listProposalSets(sessionId: string) {
+  return request<{ items: { id: string; edit_version: number }[]; total: number }>(
+    `/${sessionId}/proposal-sets`,
+  );
+}
+
+export function listInventoryProposals(sessionId: string, setId: string) {
+  return request<{ items: ProposalSummary[] }>(`/${sessionId}/proposal-sets/${setId}/proposals`);
+}

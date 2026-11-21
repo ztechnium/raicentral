@@ -23,7 +23,9 @@ from rai_gateway.onboarding.service import JOB_TYPE, Access, IntakeError, Intake
 from rai_gateway.onboarding.storage import FilesystemSourceStore, SourceStorageError
 from rai_gateway.sdk.jobs import JobQueue
 
-ADMIN_ACCESS = Access(can_read=True, can_content=True, can_manage=True)
+ADMIN_ACCESS = Access(
+    can_read=True, can_content=True, can_manage=True, can_inventory=True
+)
 
 
 def _past() -> datetime:
