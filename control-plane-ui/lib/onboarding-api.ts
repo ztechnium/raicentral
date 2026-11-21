@@ -772,3 +772,76 @@ export function listProposalSets(sessionId: string) {
 export function listInventoryProposals(sessionId: string, setId: string) {
   return request<{ items: ProposalSummary[] }>(`/${sessionId}/proposal-sets/${setId}/proposals`);
 }
+
+export interface GovernancePreview {
+  plan_id: string;
+  plan_digest: string;
+  status: string;
+  partition_count: number;
+  inventory_proposal_set_id: string;
+  fixture_mode?: boolean;
+}
+
+export interface GovernanceProposalSummary {
+  id: string;
+  proposal_family: string;
+  generated: Record<string, unknown>;
+  match_state?: string;
+  runtime_verification?: string;
+  capability?: Record<string, unknown>;
+}
+
+export function previewGovernance(
+  sessionId: string,
+  body: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    requested_inventory_clarification_revision: number;
+    requested_governance_clarification_revision: number;
+    inventory_proposal_set_id: string;
+    include_suggested_controls?: boolean;
+  },
+) {
+  return request<GovernancePreview>(`/${sessionId}/governance/preview`, {
+    method: "POST",
+    body,
+  });
+}
+
+export function generateGovernance(
+  sessionId: string,
+  args: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    requested_inventory_clarification_revision: number;
+    requested_governance_clarification_revision: number;
+    plan_id: string;
+    expected_plan_digest: string;
+    key: string;
+  },
+) {
+  return request<RunMutationResult>(`/${sessionId}/governance/generate`, {
+    method: "POST",
+    key: args.key,
+    body: {
+      expected_row_version: args.expected_row_version,
+      requested_input_revision: args.requested_input_revision,
+      requested_inventory_clarification_revision: args.requested_inventory_clarification_revision,
+      requested_governance_clarification_revision: args.requested_governance_clarification_revision,
+      plan_id: args.plan_id,
+      expected_plan_digest: args.expected_plan_digest,
+    },
+  });
+}
+
+export function listGovernanceSets(sessionId: string) {
+  return request<{ items: { id: string; edit_version: number }[]; total: number }>(
+    `/${sessionId}/governance-sets`,
+  );
+}
+
+export function listGovernanceProposals(sessionId: string, setId: string) {
+  return request<{ items: GovernanceProposalSummary[] }>(
+    `/${sessionId}/governance-sets/${setId}/proposals`,
+  );
+}

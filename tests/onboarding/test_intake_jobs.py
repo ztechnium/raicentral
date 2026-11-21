@@ -24,7 +24,11 @@ from rai_gateway.onboarding.storage import FilesystemSourceStore, SourceStorageE
 from rai_gateway.sdk.jobs import JobQueue
 
 ADMIN_ACCESS = Access(
-    can_read=True, can_content=True, can_manage=True, can_inventory=True
+    can_read=True,
+    can_content=True,
+    can_manage=True,
+    can_inventory=True,
+    can_governance=True,
 )
 
 

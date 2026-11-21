@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ExtractionPanel } from "@/components/onboarding/intake/extraction-panel";
+import { GovernancePanel } from "@/components/onboarding/intake/governance-panel";
 import { InventoryPanel } from "@/components/onboarding/intake/inventory-panel";
 import { SourceHistory } from "@/components/onboarding/intake/source-history";
 import {
@@ -553,6 +554,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           />
 
           <InventoryPanel
+            session={session}
+            canManage={access.canManage}
+            onReload={reload}
+          />
+
+          <GovernancePanel
             session={session}
             canManage={access.canManage}
             onReload={reload}
