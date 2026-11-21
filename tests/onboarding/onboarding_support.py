@@ -9,7 +9,11 @@ import zipfile
 
 from fastapi.testclient import TestClient
 
-PURE_MODULES = {"test_parsers", "test_discovery_reconciliation"}
+PURE_MODULES = {
+    "test_parsers",
+    "test_discovery_reconciliation",
+    "test_governance_compiler",
+}
 PDF = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 

@@ -42,11 +42,16 @@ from rai_gateway.sdk.jobs import JobQueue
 JOB_TYPE = "ONBOARDING_PREPARE_SOURCES"
 EXTRACT_JOB_TYPE = "ONBOARDING_EXTRACT_SOURCES"
 DISCOVER_JOB_TYPE = "ONBOARDING_DISCOVER_INVENTORY"
+GOVERNANCE_JOB_TYPE = "ONBOARDING_GENERATE_GOVERNANCE"
 PROBE_JOB_TYPE = "ONBOARDING_TEST_PROVIDER"
 STAGE_PREPARE = "PREPARE_SOURCES"
 STAGE_EXTRACT = "EXTRACT_SOURCES"
 STAGE_DISCOVER = "DISCOVER_INVENTORY"
+STAGE_GOVERNANCE = "GENERATE_GOVERNANCE"
 REGISTRY_PERMISSION = "registry:read"
+POLICIES_PERMISSION = "policies:read"
+RISK_PERMISSION = "risk:read"
+ORG_GOVERNANCE_PERMISSION = "organization_governance:read"
 # Manifest v1 (Step 02) has no parsing-option snapshots; v2 (Step 03) does.
 MANIFEST_VERSION = 2
 SOURCES_PERMISSION = "onboarding:sources:read"
@@ -104,19 +109,27 @@ class Access:
     can_content: bool
     can_manage: bool
     can_inventory: bool
+    can_governance: bool
 
     @classmethod
     def from_tenant(cls, tenant: Any) -> "Access":
         read = tenant.has_permission("sdk:read")
         content = read and tenant.has_permission(SOURCES_PERMISSION)
         registry = read and tenant.has_permission(REGISTRY_PERMISSION)
+        policies = read and tenant.has_permission(POLICIES_PERMISSION)
+        risk = read and tenant.has_permission(RISK_PERMISSION)
+        org_governance = read and tenant.has_permission(ORG_GOVERNANCE_PERMISSION)
         manage = content and tenant.has_permission("sdk:manage")
         inventory = manage and content and registry
+        governance = (
+            manage and content and registry and policies and risk and org_governance
+        )
         return cls(
             can_read=read,
             can_content=content,
             can_manage=manage,
             can_inventory=inventory,
+            can_governance=governance,
         )
 
 

@@ -28,8 +28,11 @@ from rai_gateway.core.database import get_db
 from rai_gateway.core.errors import ErrorCode, RaiException
 from rai_gateway.core.tenant_context import TenantContext
 from rai_gateway.onboarding.service import (
+    ORG_GOVERNANCE_PERMISSION,
+    POLICIES_PERMISSION,
     PROVIDERS_PERMISSION,
     REGISTRY_PERMISSION,
+    RISK_PERMISSION,
     SOURCES_PERMISSION,
     Access,
     IntakeError,
@@ -103,6 +106,29 @@ def inventory_access(
             missing.append(SOURCES_PERMISSION)
         if not tenant.has_permission(REGISTRY_PERMISSION):
             missing.append(REGISTRY_PERMISSION)
+        raise RaiException(
+            error_code=ErrorCode.NOT_ALLOWED,
+            message="Missing required permission",
+            details={"required_permissions": missing or [SOURCES_PERMISSION]},
+        )
+    return tenant, access
+
+
+def governance_access(
+    tenant: TenantContext = Depends(require_permission("sdk:manage")),
+) -> tuple[TenantContext, Access]:
+    access = Access.from_tenant(tenant)
+    if not access.can_governance:
+        missing = []
+        for perm in (
+            SOURCES_PERMISSION,
+            REGISTRY_PERMISSION,
+            POLICIES_PERMISSION,
+            RISK_PERMISSION,
+            ORG_GOVERNANCE_PERMISSION,
+        ):
+            if not tenant.has_permission(perm):
+                missing.append(perm)
         raise RaiException(
             error_code=ErrorCode.NOT_ALLOWED,
             message="Missing required permission",
@@ -185,6 +211,35 @@ class InventoryAnalyzeBody(BaseModel):
     requested_clarification_revision: int = Field(ge=0)
     plan_id: UUID
     expected_plan_digest: str = Field(min_length=64, max_length=64)
+
+
+class GovernancePreviewBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    requested_input_revision: int = Field(ge=0)
+    requested_inventory_clarification_revision: int = Field(ge=0)
+    requested_governance_clarification_revision: int = Field(ge=0)
+    inventory_proposal_set_id: UUID
+    include_suggested_controls: bool = False
+
+
+class GovernanceGenerateBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    requested_input_revision: int = Field(ge=0)
+    requested_inventory_clarification_revision: int = Field(ge=0)
+    requested_governance_clarification_revision: int = Field(ge=0)
+    plan_id: UUID
+    expected_plan_digest: str = Field(min_length=64, max_length=64)
+
+
+class GovernanceClarificationAnswerBody(BaseModel):
+    expected_row_version: int = Field(ge=1)
+    expected_governance_clarification_revision: int = Field(ge=0)
+    question_id: str = Field(min_length=1, max_length=64)
+    question_snapshot: dict[str, Any]
+    answer_text: str = Field(max_length=8000)
+    unknown: bool = False
+    set_id: UUID | None = None
+    proposal_id: UUID | None = None
 
 
 class RefreshMatchesBody(BaseModel):
@@ -912,6 +967,200 @@ def refresh_matches(
         expected_edit_version=body.expected_edit_version,
         expected_row_version=body.expected_row_version,
         access=access,
+    )
+
+
+# ---------------------------------------------------- Step 05: governance
+@router.post("/{session_id}/governance/preview")
+def governance_preview(
+    session_id: UUID,
+    body: GovernancePreviewBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).preview(
+        session_id,
+        expected_row_version=body.expected_row_version,
+        requested_input_revision=body.requested_input_revision,
+        requested_inventory_clarification_revision=body.requested_inventory_clarification_revision,
+        requested_governance_clarification_revision=body.requested_governance_clarification_revision,
+        inventory_proposal_set_id=body.inventory_proposal_set_id,
+        include_suggested_controls=body.include_suggested_controls,
+        access=access,
+    )
+
+
+@router.post("/{session_id}/governance/generate", status_code=202)
+def governance_generate(
+    session_id: UUID,
+    body: GovernanceGenerateBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    key: str = Depends(idempotency_key),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).generate(
+        session_id,
+        expected_row_version=body.expected_row_version,
+        requested_input_revision=body.requested_input_revision,
+        requested_inventory_clarification_revision=body.requested_inventory_clarification_revision,
+        requested_governance_clarification_revision=body.requested_governance_clarification_revision,
+        plan_id=body.plan_id,
+        expected_plan_digest=body.expected_plan_digest,
+        idempotency_key=key,
+        access=access,
+    )
+
+
+@router.get("/{session_id}/governance-sets")
+def list_governance_sets(
+    session_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).list_governance_sets(session_id, access)
+
+
+@router.get("/{session_id}/governance-sets/{set_id}")
+def get_governance_set(
+    session_id: UUID,
+    set_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).get_governance_set(
+        session_id, set_id, access
+    )
+
+
+@router.get("/{session_id}/governance-sets/{set_id}/clauses")
+def list_governance_clauses(
+    session_id: UUID,
+    set_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).list_clauses(session_id, set_id, access)
+
+
+@router.get("/{session_id}/governance-sets/{set_id}/proposals")
+def list_governance_proposals(
+    session_id: UUID,
+    set_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).list_proposals(session_id, set_id, access)
+
+
+@router.get("/{session_id}/governance-sets/{set_id}/proposals/{proposal_id}")
+def get_governance_proposal(
+    session_id: UUID,
+    set_id: UUID,
+    proposal_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).get_proposal(
+        session_id, set_id, proposal_id, access
+    )
+
+
+@router.post("/{session_id}/governance-sets/{set_id}/refresh-comparison")
+def refresh_governance_comparison(
+    session_id: UUID,
+    set_id: UUID,
+    body: RefreshMatchesBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_service import GovernanceService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceService(_service(db, tenant)).refresh_comparison(
+        session_id,
+        set_id,
+        expected_edit_version=body.expected_edit_version,
+        expected_row_version=body.expected_row_version,
+        access=access,
+    )
+
+
+@router.post("/{session_id}/governance-answers")
+def save_governance_answer(
+    session_id: UUID,
+    body: GovernanceClarificationAnswerBody,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_clarifications import GovernanceClarificationService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceClarificationService(_service(db, tenant)).save_answer(
+        session_id,
+        question_id=body.question_id,
+        question_snapshot=body.question_snapshot,
+        answer_text=body.answer_text,
+        unknown=body.unknown,
+        expected_row_version=body.expected_row_version,
+        expected_governance_clarification_revision=body.expected_governance_clarification_revision,
+        set_id=body.set_id,
+        proposal_id=body.proposal_id,
+    )
+
+
+@router.get("/{session_id}/governance-answers/{answer_id}")
+def get_governance_answer(
+    session_id: UUID,
+    answer_id: UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    pair: tuple[TenantContext, Access] = Depends(governance_access),
+):
+    from rai_gateway.onboarding.governance_clarifications import GovernanceClarificationService
+
+    tenant, access = pair
+    _no_store(response)
+    return GovernanceClarificationService(_service(db, tenant)).get_answer(
+        session_id, answer_id
     )
 
 
