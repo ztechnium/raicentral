@@ -27,6 +27,7 @@ from rai_gateway.models.onboarding import (
 )
 from rai_gateway.models.productization import BackgroundJob
 from rai_gateway.onboarding.service import (
+    DISCOVER_JOB_TYPE,
     EXTRACT_JOB_TYPE,
     JOB_TYPE,
     PROBE_JOB_TYPE,
@@ -42,7 +43,7 @@ from rai_gateway.onboarding.storage import (
 from rai_gateway.sdk.domain import BackgroundJobStatus
 from rai_gateway.sdk.jobs import JobQueue
 
-SUPPORTED_JOB_TYPES = [JOB_TYPE, EXTRACT_JOB_TYPE, PROBE_JOB_TYPE]
+SUPPORTED_JOB_TYPES = [JOB_TYPE, EXTRACT_JOB_TYPE, DISCOVER_JOB_TYPE, PROBE_JOB_TYPE]
 SessionFactory = Callable[[], Session]
 
 
@@ -344,6 +345,10 @@ def process_claimed_job(
             from rai_gateway.onboarding.provider_probe import process_probe_job
 
             return process_probe_job(session_factory, job_id, token)
+        if job_type == DISCOVER_JOB_TYPE:
+            from rai_gateway.onboarding.discovery import process_discovery_job
+
+            return process_discovery_job(session_factory, job_id, token)
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).one()
         try:
             run = _validate_binding(db, job)

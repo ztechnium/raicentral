@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ExtractionPanel } from "@/components/onboarding/intake/extraction-panel";
+import { InventoryPanel } from "@/components/onboarding/intake/inventory-panel";
 import { SourceHistory } from "@/components/onboarding/intake/source-history";
 import {
   IntakeApiError,
@@ -548,6 +549,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
             session={session}
             canManage={access.canManage}
             onSession={apply}
+            onReload={reload}
+          />
+
+          <InventoryPanel
+            session={session}
+            canManage={access.canManage}
             onReload={reload}
           />
 
