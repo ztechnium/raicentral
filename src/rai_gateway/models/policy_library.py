@@ -9,9 +9,10 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -95,11 +96,22 @@ class PolicyRuleLink(Base):
 
     __tablename__ = "policy_rule_links"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_policy_rule_link_source_rule",
             "policy_source_id",
             "rule_type",
             "rule_id",
-            name="uq_policy_rule_link_source_rule",
+            unique=True,
+            postgresql_where=text("obligation_id IS NULL"),
+        ),
+        Index(
+            "uq_policy_rule_link_source_obligation_rule",
+            "policy_source_id",
+            "obligation_id",
+            "rule_type",
+            "rule_id",
+            unique=True,
+            postgresql_where=text("obligation_id IS NOT NULL"),
         ),
     )
 

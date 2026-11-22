@@ -43,13 +43,18 @@ JOB_TYPE = "ONBOARDING_PREPARE_SOURCES"
 EXTRACT_JOB_TYPE = "ONBOARDING_EXTRACT_SOURCES"
 DISCOVER_JOB_TYPE = "ONBOARDING_DISCOVER_INVENTORY"
 GOVERNANCE_JOB_TYPE = "ONBOARDING_GENERATE_GOVERNANCE"
+APPLY_JOB_TYPE = "ONBOARDING_APPLY_CHANGESET"
 PROBE_JOB_TYPE = "ONBOARDING_TEST_PROVIDER"
 STAGE_PREPARE = "PREPARE_SOURCES"
 STAGE_EXTRACT = "EXTRACT_SOURCES"
 STAGE_DISCOVER = "DISCOVER_INVENTORY"
 STAGE_GOVERNANCE = "GENERATE_GOVERNANCE"
+STAGE_APPLY = "APPLY_CHANGESET"
 REGISTRY_PERMISSION = "registry:read"
+REGISTRY_WRITE_PERMISSION = "registry:write"
 POLICIES_PERMISSION = "policies:read"
+POLICIES_WRITE_PERMISSION = "policies:write"
+RISK_MANAGE_PERMISSION = "risk:manage"
 RISK_PERMISSION = "risk:read"
 ORG_GOVERNANCE_PERMISSION = "organization_governance:read"
 # Manifest v1 (Step 02) has no parsing-option snapshots; v2 (Step 03) does.
@@ -110,19 +115,33 @@ class Access:
     can_manage: bool
     can_inventory: bool
     can_governance: bool
+    can_apply: bool
+    can_registry_write: bool
+    can_policies_write: bool
+    can_risk_manage: bool
 
     @classmethod
     def from_tenant(cls, tenant: Any) -> "Access":
         read = tenant.has_permission("sdk:read")
         content = read and tenant.has_permission(SOURCES_PERMISSION)
         registry = read and tenant.has_permission(REGISTRY_PERMISSION)
+        registry_write = tenant.has_permission(REGISTRY_WRITE_PERMISSION)
         policies = read and tenant.has_permission(POLICIES_PERMISSION)
+        policies_write = tenant.has_permission(POLICIES_WRITE_PERMISSION)
         risk = read and tenant.has_permission(RISK_PERMISSION)
+        risk_manage = tenant.has_permission(RISK_MANAGE_PERMISSION)
         org_governance = read and tenant.has_permission(ORG_GOVERNANCE_PERMISSION)
         manage = content and tenant.has_permission("sdk:manage")
         inventory = manage and content and registry
         governance = (
             manage and content and registry and policies and risk and org_governance
+        )
+        can_apply = (
+            manage
+            and content
+            and registry_write
+            and policies_write
+            and org_governance
         )
         return cls(
             can_read=read,
@@ -130,6 +149,10 @@ class Access:
             can_manage=manage,
             can_inventory=inventory,
             can_governance=governance,
+            can_apply=can_apply,
+            can_registry_write=registry_write,
+            can_policies_write=policies_write,
+            can_risk_manage=risk_manage,
         )
 
 

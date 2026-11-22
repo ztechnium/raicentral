@@ -29,6 +29,18 @@ def clean_onboarding(request):
         return
     db_engine = request.getfixturevalue("db_engine")
     statements = [
+        "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL, "
+        "extraction_run_id = NULL, discovery_plan_id = NULL, "
+        "inventory_proposal_set_id = NULL, governance_plan_id = NULL, change_set_id = NULL",
+        "DELETE FROM onboarding_application_receipts",
+        "DELETE FROM onboarding_applied_bindings",
+        "DELETE FROM onboarding_application_attempts",
+        "DELETE FROM onboarding_applications",
+        "DELETE FROM onboarding_review_decisions",
+        "DELETE FROM onboarding_change_operations",
+        "DELETE FROM onboarding_change_sets",
+        "DELETE FROM agents WHERE created_by != 'seed'",
+        "DELETE FROM ai_systems WHERE created_by != 'seed'",
         "DELETE FROM onboarding_governance_proposal_edits",
         "UPDATE onboarding_governance_proposal_sets SET current_reconciliation_id = NULL",
         "DELETE FROM onboarding_governance_reconciliation_snapshots",
@@ -53,7 +65,7 @@ def clean_onboarding(request):
         "DELETE FROM onboarding_ai_configuration",
         "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL, "
         "extraction_run_id = NULL, discovery_plan_id = NULL, "
-        "inventory_proposal_set_id = NULL, governance_plan_id = NULL",
+        "inventory_proposal_set_id = NULL, governance_plan_id = NULL, change_set_id = NULL",
         "UPDATE onboarding_sources SET current_revision_id = NULL",
         "DELETE FROM onboarding_runs",
         "DELETE FROM onboarding_source_revisions",

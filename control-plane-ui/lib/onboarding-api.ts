@@ -845,3 +845,96 @@ export function listGovernanceProposals(sessionId: string, setId: string) {
     `/${sessionId}/governance-sets/${setId}/proposals`,
   );
 }
+
+export interface ChangeOperationSummary {
+  id: string;
+  ordinal: number;
+  verb: string;
+  target_kind: string;
+  source_domain?: string;
+  source_proposal_id?: string;
+  action?: Record<string, unknown>;
+  dependency_ordinals?: number[];
+  status?: string;
+}
+
+export interface ChangeSetSummary {
+  id: string;
+  session_id: string;
+  status: string;
+  contract_version: string;
+  payload_digest: string;
+  review_digest?: string | null;
+  inventory_proposal_set_id?: string | null;
+  governance_proposal_set_id?: string | null;
+  operations: ChangeOperationSummary[];
+}
+
+export interface ApplicationSummary {
+  application_id: string;
+  change_set_id: string;
+  status: string;
+  run_id?: string;
+}
+
+export function listChangeSets(sessionId: string) {
+  return request<{ items: ChangeSetSummary[]; total: number }>(
+    `/${sessionId}/change-sets`,
+  );
+}
+
+export function getChangeSet(sessionId: string, changeSetId: string) {
+  return request<ChangeSetSummary>(`/${sessionId}/change-sets/${changeSetId}`);
+}
+
+export function prepareChangeSet(
+  sessionId: string,
+  args: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    selection: {
+      inventory: Record<string, "ACCEPT" | "SKIP">;
+      governance: Record<string, "ACCEPT" | "SKIP">;
+      inventory_proposal_set_id?: string;
+      governance_proposal_set_id?: string;
+    };
+    key: string;
+  },
+) {
+  return request<ChangeSetSummary>(`/${sessionId}/change-sets/prepare`, {
+    method: "POST",
+    key: args.key,
+    body: {
+      expected_row_version: args.expected_row_version,
+      requested_input_revision: args.requested_input_revision,
+      selection: {
+        inventory: args.selection.inventory,
+        governance: args.selection.governance,
+        inventory_proposal_set_id: args.selection.inventory_proposal_set_id,
+        governance_proposal_set_id: args.selection.governance_proposal_set_id,
+      },
+    },
+  });
+}
+
+export function applyChangeSet(
+  sessionId: string,
+  changeSetId: string,
+  args: {
+    expected_row_version: number;
+    requested_input_revision: number;
+    expected_payload_digest: string;
+    key: string;
+  },
+) {
+  return request<ApplicationSummary>(`/${sessionId}/change-sets/${changeSetId}/apply`, {
+    method: "POST",
+    key: args.key,
+    body: {
+      expected_row_version: args.expected_row_version,
+      requested_input_revision: args.requested_input_revision,
+      change_set_id: changeSetId,
+      expected_payload_digest: args.expected_payload_digest,
+    },
+  });
+}

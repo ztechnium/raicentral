@@ -178,6 +178,7 @@ class OnboardingRun(Base):
         nullable=True,
     )
     governance_plan_id = Column(UUID(as_uuid=True), nullable=True)
+    change_set_id = Column(UUID(as_uuid=True), nullable=True)
     plan = Column(JSON, nullable=True)
     plan_digest = Column(String(64), nullable=True)
     job_id = Column(
@@ -197,7 +198,7 @@ class OnboardingRun(Base):
         CheckConstraint("input_revision >= 0", name="ck_onb_run_input_revision"),
         CheckConstraint(
             "stage IN ('PREPARE_SOURCES','EXTRACT_SOURCES','DISCOVER_INVENTORY',"
-            "'GENERATE_GOVERNANCE')",
+            "'GENERATE_GOVERNANCE','APPLY_CHANGESET')",
             name="ck_onb_run_stage",
         ),
         ForeignKeyConstraint(
@@ -210,6 +211,12 @@ class OnboardingRun(Base):
             ["governance_plan_id"],
             ["onboarding_governance_plans.id"],
             name="fk_onb_run_governance_plan",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["change_set_id"],
+            ["onboarding_change_sets.id"],
+            name="fk_onb_run_change_set",
             use_alter=True,
         ),
         # At most one active run per session.
@@ -824,4 +831,207 @@ class OnboardingGovernanceClarificationAnswer(Base):
         CheckConstraint(
             "answer_revision >= 1", name="ck_onb_governance_answer_revision"
         ),
+    )
+
+
+class OnboardingChangeSet(Base):
+    __tablename__ = "onboarding_change_sets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    contract_version = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default="PREPARED")
+    inventory_proposal_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_proposal_sets.id"),
+        nullable=True,
+    )
+    governance_proposal_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_governance_proposal_sets.id"),
+        nullable=True,
+    )
+    selection = Column(JSON, nullable=False)
+    payload = Column(JSON, nullable=False)
+    payload_digest = Column(String(64), nullable=False)
+    review_digest = Column(String(64), nullable=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    discarded_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PREPARED','DISCARDED','APPLYING','APPLIED')",
+            name="ck_onb_change_set_status",
+        ),
+    )
+
+
+class OnboardingChangeOperation(Base):
+    __tablename__ = "onboarding_change_operations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal = Column(Integer, nullable=False)
+    verb = Column(String(8), nullable=False)
+    target_kind = Column(String(32), nullable=False)
+    source_domain = Column(String(16), nullable=True)
+    source_proposal_id = Column(UUID(as_uuid=True), nullable=True)
+    action_payload = Column(JSON, nullable=False)
+    dependency_ordinals = Column(JSON, nullable=False, default=list)
+    status = Column(String(16), nullable=False, default="PENDING")
+
+    __table_args__ = (
+        UniqueConstraint("change_set_id", "ordinal", name="uq_onb_change_op_ordinal"),
+        CheckConstraint("ordinal >= 0", name="ck_onb_change_op_ordinal"),
+        CheckConstraint(
+            "verb IN ('CREATE','REUSE','UPDATE')", name="ck_onb_change_op_verb"
+        ),
+        CheckConstraint(
+            "status IN ('PENDING','APPLIED','SKIPPED','FAILED')",
+            name="ck_onb_change_op_status",
+        ),
+    )
+
+
+class OnboardingReviewDecision(Base):
+    __tablename__ = "onboarding_review_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_sets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    operation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_operations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision = Column(String(8), nullable=False)
+    actor = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "change_set_id", "operation_id", name="uq_onb_review_decision_op"
+        ),
+        CheckConstraint(
+            "decision IN ('ACCEPT','SKIP')", name="ck_onb_review_decision"
+        ),
+    )
+
+
+class OnboardingApplication(Base):
+    __tablename__ = "onboarding_applications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    change_set_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_sets.id"),
+        nullable=False,
+        unique=True,
+    )
+    status = Column(String(16), nullable=False, default="QUEUED")
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')",
+            name="ck_onb_application_status",
+        ),
+    )
+
+
+class OnboardingApplicationAttempt(Base):
+    __tablename__ = "onboarding_application_attempts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attempt_number = Column(Integer, nullable=False)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("background_jobs.id"),
+        nullable=False,
+    )
+    outcome = Column(String(16), nullable=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "application_id", "attempt_number", name="uq_onb_app_attempt_number"
+        ),
+        CheckConstraint("attempt_number >= 1", name="ck_onb_app_attempt_number"),
+    )
+
+
+class OnboardingAppliedBinding(Base):
+    __tablename__ = "onboarding_applied_bindings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    operation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_operations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_kind = Column(String(32), nullable=False)
+    target_id = Column(UUID(as_uuid=True), nullable=False)
+    binding_key = Column(String(128), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "application_id", "operation_id", name="uq_onb_applied_binding_op"
+        ),
+    )
+
+
+class OnboardingApplicationReceipt(Base):
+    __tablename__ = "onboarding_application_receipts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    application_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scope = Column(String(255), nullable=False)
+    key_digest = Column(String(64), nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("scope", "key_digest", name="uq_onb_app_receipt_scope_key"),
     )

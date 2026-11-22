@@ -144,13 +144,13 @@ def test_governance_fixture_pipeline(api, client, session_factory, db_session):
         role="SUPPORTING_MATERIAL",
         title="inventory.txt",
     ).json()["session"]
-    api.text(
+    session = api.text(
         session,
         "clause: Refunds above EGP 5,000 require Finance approval\n"
         "clause: USD 2,000 per calendar month\n",
         role="SUPPORTING_MATERIAL",
         title="policy.txt",
-    )
+    ).json()["session"]
     prep = api.prepare(session)
     assert prep.status_code == 202, prep.text
     run_pass(session_factory, get_source_store(), worker_id="t")
