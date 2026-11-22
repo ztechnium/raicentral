@@ -13,6 +13,8 @@ PURE_MODULES = {
     "test_parsers",
     "test_discovery_reconciliation",
     "test_governance_compiler",
+    "test_runtime_verification",
+    "test_runtime_verification_schemas",
 }
 PDF = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 

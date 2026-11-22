@@ -31,7 +31,14 @@ def clean_onboarding(request):
     statements = [
         "UPDATE onboarding_runs SET retry_of_run_id = NULL, preparation_run_id = NULL, "
         "extraction_run_id = NULL, discovery_plan_id = NULL, "
-        "inventory_proposal_set_id = NULL, governance_plan_id = NULL, change_set_id = NULL",
+        "inventory_proposal_set_id = NULL, governance_plan_id = NULL, change_set_id = NULL, "
+        "activation_plan_id = NULL, verification_plan_id = NULL",
+        "DELETE FROM onboarding_verification_dispatches",
+        "DELETE FROM onboarding_verification_attempts",
+        "DELETE FROM onboarding_verification_plans",
+        "DELETE FROM onboarding_activation_receipts",
+        "DELETE FROM onboarding_activation_plans",
+        "DELETE FROM onboarding_runtime_context",
         "DELETE FROM onboarding_application_receipts",
         "DELETE FROM onboarding_applied_bindings",
         "DELETE FROM onboarding_application_attempts",

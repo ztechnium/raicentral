@@ -938,3 +938,121 @@ export function applyChangeSet(
     },
   });
 }
+
+export interface RuntimeContextView {
+  session_id: string;
+  session_row_version: number;
+  eligibility: "READY" | "BLOCKED" | "NOT_APPLIED";
+  reasons: string[];
+  application?: { id: string; change_set_id: string; status: string };
+  selectable: {
+    ai_systems: { id: string; binding_key: string }[];
+    agents: { id: string; binding_key: string }[];
+    content_rules: { id: string; binding_key: string }[];
+    policy_sources: { id: string; binding_key: string }[];
+  };
+  context?: {
+    id: string;
+    row_version: number;
+    application_id: string | null;
+    delegation_mode: string;
+    selection_digest: string;
+    selected: Record<string, unknown>;
+  } | null;
+  readiness?: Record<string, unknown> | null;
+}
+
+export interface ActivationPlanSummary {
+  id: string;
+  status: string;
+  payload_digest: string;
+}
+
+export function getRuntimeContext(sessionId: string) {
+  return request<RuntimeContextView>(`/${sessionId}/runtime-context`);
+}
+
+export function saveRuntimeContext(
+  sessionId: string,
+  args: {
+    expected_row_version: number;
+    delegation_mode: "NONE" | "EXPLICIT" | "TENANT";
+    selected: Record<string, unknown>;
+  },
+) {
+  return request<RuntimeContextView>(`/${sessionId}/runtime-context`, {
+    method: "PUT",
+    body: args,
+  });
+}
+
+export function prepareActivationPlan(
+  sessionId: string,
+  args: { expected_row_version: number; expected_selection_digest: string },
+) {
+  return request<ActivationPlanSummary>(`/${sessionId}/activation-plans/prepare`, {
+    method: "POST",
+    body: args,
+  });
+}
+
+export function prepareVerificationPlan(
+  sessionId: string,
+  args: {
+    activation_plan_id: string;
+    expected_row_version: number;
+    scenarios?: Record<string, unknown>[];
+  },
+) {
+  return request<{ id: string; payload_digest: string; status: string }>(
+    `/${sessionId}/verification-plans/prepare`,
+    { method: "POST", body: args },
+  );
+}
+
+const ONBOARDING_ROOT = `${API_BASE_URL}/v1/productization/onboarding`;
+
+export interface RuntimeContextView {
+  session_id: string;
+  session_row_version: number;
+  eligibility: string;
+  reasons: string[];
+  context?: {
+    selection_digest?: string;
+    selected?: Record<string, unknown>;
+    delegation_mode?: string;
+  } | null;
+  readiness?: {
+    eligible_for_connection?: boolean;
+    blockers?: { code: string; message: string }[];
+  } | null;
+}
+
+async function onboardingRequest<T>(path: string, init?: RequestInit & { key?: string }): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(init?.headers as Record<string, string>),
+  };
+  const token = await refreshAccessTokenIfNeeded();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (init?.key) headers["Idempotency-Key"] = init.key;
+  const response = await fetch(`${ONBOARDING_ROOT}${path}`, { ...init, headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new IntakeApiError(response.status, body?.error?.message ?? "Request failed", body);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function fetchRuntimeContext(sessionId: string) {
+  return onboardingRequest<RuntimeContextView>(`/sessions/${sessionId}/runtime-context`);
+}
+
+export function getVerificationAttempt(attemptId: string) {
+  return onboardingRequest<{
+    id: string;
+    status: string;
+    summary: Record<string, number>;
+    cases: unknown[];
+  }>(`/verification-attempts/${attemptId}`);
+}

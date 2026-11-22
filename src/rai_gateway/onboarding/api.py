@@ -1458,9 +1458,11 @@ class OnboardingBodyLimitMiddleware:
 
 def register(app) -> None:
     from rai_gateway.onboarding.application_api import register_application
+    from rai_gateway.onboarding.verification_api import register_verification
 
     app.include_router(router)
     app.include_router(meta_router)
     register_application(app)
+    register_verification(app)
     app.add_exception_handler(IntakeError, intake_error_handler)
     app.add_middleware(OnboardingBodyLimitMiddleware)

@@ -131,6 +131,7 @@ class EvaluationPlan(Base):
         UniqueConstraint(
             "agent_version_id",
             "target_environment",
+            "purpose",
             "plan_digest",
             name="uq_evaluation_plan_digest",
         ),
@@ -148,6 +149,7 @@ class EvaluationPlan(Base):
         index=True,
     )
     target_environment = Column(String, nullable=False, index=True)
+    purpose = Column(String, nullable=False, default="DEPLOYMENT", index=True)
     requirement_snapshot = Column(JSON, nullable=False, default=list)
     agent_config_digest = Column(String, nullable=True)
     dependency_digest = Column(String, nullable=True)
