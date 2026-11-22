@@ -302,6 +302,8 @@ class Settings(BaseSettings):
     # Step 04: deterministic partition parser for CI (no live provider calls).
     onboarding_discovery_fixture: bool = False
     onboarding_governance_fixture: bool = False
+    # Step 08: incremental update workflow (default off until worker + migrations land).
+    onboarding_update_workflow_enabled: bool = False
 
     @model_validator(mode="after")
     def _validate_onboarding_limits(self) -> "Settings":

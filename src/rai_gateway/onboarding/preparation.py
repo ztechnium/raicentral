@@ -35,6 +35,7 @@ from rai_gateway.onboarding.service import (
     JOB_TYPE,
     PROBE_JOB_TYPE,
     STAGE_EXTRACT,
+    DELTA_JOB_TYPE,
     VERIFY_JOB_TYPE,
     canonical_digest,
 )
@@ -378,6 +379,10 @@ def process_claimed_job(
             from rai_gateway.onboarding.verification_job import process_verify_job
 
             return process_verify_job(session_factory, store, job_id, token)
+        if job_type == DELTA_JOB_TYPE:
+            from rai_gateway.onboarding.delta_job import process_delta_job
+
+            return process_delta_job(session_factory, job_id, token)
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).one()
         try:
             run = _validate_binding(db, job)

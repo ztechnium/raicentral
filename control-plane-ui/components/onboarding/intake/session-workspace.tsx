@@ -8,7 +8,7 @@ import { GovernancePanel } from "@/components/onboarding/intake/governance-panel
 import { InventoryPanel } from "@/components/onboarding/intake/inventory-panel";
 import { ConnectVerifyPanel } from "@/components/onboarding/intake/connect-verify-panel";
 import { ReviewApplyPanel } from "@/components/onboarding/intake/review-apply-panel";
-import { ConnectVerifyPanel } from "@/components/onboarding/intake/connect-verify-panel";
+import { UpdateChangesPanel } from "@/components/onboarding/intake/update-changes-panel";
 import { SourceHistory } from "@/components/onboarding/intake/source-history";
 import {
   IntakeApiError,
@@ -568,6 +568,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onReload={reload}
           />
 
+          <UpdateChangesPanel sessionId={sessionId} />
           <ReviewApplyPanel session={session} canManage={access.canManage} onReload={reload} />
           <ConnectVerifyPanel session={session} canManage={access.canManage} onReload={reload} />
 

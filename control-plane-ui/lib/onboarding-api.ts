@@ -62,6 +62,10 @@ export interface SessionDetail {
   label: string;
   title?: string;
   lifecycle: "OPEN" | "ARCHIVED";
+  session_kind?: "INITIAL" | "UPDATE" | "INVENTORY_CORRECTION" | "POLICY_REVISION";
+  baseline_session_id?: string | null;
+  update_status?: string | null;
+  confirmed_baseline_id?: string | null;
   view: SessionView;
   row_version: number;
   input_revision: number;
