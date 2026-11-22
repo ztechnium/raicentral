@@ -981,7 +981,7 @@ export function saveRuntimeContext(
   },
 ) {
   return request<RuntimeContextView>(`/${sessionId}/runtime-context`, {
-    method: "PUT",
+    method: "PATCH",
     body: args,
   });
 }
@@ -990,7 +990,7 @@ export function prepareActivationPlan(
   sessionId: string,
   args: { expected_row_version: number; expected_selection_digest: string },
 ) {
-  return request<ActivationPlanSummary>(`/${sessionId}/activation-plans/prepare`, {
+  return request<ActivationPlanSummary>(`/${sessionId}/activation-plans`, {
     method: "POST",
     body: args,
   });
@@ -1005,54 +1005,7 @@ export function prepareVerificationPlan(
   },
 ) {
   return request<{ id: string; payload_digest: string; status: string }>(
-    `/${sessionId}/verification-plans/prepare`,
+    `/${sessionId}/verification-plans`,
     { method: "POST", body: args },
   );
-}
-
-const ONBOARDING_ROOT = `${API_BASE_URL}/v1/productization/onboarding`;
-
-export interface RuntimeContextView {
-  session_id: string;
-  session_row_version: number;
-  eligibility: string;
-  reasons: string[];
-  context?: {
-    selection_digest?: string;
-    selected?: Record<string, unknown>;
-    delegation_mode?: string;
-  } | null;
-  readiness?: {
-    eligible_for_connection?: boolean;
-    blockers?: { code: string; message: string }[];
-  } | null;
-}
-
-async function onboardingRequest<T>(path: string, init?: RequestInit & { key?: string }): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(init?.headers as Record<string, string>),
-  };
-  const token = await refreshAccessTokenIfNeeded();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  if (init?.key) headers["Idempotency-Key"] = init.key;
-  const response = await fetch(`${ONBOARDING_ROOT}${path}`, { ...init, headers });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new IntakeApiError(response.status, body?.error?.message ?? "Request failed", body);
-  }
-  return response.json() as Promise<T>;
-}
-
-export function fetchRuntimeContext(sessionId: string) {
-  return onboardingRequest<RuntimeContextView>(`/sessions/${sessionId}/runtime-context`);
-}
-
-export function getVerificationAttempt(attemptId: string) {
-  return onboardingRequest<{
-    id: string;
-    status: string;
-    summary: Record<string, number>;
-    cases: unknown[];
-  }>(`/verification-attempts/${attemptId}`);
 }

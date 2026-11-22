@@ -1,4 +1,4 @@
-"""Step 07: runtime verification contracts and aggregation."""
+"""Step 07 contract unit tests (no database)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import uuid
 
 from rai_gateway.onboarding.verification_schemas import (
     VERIFICATION_LIMITS,
+    SaveRuntimeContextBody,
+    RuntimeSelectedIds,
     default_verification_scenarios,
 )
 
@@ -21,8 +23,6 @@ def test_default_scenarios_include_connection():
 
 
 def test_delegation_modes_schema():
-    from rai_gateway.onboarding.verification_schemas import SaveRuntimeContextBody, RuntimeSelectedIds
-
     body = SaveRuntimeContextBody(
         expected_row_version=1,
         delegation_mode="NONE",
