@@ -15,7 +15,13 @@ from rai_gateway.main import app
 from rai_gateway.models.database import AdminCredential, UserAccount
 from rai_gateway.models.governance import OrganizationMembership
 from rai_gateway.models.productization import OrganizationOnboarding
-from rai_gateway.models.registry import AISystem, MCPServer, ToolResource
+from rai_gateway.models.registry import (
+    Agent,
+    AgentVersion,
+    AISystem,
+    MCPServer,
+    ToolResource,
+)
 from rai_gateway.services.admin_console import _ensure_default_rbac_seed
 
 
@@ -159,3 +165,70 @@ def test_backfilled_welcome_is_complete(public_client, db_session, auth_headers)
     response = public_client.get("/v1/productization/welcome", headers=auth_headers)
     assert response.status_code == 200, response.text
     assert response.json()["welcome_completed"] is True
+
+
+def test_complete_is_idempotent_and_creates_no_evidence_or_approvals(
+    public_client, db_session, auth_headers
+):
+    record = (
+        db_session.query(OrganizationOnboarding)
+        .filter(OrganizationOnboarding.singleton_key == "default")
+        .first()
+    )
+    if record is None:
+        record = OrganizationOnboarding(singleton_key="default")
+        db_session.add(record)
+    record.welcome_completed_at = None
+    record.first_integration_id = None
+    db_session.commit()
+
+    suffix = uuid.uuid4().hex[:8]
+    system = AISystem(
+        system_key=f"draft-{suffix}", name="Draft system", created_by="tester"
+    )
+    db_session.add(system)
+    db_session.flush()
+    agent = Agent(
+        agent_key=f"agent-{suffix}",
+        ai_system_id=system.id,
+        name="Agent",
+        created_by="tester",
+    )
+    db_session.add(agent)
+    db_session.flush()
+    version = AgentVersion(agent_id=agent.id, version_number=1, created_by="tester")
+    db_session.add(version)
+    db_session.commit()
+    system_status, version_status = system.status, version.lifecycle_status
+
+    first = public_client.post(
+        "/v1/productization/welcome/complete", headers=auth_headers
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["welcome_completed"] is True
+    stamp = first.json()["welcome_completed_at"]
+
+    second = public_client.post(
+        "/v1/productization/welcome/complete", headers=auth_headers
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["welcome_completed_at"] == stamp
+
+    db_session.expire_all()
+    assert system.status == system_status == "DRAFT"
+    assert version.lifecycle_status == version_status == "DRAFT"
+
+    onboarding = public_client.get(
+        "/v1/productization/onboarding", headers=auth_headers
+    ).json()
+    assert onboarding["summary"]["welcome_complete"] is True
+    assert onboarding["summary"]["verification"]["state"] == "NOT_RUN"
+    steps = {step["id"]: step for step in onboarding["steps"]}
+    for step_id in (
+        "connect_application",
+        "test_connection",
+        "first_governed_action",
+        "production_readiness",
+    ):
+        assert steps[step_id]["done"] is False
+    assert onboarding["complete"] is False

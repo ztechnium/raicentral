@@ -40,7 +40,7 @@ typecheck:
 test: test-unit test-integration
 
 test-unit:
-	$(PYTHON) pytest tests/services tests/api tests/architecture tests/db tests/registry tests/approval tests/identity tests/policy tests/runtime_enforcement tests/client_hooks tests/evidence -q
+	$(PYTHON) pytest tests/services tests/api tests/architecture tests/db tests/registry tests/approval tests/identity tests/policy tests/runtime_enforcement tests/client_hooks tests/evidence tests/onboarding -q
 	$(PNPM) run test:unit
 
 test-integration:

@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -262,6 +262,77 @@ class Settings(BaseSettings):
     email_verification_ttl_minutes: int = 60
     password_reset_ttl_minutes: int = 30
     email_docs_url: str = "https://docs.rai.example.com"
+
+    # Onboarding intake (Step 02): private filesystem original-source storage.
+    onboarding_source_storage_root: str = "./data/onboarding-sources"
+    onboarding_max_file_bytes: int = 25 * 1024 * 1024
+    onboarding_max_sources_per_session: int = 20
+    onboarding_max_session_bytes: int = 200 * 1024 * 1024
+    onboarding_max_text_chars: int = 50_000
+    onboarding_upload_timeout_seconds: float = 600.0
+    onboarding_orphan_min_age_seconds: float = 24 * 3600.0
+    onboarding_multipart_overhead_bytes: int = 64 * 1024
+    onboarding_job_lease_seconds: float = 60.0
+    onboarding_job_renew_seconds: float = 15.0
+    onboarding_job_max_attempts: int = 5
+
+    # Onboarding extraction (Step 03): parser resource bounds. They are part of the
+    # extraction identity, so changing one produces a genuinely new extraction.
+    onboarding_parser_wall_seconds: float = 120.0
+    onboarding_parser_memory_bytes: int = 512 * 1024 * 1024
+    onboarding_pdf_max_pages: int = 300
+    onboarding_ooxml_max_entries: int = 10_000
+    onboarding_ooxml_max_total_bytes: int = 100 * 1024 * 1024
+    onboarding_ooxml_max_member_bytes: int = 25 * 1024 * 1024
+    onboarding_ooxml_max_ratio: int = 100
+    onboarding_xlsx_max_sheets: int = 50
+    onboarding_tabular_max_rows: int = 10_000
+    onboarding_tabular_max_columns: int = 200
+    onboarding_max_cells_visited: int = 200_000
+    onboarding_max_nonempty_cells: int = 50_000
+    onboarding_extract_output_bytes_per_source: int = 16 * 1024 * 1024
+    onboarding_extract_output_bytes_per_run: int = 64 * 1024 * 1024
+
+    # Explicit onboarding AI configuration (Step 03). A deployment-managed registry of
+    # approved targets (JSON list). No default provider, model or ambient credential.
+    onboarding_ai_targets_json: str = ""
+    onboarding_ai_probe_timeout_seconds: float = 30.0
+    onboarding_ai_probe_max_response_bytes: int = 64 * 1024
+    onboarding_ai_probe_default_max_tokens: int = 256
+    # Step 04: deterministic partition parser for CI (no live provider calls).
+    onboarding_discovery_fixture: bool = False
+    onboarding_governance_fixture: bool = False
+    # Step 08: incremental update workflow (default off until worker + migrations land).
+    onboarding_update_workflow_enabled: bool = False
+
+    @model_validator(mode="after")
+    def _validate_onboarding_limits(self) -> "Settings":
+        positive = {
+            "onboarding_max_file_bytes": self.onboarding_max_file_bytes,
+            "onboarding_max_sources_per_session": self.onboarding_max_sources_per_session,
+            "onboarding_max_session_bytes": self.onboarding_max_session_bytes,
+            "onboarding_max_text_chars": self.onboarding_max_text_chars,
+            "onboarding_upload_timeout_seconds": self.onboarding_upload_timeout_seconds,
+            "onboarding_job_lease_seconds": self.onboarding_job_lease_seconds,
+            "onboarding_job_renew_seconds": self.onboarding_job_renew_seconds,
+            "onboarding_job_max_attempts": self.onboarding_job_max_attempts,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if (
+            self.onboarding_orphan_min_age_seconds
+            <= self.onboarding_upload_timeout_seconds
+        ):
+            raise ValueError(
+                "onboarding_orphan_min_age_seconds must exceed "
+                "onboarding_upload_timeout_seconds"
+            )
+        if self.onboarding_job_renew_seconds >= self.onboarding_job_lease_seconds:
+            raise ValueError(
+                "onboarding_job_renew_seconds must be shorter than the lease"
+            )
+        return self
 
     class Config:
         env_file = ".env"

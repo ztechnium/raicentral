@@ -141,3 +141,21 @@ An administrator must enable on `main`:
 **Port 5434 in use:** Compose publishes PostgreSQL on host port `5434`. Edit `docker-compose.yml` or point `DATABASE_URL` at another instance.
 
 **First login:** `admin@raigateway.local` / `ChangeMe123!` when bootstrap is enabled. See `.env.example`.
+
+## Onboarding intake worker
+
+Onboarding intake (sessions, saved sources, "Prepare sources") needs the onboarding worker and a
+writable source directory shared with the API (`ONBOARDING_SOURCE_STORAGE_ROOT`):
+
+```bash
+uv run rai-worker onboarding --once        # one bounded pass
+uv run rai-worker onboarding --interval 2  # continuous
+uv run pytest tests/onboarding -q          # needs the PostgreSQL test database
+```
+
+See [Onboarding Step 02](docs/onboarding/step-02-sessions-sources-jobs.md).
+
+Step 03 adds document extraction (`pypdf`, `python-docx`, `openpyxl`, `defusedxml`) and an explicit
+AI configuration; see [Onboarding Step 03](docs/onboarding/step-03-extraction-ai-configuration.md).
+Parser tests are pure (`tests/onboarding/test_parsers.py`); the rest need the PostgreSQL test
+database. AI probe tests use a mocked transport and never contact a provider.

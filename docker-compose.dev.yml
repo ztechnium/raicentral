@@ -25,6 +25,13 @@ services:
       - ENABLE_XAI=true
       - ENABLE_ETHICS_EVAL=true
 
+  rai-onboarding-worker:
+    volumes:
+      - ./src:/app/src:rw
+      - onboarding_sources:/var/lib/rai/onboarding-sources
+    environment:
+      - PYTHONUNBUFFERED=1
+
   # Skip production Dockerfile build; run next dev against the bind-mounted source.
   control-plane-ui:
     build: !reset null

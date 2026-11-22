@@ -60,6 +60,7 @@ class StartSessionBody(BaseModel):
     channel: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     delegation_id: UUID | None = None
+    delegation_mode: str | None = None
     allow_ended_session_reuse: bool = False
 
 
@@ -208,6 +209,7 @@ def start_session(
             channel=body.channel,
             metadata=body.metadata,
             delegation_id=body.delegation_id,
+            delegation_mode=body.delegation_mode,
             allow_ended_session_reuse=body.allow_ended_session_reuse,
         )
     except SdkError as exc:
@@ -256,6 +258,8 @@ def authorize_action(
     x_rai_mtls_identity: str | None = Header(default=None, alias="X-RAI-MTLS-Identity"),
     x_rai_trusted_proxy: str | None = Header(default=None, alias="X-RAI-Trusted-Proxy"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_rai_onboarding_dispatch: str | None = Header(default=None, alias="X-RAI-Onboarding-Dispatch"),
+    x_rai_onboarding_challenge: str | None = Header(default=None, alias="X-RAI-Onboarding-Challenge"),
 ):
     secret, token = _extract_runtime_secret(x_rai_agent_key, authorization)
     svc = SdkService(db)
@@ -279,6 +283,8 @@ def authorize_action(
             idempotency_key=body.idempotency_key or idempotency_key,
             metadata=body.metadata,
             approval_request_id=body.approval_request_id,
+            onboarding_dispatch_id=x_rai_onboarding_dispatch,
+            onboarding_challenge=x_rai_onboarding_challenge,
         )
     except SdkError as exc:
         raise _sdk_http(exc) from exc
@@ -638,15 +644,23 @@ def patch_onboarding_checklist(
 ):
     from rai_gateway.public_product.onboarding import OnboardingError, OnboardingService
 
+    # omitted = preserve, explicit null = clear: forward only supplied ID fields.
+    supplied = {
+        name: getattr(body, name)
+        for name in (
+            "first_ai_system_id",
+            "first_integration_id",
+            "first_trajectory_id",
+        )
+        if name in body.model_fields_set
+    }
     try:
         return OnboardingService(db).update(
             current_step=body.current_step,
             complete_step=body.complete_step,
             completed_steps=body.completed_steps,
-            first_ai_system_id=body.first_ai_system_id,
-            first_integration_id=body.first_integration_id,
-            first_trajectory_id=body.first_trajectory_id,
             status=body.status,
+            **supplied,
         )
     except OnboardingError as exc:
         raise HTTPException(
@@ -707,6 +721,16 @@ def enqueue_job(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("sdk:manage")),
 ):
+    from rai_gateway.sdk.jobs import is_reserved_job
+
+    if is_reserved_job(body.job_type, body.idempotency_key):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "RESERVED_JOB_TYPE",
+                "message": "This job type or idempotency key is reserved for internal use",
+            },
+        )
     return JobQueue(db).enqueue(
         job_type=body.job_type,
         payload=body.payload,

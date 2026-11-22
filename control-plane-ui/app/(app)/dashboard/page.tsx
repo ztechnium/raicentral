@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table } from "@/components/ui/table";
 import { Panel } from "@/components/registry/panel";
 import { TrendLineChart } from "@/components/reporting/trend-line-chart";
+import { SetupEntry } from "@/components/dashboard/setup-entry";
 import { WidgetBody } from "@/components/dashboard/widget-body";
 import {
   getFinOpsBreakdown,
@@ -180,6 +181,8 @@ function DashboardContent() {
           ? ` · ${freshness.mode === "SNAPSHOT" ? "Snapshot" : "Data"} refreshed ${formatWhen(freshness.last_refreshed_at) ?? "at an unknown time"}`
           : ""}
       </p>
+
+      <SetupEntry />
 
       {setup ? (
         <section aria-label="Setup checklist" className="rounded-lg border border-accent-200 bg-accent-50 p-4">

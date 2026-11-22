@@ -127,6 +127,18 @@ services:
       - FAIL_CLOSED_ON_RAI_UNAVAILABLE=${FAIL_CLOSED_ON_RAI_UNAVAILABLE:-true}
       - SDK_RATE_LIMIT_PER_MINUTE=${SDK_RATE_LIMIT_PER_MINUTE:-600}
       - SDK_AUTH_FAILURE_LIMIT_PER_MINUTE=${SDK_AUTH_FAILURE_LIMIT_PER_MINUTE:-30}
+      # Onboarding intake: originals live on the shared private volume below.
+      - ONBOARDING_SOURCE_STORAGE_ROOT=/var/lib/rai/onboarding-sources
+      - ONBOARDING_MAX_FILE_BYTES=${ONBOARDING_MAX_FILE_BYTES:-26214400}
+      - ONBOARDING_MAX_SOURCES_PER_SESSION=${ONBOARDING_MAX_SOURCES_PER_SESSION:-20}
+      - ONBOARDING_MAX_SESSION_BYTES=${ONBOARDING_MAX_SESSION_BYTES:-209715200}
+      - ONBOARDING_MAX_TEXT_CHARS=${ONBOARDING_MAX_TEXT_CHARS:-50000}
+      - ONBOARDING_PARSER_WALL_SECONDS=${ONBOARDING_PARSER_WALL_SECONDS:-120}
+      - ONBOARDING_PARSER_MEMORY_BYTES=${ONBOARDING_PARSER_MEMORY_BYTES:-536870912}
+      - ONBOARDING_PDF_MAX_PAGES=${ONBOARDING_PDF_MAX_PAGES:-300}
+      # Onboarding AI targets are deployment-approved. The API and the worker must see the
+      # SAME registry; raw keys (ONBOARDING_AI_KEY_<ALIAS>) come from .env, never the UI.
+      - ONBOARDING_AI_TARGETS_JSON=${ONBOARDING_AI_TARGETS_JSON:-}
       - OBJECT_STORAGE_BACKEND=${OBJECT_STORAGE_BACKEND:-postgres}
       - OBJECT_STORAGE_BUCKET=${OBJECT_STORAGE_BUCKET:-}
       - OBJECT_STORAGE_ENDPOINT=${OBJECT_STORAGE_ENDPOINT:-}
@@ -150,6 +162,8 @@ services:
       - GIT_COMMIT_SHA=${GIT_COMMIT_SHA:-}
       - BUILD_TIME=${BUILD_TIME:-}
       - SCHEMA_REVISION=${SCHEMA_REVISION:-}
+    volumes:
+      - onboarding_sources:/var/lib/rai/onboarding-sources
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,6 +173,47 @@ services:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
+      retries: 3
+
+  # Prepares saved onboarding sources. Same image, same database, same source volume.
+  # It starts only after the API is healthy, i.e. after migrations have completed.
+  rai-onboarding-worker:
+    build: .
+    command: ["rai-worker", "onboarding", "--interval", "2"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATABASE_URL=postgresql://rai_user:rai_password@postgres:5432/rai_gateway
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-only-change-me}
+      - EVIDENCE_ENCRYPTION_KEY=${EVIDENCE_ENCRYPTION_KEY:-dev-only-encryption-key}
+      - ONBOARDING_SOURCE_STORAGE_ROOT=/var/lib/rai/onboarding-sources
+      - ONBOARDING_MAX_FILE_BYTES=${ONBOARDING_MAX_FILE_BYTES:-26214400}
+      - ONBOARDING_JOB_LEASE_SECONDS=${ONBOARDING_JOB_LEASE_SECONDS:-60}
+      - ONBOARDING_JOB_RENEW_SECONDS=${ONBOARDING_JOB_RENEW_SECONDS:-15}
+      - ONBOARDING_JOB_MAX_ATTEMPTS=${ONBOARDING_JOB_MAX_ATTEMPTS:-5}
+      - ONBOARDING_ORPHAN_MIN_AGE_SECONDS=${ONBOARDING_ORPHAN_MIN_AGE_SECONDS:-86400}
+      - ONBOARDING_AI_TARGETS_JSON=${ONBOARDING_AI_TARGETS_JSON:-}
+      # Parser limits are part of the extraction fingerprint: keep them identical to the API.
+      - ONBOARDING_PARSER_WALL_SECONDS=${ONBOARDING_PARSER_WALL_SECONDS:-120}
+      - ONBOARDING_PARSER_MEMORY_BYTES=${ONBOARDING_PARSER_MEMORY_BYTES:-536870912}
+      - ONBOARDING_PDF_MAX_PAGES=${ONBOARDING_PDF_MAX_PAGES:-300}
+    volumes:
+      - onboarding_sources:/var/lib/rai/onboarding-sources
+    depends_on:
+      rai-gateway:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: unless-stopped
+    # The image's inherited HTTP probe targets the API port; this worker serves none.
+    healthcheck:
+      test: ["CMD", "rai-worker", "onboarding", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
       retries: 3
 
   control-plane-ui:
@@ -180,3 +235,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  onboarding_sources:

@@ -1,18 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CatalogUpload } from "@/components/onboarding/catalog-upload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import {
-  createAgent,
-  createAgentVersion,
-  createAISystem,
-  transitionAgentVersion,
-  transitionAISystem,
-} from "@/lib/api";
+import { createAgent, createAgentVersion, createAISystem } from "@/lib/api";
 import {
   completeWelcome,
   fetchWelcome,
@@ -22,7 +17,7 @@ import {
   type WelcomeState,
   type WelcomeTemplate,
 } from "@/lib/public-api";
-import { markWelcomeDoneLocally } from "@/lib/welcome-gate";
+import { markWelcomeDoneLocally, welcomeDestination } from "@/lib/welcome-gate";
 import { cn } from "@/lib/utils";
 
 const INDUSTRIES = [
@@ -106,37 +101,21 @@ client.close()
 `;
 }
 
-async function approveSystem(systemId: string) {
-  try {
-    await transitionAISystem(systemId, "UNDER_REVIEW");
-  } catch {
-    // already past draft
-  }
-  try {
-    await transitionAISystem(systemId, "APPROVED");
-  } catch {
-    // approval may already be recorded
-  }
-}
+/** Records created by manual setup so a failed step can resume without duplicates. */
+type CreatedDraft = {
+  systemId?: string;
+  systemName?: string;
+  agentId?: string;
+  versionId?: string;
+};
 
-async function approveVersion(versionId: string) {
-  try {
-    await transitionAgentVersion(versionId, "UNDER_REVIEW");
-  } catch {
-    // already past draft
-  }
-  try {
-    await transitionAgentVersion(versionId, "APPROVED");
-  } catch {
-    // approval may already be recorded
-  }
-}
-
-export function WelcomeWizard({ organizationId }: { organizationId: string }) {
+export function WelcomeWizard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CreatedDraft>({});
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [industry, setIndustry] = useState("Technology");
@@ -152,15 +131,26 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
   const [toolName, setToolName] = useState("your_tool");
   const [copied, setCopied] = useState<"ts" | "py" | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false;
-    void fetchWelcome(organizationId)
+    setLoading(true);
+    setLoadError(null);
+    void fetchWelcome()
       .then((state) => {
         if (cancelled) return;
+        const destination = welcomeDestination({
+          welcomeCompleted: state.welcome_completed,
+          pathname: "/welcome",
+        });
+        if (destination) {
+          router.replace(destination);
+          return;
+        }
         applyState(state);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load welcome");
+        // A failed fetch is "unknown", never "incomplete".
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : "Unable to load welcome");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -168,7 +158,9 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [organizationId]);
+  }, [router]);
+
+  useEffect(() => load(), [load]);
 
   function applyState(state: WelcomeState) {
     setName(state.organization.name);
@@ -207,7 +199,7 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
     setBusy(true);
     setError(null);
     try {
-      const state = await saveWelcomeProfile(organizationId, {
+      const state = await saveWelcomeProfile({
         name,
         industry,
         logo,
@@ -226,7 +218,7 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
     setError(null);
     setSelectedTemplate(key);
     try {
-      const state = await seedWelcomeTemplate(organizationId, key);
+      const state = await seedWelcomeTemplate(key);
       applyState(state);
       if (state.seeded?.tool_name) setToolName(state.seeded.tool_name);
       if (state.seeded?.integration_id) setIntegrationId(state.seeded.integration_id);
@@ -241,43 +233,66 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
   async function saveManual() {
     setBusy(true);
     setError(null);
+    // Resume from what already exists instead of creating a second system.
+    const created: CreatedDraft = { ...draft };
+    const remember = (patch: CreatedDraft) => {
+      Object.assign(created, patch);
+      setDraft({ ...created });
+    };
     try {
       const systemKey = slugify(systemName);
       const agentKey = slugify(agentName);
-      if (!systemKey || !agentKey) {
+      if (!created.systemId && (!systemKey || !agentKey)) {
         throw new Error("Enter an AI system name and an agent name.");
       }
-      const system = await createAISystem({
-        system_key: systemKey,
-        name: systemName.trim(),
-        business_purpose: "First governed AI system",
-        risk_tier: "MEDIUM",
-      });
-      await approveSystem(system.data.id);
-      const agent = await createAgent(system.data.id, {
-        agent_key: agentKey,
-        name: agentName.trim(),
-      });
+      if (!created.systemId) {
+        const system = await createAISystem({
+          system_key: systemKey,
+          name: systemName.trim(),
+          business_purpose: "First governed AI system",
+          risk_tier: "MEDIUM",
+        });
+        remember({ systemId: system.data.id, systemName: system.data.name });
+      }
+      if (!created.agentId) {
+        const agent = await createAgent(created.systemId!, {
+          agent_key: agentKey,
+          name: agentName.trim(),
+        });
+        remember({ agentId: agent.data.id });
+      }
       const toolList = tools
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
-      const version = await createAgentVersion(agent.data.id, {
-        change_summary: "Initial manual onboarding version",
-        configuration_snapshot: {
-          model: modelName.trim() || undefined,
-          tools: toolList,
-        },
-      });
-      await approveVersion(version.data.id);
-      await patchOnboarding(organizationId, {
+      if (!created.versionId) {
+        const version = await createAgentVersion(created.agentId!, {
+          change_summary: "Initial manual onboarding version",
+          configuration_snapshot: {
+            model: modelName.trim() || undefined,
+            tools: toolList,
+          },
+        });
+        remember({ versionId: version.data.id });
+      }
+      // Drafts stay drafts: no review or approval is attempted here.
+      await patchOnboarding({
         complete_step: "agent_version",
-        first_ai_system_id: system.data.id,
+        first_ai_system_id: created.systemId!,
       });
       setToolName(toolList[0] || "your_tool");
-      setStep(2);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to create the AI system");
+      const message = err instanceof Error ? err.message : "Unable to create the AI system";
+      const remaining = created.systemId
+        ? created.agentId
+          ? "The AI system and agent were created; the version still needs to be created."
+          : "The AI system was created; the agent and version still need to be created."
+        : "";
+      setError(
+        remaining
+          ? `${message} ${remaining} Retry to continue with the existing records.`
+          : message,
+      );
     } finally {
       setBusy(false);
     }
@@ -287,8 +302,8 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
     setBusy(true);
     setError(null);
     try {
-      await completeWelcome(organizationId);
-      markWelcomeDoneLocally(organizationId);
+      await completeWelcome();
+      markWelcomeDoneLocally();
       router.replace("/app/onboarding");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to finish welcome");
@@ -309,6 +324,25 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-md space-y-3" data-testid="welcome-load-error">
+          <h1 className="text-base font-semibold text-ink-900">Welcome is unavailable right now</h1>
+          <p className="text-sm text-ink-500">
+            {loadError}. Your setup status is unknown, not incomplete.
+          </p>
+          <div className="flex gap-2">
+            <Button onClick={() => load()}>Retry</Button>
+            <Link href="/dashboard">
+              <Button variant="ghost">Back to dashboard</Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-base-100 text-ink-900" data-testid="welcome-wizard">
       <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-8 sm:px-8">
@@ -318,8 +352,8 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
           </p>
           <h1 className="mt-1 text-2xl font-semibold">Welcome to RaiCentral</h1>
           <p className="mt-2 max-w-2xl text-sm text-ink-500">
-            Set up the organization, load an example or your own catalog, then connect with the
-            TypeScript or Python SDK.
+            Set up the organization, load sample data or register your own AI system, then connect
+            with the TypeScript or Python SDK.
           </p>
         </div>
 
@@ -392,8 +426,8 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
           <section className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-ink-500">
-                Choose an example. Seeding loads that template&apos;s system, agent, model, MCP
-                server, tools, and policies.
+                Choose a sample. Seeding loads sample/demo data: that template&apos;s system, agent,
+                model, MCP server, tools, and policies.
               </p>
               <Button variant="secondary" onClick={() => setMode("manual")}>
                 Manual input
@@ -459,18 +493,55 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
               </label>
             </div>
             <CatalogUpload />
-            <Button disabled={busy} onClick={() => void saveManual()}>
-              {busy ? "Creating…" : "Create and continue"}
-            </Button>
+            {draft.versionId ? (
+              <div
+                className="space-y-2 rounded-md border border-accent-200 bg-accent-50 p-3 text-sm"
+                data-testid="draft-created"
+              >
+                <p className="font-medium text-accent-700">
+                  Draft created — review required before runtime setup
+                </p>
+                <p className="text-xs text-ink-600">
+                  {draft.systemName ?? "The AI system"}, its agent and version were saved as drafts.
+                  Nothing was approved on your behalf.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Link href={`/governance/registry/versions/${draft.versionId}`}>
+                    <Button variant="secondary" size="sm">
+                      Review the version
+                    </Button>
+                  </Link>
+                  <Button size="sm" onClick={() => setStep(2)}>
+                    Continue
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button disabled={busy} onClick={() => void saveManual()}>
+                {busy
+                  ? "Creating…"
+                  : draft.systemId
+                    ? "Retry — resume with existing records"
+                    : "Create drafts"}
+              </Button>
+            )}
           </section>
         ) : null}
 
         {step === 2 ? (
           <section className="space-y-4">
+            <ol className="list-decimal space-y-1 pl-5 text-sm text-ink-600">
+              <li>Review the agent version. A draft version cannot be bound to a runtime.</li>
+              <li>
+                Once the version is approved, create its runtime identity. Runtime creation is
+                blocked until that approval has happened.
+              </li>
+              <li>Explicitly issue a credential. The key is shown once, when you issue it.</li>
+            </ol>
             <p className="text-sm text-ink-500">
-              Authenticate with the runtime credential, send a heartbeat, ask for a decision, and
-              execute only when the decision is allow. The one-time agent key is issued on the next
-              page.
+              The examples below show the SDK call sequence: authenticate with the runtime
+              credential, send a heartbeat, ask for a decision, and execute only when the decision
+              is allow.
             </p>
             <div className="grid gap-4 lg:grid-cols-2">
               <ExamplePane
@@ -487,7 +558,7 @@ export function WelcomeWizard({ organizationId }: { organizationId: string }) {
               />
             </div>
             <Button disabled={busy} onClick={() => void finish()}>
-              {busy ? "Finishing…" : "Continue to onboarding"}
+              {busy ? "Finishing…" : "Finish setup"}
             </Button>
           </section>
         ) : null}

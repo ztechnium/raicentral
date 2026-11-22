@@ -27,6 +27,9 @@ Start with the [README](../README.md). [Current status](releases/SYSTEM_STATUS.m
 5. [Public SDK OpenAPI](api/sdk-v1-openapi.yaml)
 6. [API key storage](API_KEY_STORAGE.md)
 7. [LLM providers](MULTI_PROVIDER_SETUP.md)
+8. [Onboarding Step 01 — Community foundations](onboarding/step-01-community-foundations.md)
+9. [Onboarding Step 02 — Durable sessions, sources and jobs](onboarding/step-02-sessions-sources-jobs.md)
+10. [Onboarding Step 03 — Extraction and AI configuration](onboarding/step-03-extraction-ai-configuration.md)
 
 ## For operators
 

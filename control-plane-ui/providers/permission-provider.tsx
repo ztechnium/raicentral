@@ -28,6 +28,7 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
   const org = useContext(OrganizationContext);
   const [tenantPermissions, setTenantPermissions] = useState<TenantPermissions | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!auth) {
     throw new Error("PermissionProvider must be used within AuthProvider");
@@ -41,12 +42,16 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
   const { activeOrganization } = org;
 
   const loadPermissions = useCallback(async () => {
-    if (!isAuthenticated || !activeOrganization) {
+    // Permissions come from the server context for the signed-in user; they do
+    // not depend on an organization selection (Community has one instance).
+    if (!isAuthenticated) {
       setTenantPermissions(null);
+      setError(null);
       return;
     }
 
     setIsLoading(true);
+    setError(null);
     try {
       // Load server-derived context (/v1/auth/context)
       const response = await apiGet<{
@@ -70,8 +75,9 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
         roles,
         permissions,
       });
-    } catch (error) {
-      console.error("Failed to load permissions:", error);
+    } catch (err) {
+      console.error("Failed to load permissions:", err);
+      setError(err instanceof Error ? err.message : "Unable to load permissions");
       // Fall back to membership roles from /v1/auth/me so nav stays usable.
       const fallbackRoles = activeOrganization?.roles ?? [];
       setTenantPermissions({
@@ -103,9 +109,10 @@ export function PermissionProvider({ children }: { children: ReactNode }) {
         isPlatformAdmin,
       },
       isLoading,
+      error,
       refreshPermissions: loadPermissions,
     }),
-    [tenantPermissions, platformRoles, isPlatformAdmin, isLoading, loadPermissions],
+    [tenantPermissions, platformRoles, isPlatformAdmin, isLoading, error, loadPermissions],
   );
 
   return <PermissionContext.Provider value={value}>{children}</PermissionContext.Provider>;

@@ -99,6 +99,8 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
         "name": "Organization Admin",
         "description": "Full management inside a single organization (not platform admin)",
         "permissions": [
+            "onboarding:providers:manage",
+            "onboarding:sources:read",
             "rules:read",
             "rules:write",
             "prompts:read",
@@ -284,6 +286,7 @@ DEFAULT_RBAC_ROLES: Dict[str, Dict[str, Any]] = {
         "name": "RAI Officer",
         "description": "Can manage rules and review policy issues",
         "permissions": [
+            "onboarding:sources:read",
             "rules:read",
             "rules:write",
             "prompts:read",

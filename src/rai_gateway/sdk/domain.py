@@ -113,6 +113,7 @@ class BackgroundJobStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     DEAD_LETTER = "DEAD_LETTER"
+    CANCELLED = "CANCELLED"
 
 
 class BackgroundJobType(StrEnum):

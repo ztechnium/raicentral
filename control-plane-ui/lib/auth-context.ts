@@ -64,6 +64,12 @@ export interface PermissionContextValue {
     isPlatformAdmin: boolean;
   };
   isLoading: boolean;
+  /**
+   * Set when /v1/auth/context could not be loaded. `tenant` may then hold a
+   * role-based fallback with an empty `permissions` list: that is "unknown",
+   * not "no permissions".
+   */
+  error?: string | null;
   refreshPermissions: () => Promise<void>;
 }
 
