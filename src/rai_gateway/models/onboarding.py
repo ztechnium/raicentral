@@ -38,6 +38,15 @@ class OnboardingSession(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String(200), nullable=False)
     lifecycle = Column(String(16), nullable=False, default="OPEN")
+    session_kind = Column(String(24), nullable=False, default="INITIAL")
+    baseline_session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    confirmed_baseline_id = Column(UUID(as_uuid=True), nullable=True)
+    update_status = Column(String(32), nullable=True)
     row_version = Column(Integer, nullable=False, default=1)
     input_revision = Column(Integer, nullable=False, default=0)
     clarification_revision = Column(Integer, nullable=False, default=0)
@@ -52,6 +61,10 @@ class OnboardingSession(Base):
     __table_args__ = (
         CheckConstraint(
             "lifecycle IN ('OPEN','ARCHIVED')", name="ck_onb_session_lifecycle"
+        ),
+        CheckConstraint(
+            "session_kind IN ('INITIAL','UPDATE','INVENTORY_CORRECTION','POLICY_REVISION')",
+            name="ck_onb_session_kind",
         ),
         CheckConstraint("row_version >= 1", name="ck_onb_session_row_version"),
         CheckConstraint("input_revision >= 0", name="ck_onb_session_input_revision"),
@@ -181,6 +194,7 @@ class OnboardingRun(Base):
     change_set_id = Column(UUID(as_uuid=True), nullable=True)
     activation_plan_id = Column(UUID(as_uuid=True), nullable=True)
     verification_plan_id = Column(UUID(as_uuid=True), nullable=True)
+    delta_plan_id = Column(UUID(as_uuid=True), nullable=True)
     plan = Column(JSON, nullable=True)
     plan_digest = Column(String(64), nullable=True)
     job_id = Column(
@@ -200,7 +214,8 @@ class OnboardingRun(Base):
         CheckConstraint("input_revision >= 0", name="ck_onb_run_input_revision"),
         CheckConstraint(
             "stage IN ('PREPARE_SOURCES','EXTRACT_SOURCES','DISCOVER_INVENTORY',"
-            "'GENERATE_GOVERNANCE','APPLY_CHANGESET','ACTIVATE_CONTROLS','VERIFY_RUNTIME')",
+            "'GENERATE_GOVERNANCE','APPLY_CHANGESET','ACTIVATE_CONTROLS','VERIFY_RUNTIME',"
+            "'ANALYZE_DELTA')",
             name="ck_onb_run_stage",
         ),
         ForeignKeyConstraint(
@@ -231,6 +246,12 @@ class OnboardingRun(Base):
             ["verification_plan_id"],
             ["onboarding_verification_plans.id"],
             name="fk_onb_run_verification_plan",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["delta_plan_id"],
+            ["onboarding_delta_plans.id"],
+            name="fk_onb_run_delta_plan",
             use_alter=True,
         ),
         # At most one active run per session.
@@ -1225,5 +1246,285 @@ class OnboardingVerificationDispatch(Base):
         CheckConstraint(
             "status IN ('PENDING','SUCCEEDED','FAILED','SKIPPED')",
             name="ck_onb_verification_dispatch_status",
+        ),
+    )
+
+
+# --- Step 08: incremental updates, change impact, verification applicability ---
+
+
+class OnboardingBaseline(Base):
+    __tablename__ = "onboarding_baselines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    baseline_kind = Column(String(32), nullable=False)
+    application_receipt_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_application_receipts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    application_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    domain_projection = Column(JSON, nullable=False)
+    domain_digest = Column(String(64), nullable=False)
+    scope_notes = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, default="CONFIRMED")
+    confirmed_by = Column(String, nullable=False)
+    confirmed_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "baseline_kind IN ('APPLIED_RECEIPT','REVIEWED_CURRENT_STATE')",
+            name="ck_onb_baseline_kind",
+        ),
+        CheckConstraint(
+            "status IN ('PREVIEW','CONFIRMED')", name="ck_onb_baseline_status"
+        ),
+    )
+
+
+class OnboardingSourceLineage(Base):
+    __tablename__ = "onboarding_source_lineage"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    previous_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_source_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    new_revision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_source_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    relationship = Column(String(16), nullable=False)
+    effective_notes = Column(Text, nullable=True)
+    confirmed_by = Column(String, nullable=False)
+    confirmed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "relationship IN ('SUPERSEDES','SUPPLEMENTS','INDEPENDENT')",
+            name="ck_onb_source_lineage_rel",
+        ),
+        UniqueConstraint(
+            "previous_revision_id", "new_revision_id", name="uq_onb_source_lineage_pair"
+        ),
+    )
+
+
+class OnboardingDeltaPlan(Base):
+    __tablename__ = "onboarding_delta_plans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    baseline_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_baselines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    plan_version = Column(Integer, nullable=False, default=1)
+    body = Column(JSON, nullable=False)
+    digest = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="PREPARED")
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PREPARED','RUNNING','SUCCEEDED','FAILED','CANCELLED')",
+            name="ck_onb_delta_plan_status",
+        ),
+        CheckConstraint("plan_version >= 1", name="ck_onb_delta_plan_version"),
+    )
+
+
+class OnboardingAssertionMatch(Base):
+    __tablename__ = "onboarding_assertion_matches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delta_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_delta_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal = Column(Integer, nullable=False)
+    old_identity = Column(String(512), nullable=False)
+    new_identity = Column(String(512), nullable=True)
+    match_class = Column(String(32), nullable=False)
+    method_version = Column(String(16), nullable=False)
+    match_reason = Column(Text, nullable=False)
+    evidence = Column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("delta_plan_id", "ordinal", name="uq_onb_assertion_match_ordinal"),
+        CheckConstraint("ordinal >= 0", name="ck_onb_assertion_match_ordinal"),
+    )
+
+
+class OnboardingChangeFinding(Base):
+    __tablename__ = "onboarding_change_findings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delta_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_delta_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal = Column(Integer, nullable=False)
+    change_type = Column(String(32), nullable=False)
+    identity = Column(String(512), nullable=False)
+    before_digest = Column(String(64), nullable=True)
+    after_digest = Column(String(64), nullable=True)
+    summary = Column(Text, nullable=False)
+    impact_level = Column(String(16), nullable=False, default="MEDIUM")
+    resolution_status = Column(String(24), nullable=False, default="OPEN")
+    provenance = Column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        UniqueConstraint("delta_plan_id", "ordinal", name="uq_onb_change_finding_ordinal"),
+        CheckConstraint("ordinal >= 0", name="ck_onb_change_finding_ordinal"),
+    )
+
+
+class OnboardingImpactEdge(Base):
+    __tablename__ = "onboarding_impact_edges"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delta_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_delta_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    finding_ordinal = Column(Integer, nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    edge_type = Column(String(32), nullable=False)
+    reference_kind = Column(String(32), nullable=False)
+    reference_id = Column(String(128), nullable=False)
+    direct = Column(Boolean, nullable=False, default=True)
+    confidence = Column(String(24), nullable=False, default="INFERRED_NEEDS_REVIEW")
+    reason = Column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "delta_plan_id", "ordinal", name="uq_onb_impact_edge_ordinal"
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_onb_impact_edge_ordinal"),
+    )
+
+
+class OnboardingUpdateDecision(Base):
+    __tablename__ = "onboarding_update_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    finding_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_change_findings.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    decision = Column(String(24), nullable=False)
+    notes = Column(Text, nullable=True)
+    actor = Column(String, nullable=False)
+    edit_revision = Column(Integer, nullable=False)
+    supersedes_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_update_decisions.id"),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("edit_revision >= 1", name="ck_onb_update_decision_revision"),
+        CheckConstraint(
+            "decision IN ('KEEP','UPDATE','EXCLUDE','MATCH','CLARIFY','DEFER','SOURCE_ONLY')",
+            name="ck_onb_update_decision",
+        ),
+    )
+
+
+class OnboardingUpdateReconciliation(Base):
+    __tablename__ = "onboarding_update_reconciliations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delta_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_delta_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    edit_version = Column(Integer, nullable=False)
+    baseline_digest = Column(String(64), nullable=False)
+    current_domain_digest = Column(String(64), nullable=False)
+    source_digest = Column(String(64), nullable=False)
+    difference = Column(JSON, nullable=False)
+    captured_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "delta_plan_id", "edit_version", name="uq_onb_update_reconciliation_version"
+        ),
+        CheckConstraint("edit_version >= 1", name="ck_onb_update_reconciliation_version"),
+    )
+
+
+class OnboardingVerificationImpact(Base):
+    __tablename__ = "onboarding_verification_impacts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delta_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_delta_plans.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal = Column(Integer, nullable=False)
+    verification_attempt_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_verification_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    scenario_key = Column(String(64), nullable=False)
+    target_digest = Column(String(64), nullable=False)
+    applicability = Column(String(24), nullable=False)
+    reason = Column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "delta_plan_id", "ordinal", name="uq_onb_verification_impact_ordinal"
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_onb_verification_impact_ordinal"),
+        CheckConstraint(
+            "applicability IN ('CURRENT','STALE','REVIEW_REQUIRED','NOT_APPLICABLE')",
+            name="ck_onb_verification_applicability",
         ),
     )

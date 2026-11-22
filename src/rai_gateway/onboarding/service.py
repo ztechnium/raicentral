@@ -46,6 +46,7 @@ GOVERNANCE_JOB_TYPE = "ONBOARDING_GENERATE_GOVERNANCE"
 APPLY_JOB_TYPE = "ONBOARDING_APPLY_CHANGESET"
 ACTIVATE_JOB_TYPE = "ONBOARDING_ACTIVATE_CONTROLS"
 VERIFY_JOB_TYPE = "ONBOARDING_VERIFY_RUNTIME"
+DELTA_JOB_TYPE = "ONBOARDING_ANALYZE_DELTA"
 PROBE_JOB_TYPE = "ONBOARDING_TEST_PROVIDER"
 STAGE_PREPARE = "PREPARE_SOURCES"
 STAGE_EXTRACT = "EXTRACT_SOURCES"
@@ -54,6 +55,7 @@ STAGE_GOVERNANCE = "GENERATE_GOVERNANCE"
 STAGE_APPLY = "APPLY_CHANGESET"
 STAGE_ACTIVATE = "ACTIVATE_CONTROLS"
 STAGE_VERIFY = "VERIFY_RUNTIME"
+STAGE_ANALYZE_DELTA = "ANALYZE_DELTA"
 EVALUATION_EXECUTE_PERMISSION = "evaluation:execute"
 EVALUATION_MANAGE_PERMISSION = "evaluation:manage"
 EVALUATION_READ_PERMISSION = "evaluation:read"
@@ -1558,6 +1560,14 @@ class IntakeService:
             if access.can_content
             else f"Session {str(session.id)[:8]}",
             "lifecycle": session.lifecycle,
+            "session_kind": session.session_kind,
+            "baseline_session_id": (
+                str(session.baseline_session_id) if session.baseline_session_id else None
+            ),
+            "update_status": session.update_status,
+            "confirmed_baseline_id": (
+                str(session.confirmed_baseline_id) if session.confirmed_baseline_id else None
+            ),
             "view": view_state,
             "row_version": session.row_version,
             "input_revision": session.input_revision,
