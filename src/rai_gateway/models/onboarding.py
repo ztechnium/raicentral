@@ -179,6 +179,8 @@ class OnboardingRun(Base):
     )
     governance_plan_id = Column(UUID(as_uuid=True), nullable=True)
     change_set_id = Column(UUID(as_uuid=True), nullable=True)
+    activation_plan_id = Column(UUID(as_uuid=True), nullable=True)
+    verification_plan_id = Column(UUID(as_uuid=True), nullable=True)
     plan = Column(JSON, nullable=True)
     plan_digest = Column(String(64), nullable=True)
     job_id = Column(
@@ -198,7 +200,7 @@ class OnboardingRun(Base):
         CheckConstraint("input_revision >= 0", name="ck_onb_run_input_revision"),
         CheckConstraint(
             "stage IN ('PREPARE_SOURCES','EXTRACT_SOURCES','DISCOVER_INVENTORY',"
-            "'GENERATE_GOVERNANCE','APPLY_CHANGESET')",
+            "'GENERATE_GOVERNANCE','APPLY_CHANGESET','ACTIVATE_CONTROLS','VERIFY_RUNTIME')",
             name="ck_onb_run_stage",
         ),
         ForeignKeyConstraint(
@@ -217,6 +219,18 @@ class OnboardingRun(Base):
             ["change_set_id"],
             ["onboarding_change_sets.id"],
             name="fk_onb_run_change_set",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["activation_plan_id"],
+            ["onboarding_activation_plans.id"],
+            name="fk_onb_run_activation_plan",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["verification_plan_id"],
+            ["onboarding_verification_plans.id"],
+            name="fk_onb_run_verification_plan",
             use_alter=True,
         ),
         # At most one active run per session.
@@ -1034,4 +1048,182 @@ class OnboardingApplicationReceipt(Base):
 
     __table_args__ = (
         UniqueConstraint("scope", "key_digest", name="uq_onb_app_receipt_scope_key"),
+    )
+
+
+class OnboardingRuntimeContext(Base):
+    __tablename__ = "onboarding_runtime_context"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    application_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    selected = Column(JSON, nullable=False, default=dict)
+    selection_digest = Column(String(64), nullable=False, default="")
+    delegation_mode = Column(String(16), nullable=False, default="NONE")
+    row_version = Column(Integer, nullable=False, default=1)
+    updated_by = Column(String, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "delegation_mode IN ('NONE','EXPLICIT','TENANT')",
+            name="ck_onb_runtime_ctx_delegation",
+        ),
+        CheckConstraint("row_version >= 1", name="ck_onb_runtime_ctx_row_version"),
+    )
+
+
+class OnboardingActivationPlan(Base):
+    __tablename__ = "onboarding_activation_plans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    runtime_context_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_runtime_context.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    contract_version = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default="PREPARED")
+    payload = Column(JSON, nullable=False)
+    payload_digest = Column(String(64), nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    discarded_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PREPARED','ACTIVATING','ACTIVATED','FAILED','DISCARDED')",
+            name="ck_onb_activation_plan_status",
+        ),
+    )
+
+
+class OnboardingActivationReceipt(Base):
+    __tablename__ = "onboarding_activation_receipts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_activation_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scope = Column(String(255), nullable=False)
+    key_digest = Column(String(64), nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("scope", "key_digest", name="uq_onb_activation_receipt_scope_key"),
+    )
+
+
+class OnboardingVerificationPlan(Base):
+    __tablename__ = "onboarding_verification_plans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    activation_plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_activation_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    contract_version = Column(String(32), nullable=False)
+    status = Column(String(16), nullable=False, default="PREPARED")
+    payload = Column(JSON, nullable=False)
+    payload_digest = Column(String(64), nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    discarded_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PREPARED','VERIFYING','VERIFIED','FAILED','DISCARDED')",
+            name="ck_onb_verification_plan_status",
+        ),
+    )
+
+
+class OnboardingVerificationAttempt(Base):
+    __tablename__ = "onboarding_verification_attempts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_verification_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    attempt_number = Column(Integer, nullable=False)
+    run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("background_jobs.id"),
+        nullable=False,
+    )
+    outcome = Column(String(16), nullable=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id", "attempt_number", name="uq_onb_verification_attempt_number"
+        ),
+        CheckConstraint(
+            "attempt_number >= 1", name="ck_onb_verification_attempt_number"
+        ),
+    )
+
+
+class OnboardingVerificationDispatch(Base):
+    __tablename__ = "onboarding_verification_dispatches"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    attempt_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("onboarding_verification_attempts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal = Column(Integer, nullable=False)
+    scenario_key = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="PENDING")
+    evidence = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id", "ordinal", name="uq_onb_verification_dispatch_ordinal"
+        ),
+        CheckConstraint("ordinal >= 0", name="ck_onb_verification_dispatch_ordinal"),
+        CheckConstraint(
+            "status IN ('PENDING','SUCCEEDED','FAILED','SKIPPED')",
+            name="ck_onb_verification_dispatch_status",
+        ),
     )

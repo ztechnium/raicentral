@@ -60,6 +60,7 @@ class StartSessionBody(BaseModel):
     channel: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     delegation_id: UUID | None = None
+    delegation_mode: str | None = None
     allow_ended_session_reuse: bool = False
 
 
@@ -208,6 +209,7 @@ def start_session(
             channel=body.channel,
             metadata=body.metadata,
             delegation_id=body.delegation_id,
+            delegation_mode=body.delegation_mode,
             allow_ended_session_reuse=body.allow_ended_session_reuse,
         )
     except SdkError as exc:
@@ -256,6 +258,8 @@ def authorize_action(
     x_rai_mtls_identity: str | None = Header(default=None, alias="X-RAI-MTLS-Identity"),
     x_rai_trusted_proxy: str | None = Header(default=None, alias="X-RAI-Trusted-Proxy"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_rai_onboarding_dispatch: str | None = Header(default=None, alias="X-RAI-Onboarding-Dispatch"),
+    x_rai_onboarding_challenge: str | None = Header(default=None, alias="X-RAI-Onboarding-Challenge"),
 ):
     secret, token = _extract_runtime_secret(x_rai_agent_key, authorization)
     svc = SdkService(db)
@@ -279,6 +283,8 @@ def authorize_action(
             idempotency_key=body.idempotency_key or idempotency_key,
             metadata=body.metadata,
             approval_request_id=body.approval_request_id,
+            onboarding_dispatch_id=x_rai_onboarding_dispatch,
+            onboarding_challenge=x_rai_onboarding_challenge,
         )
     except SdkError as exc:
         raise _sdk_http(exc) from exc

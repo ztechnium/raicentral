@@ -283,6 +283,7 @@ class SdkService:
         channel: str | None = None,
         metadata: dict[str, Any] | None = None,
         delegation_id: UUID | None = None,
+        delegation_mode: str | None = None,
         allow_ended_session_reuse: bool = False,
     ) -> dict[str, Any]:
         integration = self._require_integration_for_auth(auth, integration_id)
@@ -291,6 +292,7 @@ class SdkService:
         resolved_delegation_id = self._validate_session_delegation(
             auth,
             delegation_id=delegation_id,
+            delegation_mode=delegation_mode,
         )
 
         if external_session_id and (
@@ -461,9 +463,24 @@ class SdkService:
         auth: AuthenticatedRuntime,
         *,
         delegation_id: UUID | None,
+        delegation_mode: str | None = None,
     ) -> UUID | None:
         """Validate and return an active delegation for this runtime."""
-        if delegation_id is None:
+        mode = (delegation_mode or "").upper() or None
+        if mode == "NONE":
+            if delegation_id is not None:
+                raise SdkError(
+                    SdkErrorCode.INVALID_REQUEST,
+                    "delegation_id must not be supplied when delegation_mode is NONE",
+                )
+            return None
+        if mode == "EXPLICIT_GRANT":
+            if delegation_id is None:
+                raise SdkError(
+                    SdkErrorCode.INVALID_REQUEST,
+                    "delegation_id is required when delegation_mode is EXPLICIT_GRANT",
+                )
+        if delegation_id is None and mode != "EXPLICIT_GRANT":
             # Default to the most recent ACTIVE grant for this runtime identity.
             identity = auth.runtime_identity
             grants = DelegationService(self._db).list_delegations(
@@ -681,6 +698,8 @@ class SdkService:
         idempotency_key: str | None = None,
         metadata: dict[str, Any] | None = None,
         approval_request_id: UUID | None = None,
+        onboarding_dispatch_id: str | None = None,
+        onboarding_challenge: str | None = None,
     ) -> dict[str, Any]:
         session, integration = self._require_session(auth, session_id)
 
@@ -830,6 +849,21 @@ class SdkService:
             approval_request_id=result.approval_request_id,
         )
         public.decision_id = str(record.id)
+        if onboarding_dispatch_id and onboarding_challenge:
+            from uuid import UUID as _UUID
+
+            from rai_gateway.onboarding.verification_dispatch import admit_authorization
+
+            try:
+                admit_authorization(
+                    self._db,
+                    dispatch_id=_UUID(onboarding_dispatch_id),
+                    challenge=onboarding_challenge,
+                    decision_id=record.id,
+                    receipt_id=result.receipt_id,
+                )
+            except (ValueError, TypeError):
+                pass
         return public.to_dict()
 
     def report_execution(

@@ -27,6 +27,7 @@ from rai_gateway.models.onboarding import (
 )
 from rai_gateway.models.productization import BackgroundJob
 from rai_gateway.onboarding.service import (
+    ACTIVATE_JOB_TYPE,
     APPLY_JOB_TYPE,
     DISCOVER_JOB_TYPE,
     EXTRACT_JOB_TYPE,
@@ -34,6 +35,7 @@ from rai_gateway.onboarding.service import (
     JOB_TYPE,
     PROBE_JOB_TYPE,
     STAGE_EXTRACT,
+    VERIFY_JOB_TYPE,
     canonical_digest,
 )
 from rai_gateway.onboarding.storage import (
@@ -51,6 +53,8 @@ SUPPORTED_JOB_TYPES = [
     DISCOVER_JOB_TYPE,
     GOVERNANCE_JOB_TYPE,
     APPLY_JOB_TYPE,
+    ACTIVATE_JOB_TYPE,
+    VERIFY_JOB_TYPE,
     PROBE_JOB_TYPE,
 ]
 SessionFactory = Callable[[], Session]
@@ -366,6 +370,14 @@ def process_claimed_job(
             from rai_gateway.onboarding.application_job import process_apply_job
 
             return process_apply_job(session_factory, store, job_id, token)
+        if job_type == ACTIVATE_JOB_TYPE:
+            from rai_gateway.onboarding.activation_job import process_activate_job
+
+            return process_activate_job(session_factory, store, job_id, token)
+        if job_type == VERIFY_JOB_TYPE:
+            from rai_gateway.onboarding.verification_job import process_verify_job
+
+            return process_verify_job(session_factory, store, job_id, token)
         job = db.query(BackgroundJob).filter(BackgroundJob.id == job_id).one()
         try:
             run = _validate_binding(db, job)
