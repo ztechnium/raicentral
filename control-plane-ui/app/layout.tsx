@@ -25,9 +25,14 @@ export const metadata: Metadata = {
   },
 };
 
+const themeBootstrapScript = `(function(){try{var k="rai_dashboard_theme",t="light",s=localStorage.getItem(k);if(s==="dark"||s==="light")t=s;document.documentElement.dataset.dashboardTheme=t}catch(e){document.documentElement.dataset.dashboardTheme="light"}})();`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
       <body>{children}</body>
     </html>
   );
