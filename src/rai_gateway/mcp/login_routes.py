@@ -6,7 +6,6 @@ from html import escape
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-
 from mcp.server.auth.provider import AuthorizeError
 
 from rai_gateway.mcp.oauth_provider import RaiMcpOAuthProvider

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+
+from fastapi import FastAPI
 from mcp.server.auth.routes import (
     build_resource_metadata_url,
     create_protected_resource_routes,
 )
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.mcpserver import MCPServer
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
-
-from fastapi import FastAPI
 
 from rai_gateway.core.config import settings
 from rai_gateway.mcp.api_client import bind_gateway_app

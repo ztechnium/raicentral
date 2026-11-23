@@ -5,7 +5,6 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any
 from urllib.parse import urlencode
 
 from mcp.server.auth.provider import (

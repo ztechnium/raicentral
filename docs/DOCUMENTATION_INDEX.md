@@ -15,8 +15,9 @@ Start with the [README](../README.md). [Current status](releases/SYSTEM_STATUS.m
 4. [Integration quickstart](public/getting-started/quickstart.md)
 5. [Developer lab](../examples/developer_lab/README.md)
 6. [REST API](public/integration/rest-api.md)
-7. [Python SDK](public/integration/python-sdk.md)
-8. [TypeScript SDK](public/integration/typescript-sdk.md)
+7. [RAI management MCP server](public/integration/mcp-server.md)
+8. [Python SDK](public/integration/python-sdk.md)
+9. [TypeScript SDK](public/integration/typescript-sdk.md)
 
 ## For developers
 
