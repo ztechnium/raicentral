@@ -226,6 +226,14 @@ class Settings(BaseSettings):
     # Allow http:// endpoints (dev only; production should use https).
     mcp_allow_http: bool = False
 
+    # RAI management MCP server (Streamable HTTP + OAuth for Cursor and other MCP hosts)
+    mcp_server_enabled: bool = True
+    # Public base URL of the API (no trailing slash). Used for OAuth issuer/resource metadata.
+    mcp_server_public_base_url: str = "http://127.0.0.1:8001"
+    mcp_server_mount_path: str = "/mcp"
+    mcp_oauth_enable_dcr: bool = True
+    mcp_oauth_scopes: str = "rai:read,rai:manage"
+
     # Human approval step-up (server-derived; never trust caller body alone)
     approval_minimum_acr: Optional[str] = None
     approval_required_amr: Optional[str] = None  # comma-separated
