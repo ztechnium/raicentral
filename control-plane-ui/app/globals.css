@@ -38,13 +38,21 @@
   --danger-50: #fef2f2;
 }
 
-/* RaiCentral security console. Public pages keep the light :root palette. */
+/* RaiCentral admin dashboard. Light theme uses :root tokens; dark via .console-dark. */
 .console {
-  color-scheme: dark;
+  color-scheme: light;
   font-size: 14px;
   background-color: var(--base-100);
-  background-image: none;
+  background-image:
+    radial-gradient(circle at 10% 10%, rgba(43, 157, 139, 0.06), transparent 40%),
+    radial-gradient(circle at 90% 20%, rgba(17, 97, 85, 0.04), transparent 35%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
   color: var(--ink-900);
+}
+
+.console.console-dark {
+  color-scheme: dark;
+  background-image: none;
   --base-900: oklch(0.13 0.02 252);
   --base-800: oklch(0.17 0.023 251);
   --base-700: oklch(0.22 0.034 252);

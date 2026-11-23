@@ -10,12 +10,16 @@ import { OrganizationProvider } from "@/providers/organization-provider";
 import { PermissionProvider } from "@/providers/permission-provider";
 import { useAuth } from "@/lib/hooks/use-auth";
 import { ADMIN_AUTH_TOKEN_STORAGE_KEY, resendVerificationEmail } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { ThemeProvider, useDashboardTheme } from "@/providers/theme-provider";
 
 function AppShellContent({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, isAuthenticated, isLoading } = useAuth();
+  const { theme } = useDashboardTheme();
   const [resendMsg, setResendMsg] = useState<string | null>(null);
+  const shellClass = cn("console min-h-screen bg-base-100 text-ink-900", theme === "dark" && "console-dark");
 
   useEffect(() => {
     if (isLoading) return;
@@ -38,7 +42,7 @@ function AppShellContent({ children }: { children: ReactNode }) {
 
   if (isLoading) {
     return (
-      <div className="console min-h-screen bg-base-100 p-6 text-sm text-ink-500">
+      <div className={cn(shellClass, "p-6 text-sm text-ink-500")}>
         Loading authentication...
       </div>
     );
@@ -46,20 +50,18 @@ function AppShellContent({ children }: { children: ReactNode }) {
 
   if (!isAuthenticated) {
     return (
-      <div className="console min-h-screen bg-base-100 p-6 text-sm text-ink-500">
-        Redirecting to login...
-      </div>
+      <div className={cn(shellClass, "p-6 text-sm text-ink-500")}>Redirecting to login...</div>
     );
   }
 
   if (pathname === "/welcome") {
-    return <div className="console min-h-screen bg-base-100 text-ink-900">{children}</div>;
+    return <div className={shellClass}>{children}</div>;
   }
 
   const emailVerified = user?.email_verified ?? true;
 
   return (
-    <div className="console min-h-screen bg-base-100 text-ink-900">
+    <div className={shellClass}>
       <Sidebar />
       <div className="min-h-screen lg:pl-60">
         <div className="sticky top-0 z-20 border-b border-base-200 bg-base-100/95 px-4 backdrop-blur">
@@ -89,7 +91,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <AuthProvider>
       <OrganizationProvider>
         <PermissionProvider>
-          <AppShellContent>{children}</AppShellContent>
+          <ThemeProvider>
+            <AppShellContent>{children}</AppShellContent>
+          </ThemeProvider>
         </PermissionProvider>
       </OrganizationProvider>
     </AuthProvider>
