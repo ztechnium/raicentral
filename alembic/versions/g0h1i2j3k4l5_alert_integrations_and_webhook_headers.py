@@ -1,7 +1,7 @@
 """alert integrations and webhook custom headers
 
-Revision ID: a2b3c4d5e6f7
-Revises: z1a2b3c4d5e6
+Revision ID: g0h1i2j3k4l5
+Revises: f9a0b1c2d3e4
 Create Date: 2026-11-23 10:50:00.000000
 
 """
@@ -11,7 +11,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a2b3c4d5e6f7"
+revision: str = "g0h1i2j3k4l5"
 down_revision: Union[str, None] = "f9a0b1c2d3e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
