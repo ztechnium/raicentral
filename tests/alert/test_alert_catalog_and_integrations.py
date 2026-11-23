@@ -6,6 +6,9 @@ import uuid
 
 import pytest
 
+import json
+
+from rai_gateway.alert_integrations.providers import build_delivery
 from rai_gateway.alert_integrations.service import AlertIntegrationService
 from rai_gateway.events.alert_catalog import (
     ENFORCEMENT_DENY,
@@ -13,6 +16,25 @@ from rai_gateway.events.alert_catalog import (
     any_subscription_matches,
     event_type_matches,
 )
+
+
+def test_whatsapp_meta_cloud_api_delivery() -> None:
+    url, headers, body = build_delivery(
+        "whatsapp",
+        event_type="enforcement.deny",
+        payload={"enforcement_decision": "DENY", "reason_code": "POLICY"},
+        config={
+            "access_token": "meta-test-token",
+            "phone_number_id": "987654321",
+            "recipient_phone": "+15551234567",
+        },
+    )
+    assert "graph.facebook.com" in url
+    assert url.endswith("/987654321/messages")
+    assert headers["Authorization"] == "Bearer meta-test-token"
+    data = json.loads(body)
+    assert data["messaging_product"] == "whatsapp"
+    assert data["to"] == "15551234567"
 
 
 def test_event_type_wildcards() -> None:

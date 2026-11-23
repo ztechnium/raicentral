@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 _RESERVED_HEADER_PREFIXES = ("x-rai-", "content-type", "host", "content-length")
 
 
+def _validate_whatsapp_config(config: dict[str, Any]) -> None:
+    token = (config.get("access_token") or "").strip()
+    phone_number_id = (config.get("phone_number_id") or "").strip()
+    recipient = (config.get("recipient_phone") or config.get("phone_number") or "").strip()
+    if not token or not phone_number_id or not recipient:
+        raise SdkError(
+            SdkErrorCode.INVALID_REQUEST,
+            "WhatsApp (Meta Cloud API) requires access_token, phone_number_id, and recipient_phone",
+        )
+
+
 def _sanitize_custom_headers(raw: dict[str, Any] | None) -> dict[str, str]:
     if not raw:
         return {}
@@ -65,8 +76,21 @@ class AlertIntegrationService:
             ]
         if provider == "whatsapp":
             return [
-                {"key": "webhook_url", "label": "WhatsApp / BSP webhook URL", "type": "url"},
-                {"key": "phone_number", "label": "Destination phone (E.164)", "type": "text"},
+                {
+                    "key": "access_token",
+                    "label": "Meta permanent access token",
+                    "type": "secret",
+                },
+                {
+                    "key": "phone_number_id",
+                    "label": "WhatsApp Business phone number ID",
+                    "type": "text",
+                },
+                {
+                    "key": "recipient_phone",
+                    "label": "Alert recipient phone (E.164)",
+                    "type": "text",
+                },
             ]
         if provider in {"jira", "trello", "clickup"}:
             return [
@@ -105,9 +129,14 @@ class AlertIntegrationService:
             )
         if not event_types:
             raise SdkError(SdkErrorCode.INVALID_REQUEST, "Select at least one event type")
-        url = config.get("webhook_url") or config.get("incoming_webhook_url")
-        if provider != "telegram" and url:
-            validate_webhook_url(str(url))
+        if provider == "whatsapp":
+            _validate_whatsapp_config(config)
+        elif provider == "telegram":
+            pass
+        else:
+            url = config.get("webhook_url") or config.get("incoming_webhook_url")
+            if url:
+                validate_webhook_url(str(url))
 
         row = AlertChannelIntegration(
             name=name.strip(),
@@ -141,9 +170,12 @@ class AlertIntegrationService:
                 raise SdkError(SdkErrorCode.INVALID_REQUEST, "Select at least one event type")
             row.event_types = event_types
         if config is not None:
-            url = config.get("webhook_url") or config.get("incoming_webhook_url")
-            if row.provider != "telegram" and url:
-                validate_webhook_url(str(url))
+            if row.provider == "whatsapp":
+                _validate_whatsapp_config(config)
+            elif row.provider != "telegram":
+                url = config.get("webhook_url") or config.get("incoming_webhook_url")
+                if url:
+                    validate_webhook_url(str(url))
             row.config = config
         if custom_headers is not None:
             row.custom_headers = _sanitize_custom_headers(custom_headers)
@@ -206,7 +238,7 @@ class AlertIntegrationService:
             payload=payload,
             config=row.config or {},
         )
-        if row.provider != "telegram":
+        if row.provider not in {"telegram", "whatsapp"}:
             validate_webhook_url(url)
         headers.update(_sanitize_custom_headers(row.custom_headers))
         headers.setdefault("X-RAI-Event-Type", event_type)
