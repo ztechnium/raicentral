@@ -16,6 +16,8 @@ from rai_gateway.core.tenant_context import TenantContext
 from rai_gateway.sdk.errors import SdkError
 from rai_gateway.sdk.jobs import JobQueue
 from rai_gateway.sdk.service import SdkService
+from rai_gateway.alert_integrations import AlertIntegrationService
+from rai_gateway.events.alert_catalog import ALERT_EVENT_GROUPS
 from rai_gateway.sdk.webhooks import WebhookService
 
 router = APIRouter(prefix="/sdk/v1", tags=["sdk-v1"])
@@ -163,6 +165,32 @@ class WebhookCreateBody(BaseModel):
     name: str
     url: str
     event_types: list[str]
+    custom_headers: dict[str, str] = Field(default_factory=dict)
+
+
+class WebhookUpdateBody(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    event_types: list[str] | None = None
+    custom_headers: dict[str, str] | None = None
+    enabled: bool | None = None
+
+
+class AlertIntegrationCreateBody(BaseModel):
+    name: str
+    provider: str
+    event_types: list[str]
+    config: dict[str, Any] = Field(default_factory=dict)
+    custom_headers: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class AlertIntegrationUpdateBody(BaseModel):
+    name: str | None = None
+    event_types: list[str] | None = None
+    config: dict[str, Any] | None = None
+    custom_headers: dict[str, str] | None = None
+    enabled: bool | None = None
 
 
 class EnqueueJobBody(BaseModel):
@@ -679,8 +707,10 @@ def create_webhook(
         name=body.name,
         url=body.url,
         event_types=body.event_types,
+        custom_headers=body.custom_headers,
         created_by=tenant.user_id,
     )
+    db.commit()
     return {"endpoint": endpoint, "secret": secret}
 
 
@@ -701,6 +731,28 @@ def list_webhook_deliveries(
     return {"items": WebhookService(db).list_deliveries(limit=limit)}
 
 
+@admin_router.patch("/webhooks/{endpoint_id}")
+def update_webhook(
+    endpoint_id: UUID,
+    body: WebhookUpdateBody,
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        endpoint = WebhookService(db).update_endpoint(
+            endpoint_id,
+            name=body.name,
+            url=body.url,
+            event_types=body.event_types,
+            custom_headers=body.custom_headers,
+            enabled=body.enabled,
+        )
+        db.commit()
+        return {"endpoint": endpoint}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
 @admin_router.post("/webhooks/{endpoint_id}/rotate")
 def rotate_webhook_secret(
     endpoint_id: UUID,
@@ -711,6 +763,87 @@ def rotate_webhook_secret(
         endpoint, secret = WebhookService(db).rotate_secret(endpoint_id)
         db.commit()
         return {"endpoint": endpoint, "secret": secret}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.get("/alert-events")
+def list_alert_events(
+    _tenant: TenantContext = Depends(require_permission("sdk:read")),
+):
+    return {"groups": ALERT_EVENT_GROUPS}
+
+
+@admin_router.get("/alert-integrations/catalog")
+def alert_integration_catalog(
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:read")),
+):
+    return {"providers": AlertIntegrationService(db).list_catalog()}
+
+
+@admin_router.get("/alert-integrations")
+def list_alert_integrations(
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:read")),
+):
+    return {"items": AlertIntegrationService(db).list_integrations()}
+
+
+@admin_router.post("/alert-integrations")
+def create_alert_integration(
+    body: AlertIntegrationCreateBody,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        item = AlertIntegrationService(db).create_integration(
+            name=body.name,
+            provider=body.provider,
+            event_types=body.event_types,
+            config=body.config,
+            custom_headers=body.custom_headers,
+            enabled=body.enabled,
+            created_by=tenant.user_id,
+        )
+        db.commit()
+        return {"integration": item}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.patch("/alert-integrations/{integration_id}")
+def update_alert_integration(
+    integration_id: UUID,
+    body: AlertIntegrationUpdateBody,
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        item = AlertIntegrationService(db).update_integration(
+            integration_id,
+            name=body.name,
+            event_types=body.event_types,
+            config=body.config,
+            custom_headers=body.custom_headers,
+            enabled=body.enabled,
+        )
+        db.commit()
+        return {"integration": item}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.delete("/alert-integrations/{integration_id}")
+def delete_alert_integration(
+    integration_id: UUID,
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        AlertIntegrationService(db).delete_integration(integration_id)
+        db.commit()
+        return {"ok": True}
     except SdkError as exc:
         raise _sdk_http(exc) from exc
 

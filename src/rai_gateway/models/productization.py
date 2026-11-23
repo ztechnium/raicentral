@@ -166,6 +166,7 @@ class WebhookEndpoint(Base):
     secret_prefix = Column(String, nullable=False)
     secret_ciphertext = Column(Text, nullable=True)
     event_types = Column(JSON, nullable=False)
+    custom_headers = Column(JSON, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True)
     status = Column(String, nullable=False, default="ACTIVE")
     created_by = Column(String, nullable=False)
@@ -174,6 +175,26 @@ class WebhookEndpoint(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     last_rotated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AlertChannelIntegration(Base):
+    """Outbound alert connector (Slack, Teams, Jira, etc.)."""
+
+    __tablename__ = "alert_channel_integrations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    provider = Column(String, nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    status = Column(String, nullable=False, default="ACTIVE", index=True)
+    event_types = Column(JSON, nullable=False)
+    config = Column(JSON, nullable=False)
+    custom_headers = Column(JSON, nullable=True)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class WebhookDelivery(Base):

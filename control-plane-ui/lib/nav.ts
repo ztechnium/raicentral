@@ -232,6 +232,12 @@ export const navSections: NavSection[] = [
         roles: ["General Admin", "RAI Officer"],
       },
       {
+        label: "Integrations",
+        href: "/settings/integrations",
+        icon: "radio",
+        roles: ["General Admin", "RAI Officer"],
+      },
+      {
         label: "Webhooks",
         href: "/settings/webhooks",
         icon: "settings",

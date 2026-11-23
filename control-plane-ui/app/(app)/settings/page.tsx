@@ -200,6 +200,9 @@ export default function SettingsPage() {
         subtitle="Tenant-scoped LLM provider for content rule evaluation. Keys stay in your organization."
         actions={
           <div className="flex flex-wrap items-center gap-3">
+            <Link href="/settings/integrations" className="text-sm text-primary hover:underline">
+              Integrations
+            </Link>
             <Link href="/settings/webhooks" className="text-sm text-primary hover:underline">
               Webhooks
             </Link>

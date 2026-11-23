@@ -128,6 +128,9 @@ class RuntimeEnforcementRepository:
         receipt.decision_digest = self.compute_decision_digest(receipt, controls)
         receipt.decision_finalized_at = _utcnow()
         self._db.flush()
+        from rai_gateway.events.outbox import enqueue_enforcement_alert
+
+        enqueue_enforcement_alert(self._db, receipt)
         return receipt
 
     def compute_decision_digest(
