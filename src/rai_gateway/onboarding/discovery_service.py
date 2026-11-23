@@ -36,6 +36,24 @@ from rai_gateway.sdk.jobs import JobQueue
 from rai_gateway.core.config import settings
 
 
+_PREREQUISITE_MESSAGES = {
+    "AI_TEST_REQUIRED": (
+        "Run a passing AI connection test for the current AI configuration first "
+        "(AI setup > Test AI connection)."
+    ),
+    "AI_CONFIGURATION_DISABLED": "The AI connection is disabled. Enable it in AI setup.",
+    "AI_CONFIGURATION_INVALID": (
+        "The AI connection is not configured or its target is unavailable. Check AI setup."
+    ),
+    "EXTRACTION_REQUIRED": "Extract the sources first.",
+    "EXTRACTION_INCOMPLETE": "Extraction has not finished successfully yet.",
+    "EXTRACTION_COVERAGE_INCOMPLETE": "Extraction did not cover every source. Fix or exclude the failing ones.",
+    "NO_EXTRACTED_BLOCKS": "Extraction produced no readable text.",
+    "PARTITION_TOO_LARGE": "A source block is too large to analyze.",
+    "PLAN_TOO_LARGE": "The sources are too large to analyze in one run. Use fewer or smaller sources.",
+}
+
+
 class DiscoveryService:
     def __init__(self, svc: IntakeService) -> None:
         self.svc = svc
@@ -83,7 +101,10 @@ class DiscoveryService:
                 raise IntakeError(
                     422,
                     code,
-                    "Inventory discovery cannot start with the current prerequisites",
+                    _PREREQUISITE_MESSAGES.get(
+                        code,
+                        "Inventory discovery cannot start with the current prerequisites",
+                    ),
                 ) from exc
             plan = OnboardingDiscoveryPlan(
                 session_id=session_id,

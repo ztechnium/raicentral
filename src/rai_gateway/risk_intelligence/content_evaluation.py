@@ -164,24 +164,38 @@ class ContentEvaluationService:
                     cached, cached_hit=True, config_row=config_row
                 )
 
+        from rai_gateway.core.ai_provider import normalize_provider, try_load_ai_config
+
+        _unified, _problem = try_load_ai_config()
+        u = (
+            _unified
+            if _unified is not None
+            and normalize_provider(config_row.provider) == _unified.provider
+            else None
+        )
         provider_cfg = ProviderConfig(
             provider=config_row.provider,
-            model=config_row.model,
+            model=config_row.model or (u.model if u else ""),
             temperature=config_row.temperature or 0.0,
             timeout_seconds=config_row.timeout_seconds or 30,
             max_rules_per_call=config_row.max_rules_per_call or 20,
             api_key=config_row.api_key_encrypted
-            or settings.content_evaluator_api_key,
+            or settings.content_evaluator_api_key
+            or (u.api_key if u else None),
             base_url=getattr(config_row, "base_url", None)
-            or settings.content_evaluator_base_url,
+            or settings.content_evaluator_base_url
+            or (u.base_url if u else None),
             location=getattr(config_row, "location", None)
+            or (u.location if u else None)
             or settings.content_evaluator_location,
             gcp_project_id=getattr(config_row, "gcp_project_id", None)
-            or settings.content_evaluator_gcp_project_id,
+            or settings.content_evaluator_gcp_project_id
+            or (u.gcp_project_id if u else None),
             service_account_json=getattr(
                 config_row, "service_account_json_encrypted", None
             )
-            or settings.content_evaluator_service_account_json,
+            or settings.content_evaluator_service_account_json
+            or (u.service_account_json if u else None),
         )
         request = EvaluatorRequest(
             content=content,

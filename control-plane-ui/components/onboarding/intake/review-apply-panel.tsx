@@ -72,6 +72,8 @@ export function ReviewApplyPanel({
         governanceSetId = govSets.items[0].id;
         const govProps = await listGovernanceProposals(session.id, governanceSetId);
         for (const p of govProps.items) {
+          // Accept everything: the server applies what it can and lists the rest, with
+          // the reason, under "Not applied".
           governance[p.id] = "ACCEPT";
         }
       }
@@ -132,9 +134,9 @@ export function ReviewApplyPanel({
       {error && <p className="text-sm text-destructive">{error}</p>}
       {applyHint && <p className="text-sm text-ink-600">{applyHint}</p>}
 
-      {!changeSet && (
+      {(!changeSet || changeSet.status === "APPLIED") && (
         <Button disabled={!canManage || busy} onClick={() => void prepare()}>
-          Prepare review
+          {changeSet ? "Prepare a new review" : "Prepare review"}
         </Button>
       )}
 
@@ -152,6 +154,20 @@ export function ReviewApplyPanel({
               </li>
             ))}
           </ul>
+          {(changeSet.skipped?.length ?? 0) > 0 && (
+            <div className="rounded border border-ink-200 p-2" data-testid="review-skipped">
+              <p className="font-medium">Not applied ({changeSet.skipped?.length})</p>
+              <ul className="mt-1 space-y-1 text-xs text-ink-600">
+                {changeSet.skipped?.map((s) => (
+                  <li key={s.proposal_id}>
+                    <span className="font-medium">{s.family}</span> — {s.title}
+                    <br />
+                    {s.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {changeSet.status === "PREPARED" && (
             <Button disabled={!canManage || busy} onClick={() => void apply()}>
               Apply reviewed changes

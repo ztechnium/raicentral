@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -18,6 +19,17 @@ from rai_gateway.onboarding.application_schemas import (
     CONTRACT_VERSION,
     SUPPORTED_TARGET_KINDS,
 )
+from rai_gateway.models.policy_engine import ContentRule, PolicyCollection, ToolRule
+from rai_gateway.models.registry import (
+    Agent,
+    AISystem,
+    DataSource,
+    ExternalService,
+    MCPServer,
+    ModelResource,
+    ToolResource,
+)
+from rai_gateway.models.risk_intelligence import RuntimeBudget
 from rai_gateway.onboarding.governance_proposal_service import GovernanceProposalService
 from rai_gateway.onboarding.proposal_service import ProposalService
 from rai_gateway.onboarding.service import (
@@ -31,12 +43,36 @@ from rai_gateway.onboarding.service import (
 _INVENTORY_TARGET_MAP = {
     "ai_system": "ai_system",
     "agent": "agent",
+    "model": "model",
+    "tool": "tool",
+    "mcp_server": "mcp_server",
+    "external_service": "external_service",
+    "data_source": "data_source",
 }
 
 _GOVERNANCE_TARGET_MAP = {
     "policy_source": "policy_source",
     "content_rule": "content_rule",
+    "tool_rule": "tool_rule",
+    "runtime_budget": "runtime_budget",
 }
+
+_BUDGET_METRICS = frozenset({"ACTION_COUNT", "TOOL_COUNT", "AMOUNT", "TOKEN_USAGE", "COST"})
+_RULE_EFFECTS = frozenset({"DENY", "REQUIRE_APPROVAL"})
+_REASONS = {
+    "UNBOUND_SYSTEM": "Not tied to an AI system; name the system in the source and analyze again.",
+    "NO_MATCHING_TOOL": "No registered or proposed tool matches the tool this rule names.",
+    "AMBIGUOUS_TOOL": "More than one tool matches the tool this rule names.",
+    "NOT_ENFORCEABLE": "The runtime cannot enforce this as stated (missing effect, metric, limit or window).",
+    "RECORDED_ONLY": "Kept as a recorded proposal; onboarding does not create this type.",
+}
+
+
+def _tokens(value: Any) -> set[str]:
+    out = set()
+    for tok in re.findall(r"[a-z0-9]+", str(value or "").lower()):
+        out.add(tok[:-1] if len(tok) > 4 and tok.endswith("s") else tok)
+    return out
 
 
 class ChangeSetService:
@@ -95,6 +131,7 @@ class ChangeSetService:
             payload = {
                 "contract_version": CONTRACT_VERSION,
                 "operations": compiled,
+                "skipped": self._skipped,
                 "inventory_proposal_set_id": str(inv_uuid) if inv_uuid else None,
                 "governance_proposal_set_id": str(gov_uuid) if gov_uuid else None,
                 "selection_digest": canonical_digest_obj(selection),
@@ -156,6 +193,7 @@ class ChangeSetService:
         gov_set_id: uuid.UUID | None,
     ) -> list[dict[str, Any]]:
         ops: list[dict[str, Any]] = []
+        self._skipped: list[dict[str, Any]] = []
         inv_sel: dict[str, str] = selection.get("inventory") or {}
         gov_sel: dict[str, str] = selection.get("governance") or {}
 
@@ -182,6 +220,12 @@ class ChangeSetService:
                     match,
                 )
                 verb, action = self._verb_for_inventory(proposal, recon_match)
+                if verb == "CREATE":
+                    existing = self._live_inventory_existing(
+                        proposal["entity_type"], action.get("claims") or {}
+                    )
+                    if existing:
+                        verb, action = "REUSE", {**action, "target_id": existing}
                 ops.append(
                     {
                         "verb": verb,
@@ -207,20 +251,62 @@ class ChangeSetService:
                 if choice == "SKIP":
                     continue
                 family = proposal.get("proposal_family")
+                generated = proposal.get("generated") or {}
+                title = generated.get("title") or generated.get("text") or family
                 target_kind = _GOVERNANCE_TARGET_MAP.get(family or "")
                 if target_kind not in SUPPORTED_TARGET_KINDS:
+                    self._skip(pid, family, title, "RECORDED_ONLY")
                     continue
+                if (
+                    family in ("content_rule", "tool_rule", "runtime_budget")
+                    and not generated.get("system_key")
+                ):
+                    self._skip(pid, family, title, "UNBOUND_SYSTEM")
+                    continue
+                extra: dict[str, Any] = {}
+                extra_deps: list[int] = []
+                if family == "tool_rule":
+                    if generated.get("effect") not in _RULE_EFFECTS:
+                        self._skip(pid, family, title, "NOT_ENFORCEABLE")
+                        continue
+                    found, why = self._resolve_tool(generated.get("tool_selector"), ops)
+                    if found is None:
+                        self._skip(pid, family, title, why)
+                        continue
+                    if found[0] == "op":
+                        extra["tool_ordinal"] = found[1]
+                        extra_deps.append(found[1])
+                    else:
+                        extra["tool_id"] = found[1]
+                if family == "runtime_budget":
+                    limit = generated.get("limit_value")
+                    window = generated.get("window_seconds")
+                    if (
+                        generated.get("metric") not in _BUDGET_METRICS
+                        or not isinstance(limit, (int, float))
+                        or isinstance(limit, bool)
+                        or limit <= 0
+                        or not isinstance(window, int)
+                        or window <= 0
+                    ):
+                        self._skip(pid, family, title, "NOT_ENFORCEABLE")
+                        continue
                 match = matches.get(pid, {})
                 verb = "CREATE" if match.get("match_state") == "Proposed" else "REUSE"
                 action = {
                     "generated": proposal.get("generated") or {},
                     "proposal_family": family,
+                    **extra,
                 }
                 if verb == "REUSE":
                     rec_id = (match.get("candidates") or [{}])[0].get("record_id")
                     if rec_id:
                         action["target_id"] = rec_id
-                deps = self._governance_system_deps(proposal, ops)
+                if verb == "CREATE":
+                    existing = self._live_governance_existing(family, generated, extra)
+                    if existing:
+                        verb, action["target_id"] = "REUSE", existing
+                deps = [*self._governance_system_deps(proposal, ops), *extra_deps]
                 ops.append(
                     {
                         "verb": verb,
@@ -234,6 +320,114 @@ class ChangeSetService:
         if not ops:
             raise IntakeError(422, "NO_OPERATIONS", "Selection produced no apply operations")
         return ops
+
+    def _live_inventory_existing(self, entity: str, claims: dict[str, Any]) -> str | None:
+        """The record that already holds this key *now*.
+
+        Reconciliation was computed when the sources were analyzed. A record created since
+        (for example by an earlier apply of this session) must be reused, not created again.
+        """
+        db = self.db
+        if entity == "ai_system" and claims.get("system_key"):
+            row = db.query(AISystem.id).filter(AISystem.system_key == claims["system_key"]).first()
+        elif entity == "agent" and claims.get("agent_key"):
+            row = db.query(Agent.id).filter(Agent.agent_key == claims["agent_key"]).first()
+        elif entity == "model" and claims.get("model_name"):
+            row = (
+                db.query(ModelResource.id)
+                .filter(
+                    ModelResource.scope == "ORGANIZATION",
+                    ModelResource.provider == (claims.get("provider") or "unknown"),
+                    ModelResource.model_name == claims["model_name"],
+                )
+                .first()
+            )
+        else:
+            model, field = {
+                "tool": (ToolResource, "tool_key"),
+                "mcp_server": (MCPServer, "server_key"),
+                "external_service": (ExternalService, "service_key"),
+                "data_source": (DataSource, "data_source_key"),
+            }.get(entity, (None, ""))
+            key = claims.get(field) if model else None
+            if not key:
+                return None
+            row = (
+                db.query(model.id)
+                .filter(model.scope.in_(("ORGANIZATION", "PLATFORM")), getattr(model, field) == key)
+                .order_by(model.scope.desc())  # ORGANIZATION before PLATFORM
+                .first()
+            )
+        return str(row[0]) if row else None
+
+    def _live_governance_existing(
+        self, family: str | None, generated: dict[str, Any], extra: dict[str, Any]
+    ) -> str | None:
+        """An identical rule or budget on the same system, if one already exists."""
+        sys_key = generated.get("system_key")
+        title = str(generated.get("title") or "")[:255]
+        if family not in ("content_rule", "tool_rule", "runtime_budget") or not (sys_key and title):
+            return None
+        system = self.db.query(AISystem.id).filter(AISystem.system_key == sys_key).first()
+        if system is None:
+            return None
+        if family == "runtime_budget":
+            row = (
+                self.db.query(RuntimeBudget.id)
+                .filter(RuntimeBudget.ai_system_id == system[0], RuntimeBudget.name == title)
+                .first()
+            )
+        else:
+            model = ContentRule if family == "content_rule" else ToolRule
+            query = (
+                self.db.query(model.id)
+                .join(PolicyCollection, PolicyCollection.id == model.policy_collection_id)
+                .filter(PolicyCollection.ai_system_id == system[0], model.title == title)
+            )
+            if family == "tool_rule" and extra.get("tool_id"):
+                query = query.filter(ToolRule.tool_id == uuid.UUID(str(extra["tool_id"])))
+            row = query.first()
+        return str(row[0]) if row else None
+
+    def _skip(self, proposal_id: str, family: str | None, title: Any, code: str) -> None:
+        self._skipped.append(
+            {
+                "proposal_id": proposal_id,
+                "family": family,
+                "title": str(title)[:160],
+                "code": code,
+                "reason": _REASONS[code],
+            }
+        )
+
+    def _resolve_tool(
+        self, selector: Any, ops: list[dict[str, Any]]
+    ) -> tuple[tuple[str, Any] | None, str]:
+        """The one tool a rule names: registered, or created earlier in this change set."""
+        wanted = _tokens(selector)
+        if not wanted:
+            return None, "NO_MATCHING_TOOL"
+        found: dict[str, tuple[str, Any]] = {}
+        for ordinal, op in enumerate(ops):
+            if op["target_kind"] != "tool":
+                continue
+            action = op.get("action") or {}
+            claims = action.get("claims") or {}
+            if wanted <= _tokens(claims.get("tool_key")) | _tokens(claims.get("name")):
+                if op["verb"] == "REUSE" and action.get("target_id"):
+                    found[str(action["target_id"])] = ("registry", str(action["target_id"]))
+                else:
+                    found[f"op:{ordinal}"] = ("op", ordinal)
+        for tool_id, key, name in self.db.query(
+            ToolResource.id, ToolResource.tool_key, ToolResource.name
+        ).limit(2000):
+            if wanted <= _tokens(key) | _tokens(name):
+                found[str(tool_id)] = ("registry", str(tool_id))
+        if not found:
+            return None, "NO_MATCHING_TOOL"
+        if len(found) > 1:
+            return None, "AMBIGUOUS_TOOL"
+        return next(iter(found.values())), ""
 
     @staticmethod
     def _verb_for_inventory(
@@ -251,6 +445,9 @@ class ChangeSetService:
             }
         diffs = match.get("field_diffs") or []
         allowed = [d for d in diffs if d.get("capability") is None]
+        if proposal["entity_type"] != "ai_system" and candidates:
+            # Only AI systems can be updated by onboarding: bind the existing record instead.
+            return "REUSE", {**action, "target_id": candidates[0].get("record_id")}
         if state == "UPDATE" or (candidates and allowed):
             rid = candidates[0].get("record_id") if candidates else None
             return "UPDATE", {
@@ -415,6 +612,7 @@ class ChangeSetService:
             "governance_proposal_set_id": (
                 str(cs.governance_proposal_set_id) if cs.governance_proposal_set_id else None
             ),
+            "skipped": (cs.payload or {}).get("skipped", []),
             "operations": [
                 {
                     "id": str(o.id),

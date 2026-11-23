@@ -78,15 +78,23 @@ class RiskIntelligenceRepository:
     @staticmethod
     def _env_evaluator_config() -> ContentEvaluatorConfig | None:
         """Detached default built from CONTENT_EVALUATOR_* settings (never persisted)."""
+        from rai_gateway.core.ai_provider import normalize_provider, try_load_ai_config
         from rai_gateway.core.config import settings
 
+        # CONTENT_EVALUATOR_* wins when set; otherwise the unified RAI_AI_* applies.
+        unified, _problem = try_load_ai_config()
         provider = (settings.content_evaluator_provider or "").strip().lower()
-        if not provider:
+        if provider:
+            same = unified is not None and normalize_provider(provider) == unified.provider
+            model = settings.content_evaluator_model or (unified.model if same else "")
+        elif unified is not None:
+            provider, model = unified.provider, unified.model
+        else:
             return None
         return ContentEvaluatorConfig(
             ai_system_id=None,
             provider=provider,
-            model=settings.content_evaluator_model or "",
+            model=model,
             temperature=settings.content_evaluator_temperature,
             timeout_seconds=settings.content_evaluator_timeout_seconds,
             max_rules_per_call=20,

@@ -21,6 +21,7 @@ from rai_gateway.onboarding.ai_configuration import (
     current_effective,
     snapshot_fingerprint,
 )
+from rai_gateway.onboarding.discovery_planner import PARTITION_TARGET_BYTES
 from rai_gateway.onboarding.extraction import configured_limits
 from rai_gateway.onboarding.governance_schemas import GOVERNANCE_LIMITS, GOVERNANCE_PLAN_VERSION
 from rai_gateway.onboarding.governance_snapshot import capture_governance_baseline
@@ -122,22 +123,42 @@ def build_governance_plan(
     partitions: list[dict[str, Any]] = []
     primary_coverage: list[str] = []
     serialized = 0
-    for idx, block in enumerate(blocks):
+    group: list[dict[str, Any]] = []
+    group_bytes = 0
+
+    def close_group() -> None:
+        nonlocal group, group_bytes
+        if not group:
+            return
+        idx = len(partitions)
+        partitions.append(
+            {
+                "ordinal": idx,
+                "primary_block_ids": [b["block_id"] for b in group],
+                "request_digest": sha256_hex(
+                    "|".join(f"{b['block_id']}:{b['content_digest']}" for b in group)
+                    + f":{idx}"
+                ),
+            }
+        )
+        group, group_bytes = [], 0
+
+    # Consecutive blocks share one model call up to a byte budget.
+    for block in blocks:
         size = len(block["text"].encode("utf-8"))
         if size > GOVERNANCE_LIMITS["max_request_bytes_per_call"]:
             raise ValueError("PARTITION_TOO_LARGE")
         serialized += size
         if serialized > GOVERNANCE_LIMITS["max_request_bytes_per_run"]:
             raise ValueError("PLAN_TOO_LARGE")
-        bid = block["block_id"]
-        primary_coverage.append(bid)
-        partitions.append(
-            {
-                "ordinal": idx,
-                "primary_block_ids": [bid],
-                "request_digest": sha256_hex(f"{bid}:{block['content_digest']}:{idx}"),
-            }
-        )
+        if group and group_bytes + size > PARTITION_TARGET_BYTES:
+            close_group()
+        group.append(block)
+        group_bytes += size
+        primary_coverage.append(block["block_id"])
+    close_group()
+    if len(partitions) > GOVERNANCE_LIMITS["max_calls_per_run"]:
+        raise ValueError("PLAN_TOO_LARGE")
     ai_svc = AIConfigService(db, actor=actor)
     cfg = ai_svc._ensure_row()
     if not cfg.enabled:

@@ -91,10 +91,15 @@ class GovernanceService:
                     actor=self.svc.actor,
                 )
             except ValueError as exc:
+                from rai_gateway.onboarding.discovery_service import _PREREQUISITE_MESSAGES
+
                 raise IntakeError(
                     422,
                     str(exc),
-                    "Governance generation cannot start with the current prerequisites",
+                    _PREREQUISITE_MESSAGES.get(
+                        str(exc),
+                        "Governance generation cannot start with the current prerequisites",
+                    ),
                 ) from exc
             plan = OnboardingGovernancePlan(
                 session_id=session_id,

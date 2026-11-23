@@ -334,7 +334,7 @@ class OpenAICompatibleContentEvaluator:
 
 
 class VertexContentEvaluator:
-    """Gemini on Vertex AI using the gateway's own Google service account (no API key)."""
+    """Gemini on Vertex AI: a Google service account (default) or a Cloud API key."""
 
     name = "vertex"
 
@@ -351,13 +351,16 @@ class VertexContentEvaluator:
         )
 
         project = config.gcp_project_id or settings.gcp_project_id
-        if not project:
+        use_api_key = bool(config.api_key)
+        if not project and not use_api_key:
             raise ContentEvaluatorError(
                 EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
                 "vertex evaluator needs a GCP project (evaluator setting or GCP_PROJECT_ID)",
             )
         try:
-            if config.service_account_json:
+            if use_api_key:
+                token = config.api_key
+            elif config.service_account_json:
                 try:
                     info = json.loads(config.service_account_json)
                 except ValueError as exc:
@@ -377,10 +380,16 @@ class VertexContentEvaluator:
             else f"{location}-aiplatform.googleapis.com"
         )
         model = config.model or "gemini-2.5-flash"
-        url = (
-            f"https://{host}/v1/projects/{project}/locations/{location}"
-            f"/publishers/google/models/{model}:generateContent"
-        )
+        if use_api_key:
+            # Vertex AI express mode: a Google Cloud API key, no project or service account.
+            url = (
+                f"https://{host}/v1/publishers/google/models/{model}:generateContent"
+            )
+        else:
+            url = (
+                f"https://{host}/v1/projects/{project}/locations/{location}"
+                f"/publishers/google/models/{model}:generateContent"
+            )
         expected = {str(r["id"]) for r in request.applicable_rules}
         user_prompt = (
             f"Content type: {request.content_type}\n"
@@ -399,7 +408,11 @@ class VertexContentEvaluator:
             url,
             data=json.dumps(body).encode("utf-8"),
             headers={
-                "Authorization": f"Bearer {token}",
+                **(
+                    {"x-goog-api-key": str(token)}
+                    if use_api_key
+                    else {"Authorization": f"Bearer {token}"}
+                ),
                 "Content-Type": "application/json",
             },
             method="POST",
@@ -574,6 +587,56 @@ class GeminiContentEvaluator:
         return parse_structured_evaluator_output(content, expected_rule_ids=expected)
 
 
+class AnthropicContentEvaluator:
+    """Claude via the Messages API, through the shared RAI_AI wire format."""
+
+    name = "anthropic"
+
+    def evaluate(
+        self, request: EvaluatorRequest, config: ProviderConfig
+    ) -> StructuredEvaluatorOutput:
+        from rai_gateway.core import ai_provider
+
+        if not config.api_key:
+            raise ContentEvaluatorError(
+                EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,
+                "Anthropic API key not configured",
+            )
+        expected = {str(r["id"]) for r in request.applicable_rules}
+        user_prompt = (
+            f"Content type: {request.content_type}\n"
+            f"Content:\n{request.content}\n\n"
+            f"Applicable rules:\n{_build_rules_prompt(request.applicable_rules)}\n"
+        )
+        cfg = ai_provider.AIConfig(
+            provider="anthropic",
+            model=config.model,
+            models=(config.model,),
+            api_key=config.api_key,
+            base_url=config.base_url,
+            gcp_project_id=None,
+            location=None,
+            service_account_json=None,
+            timeout_seconds=float(config.timeout_seconds),
+            temperature=config.temperature,
+            max_output_tokens=4096,
+            structured_mode="JSON_PROMPT",
+            allow_private_network=False,
+        )
+        try:
+            result = ai_provider.generate_json_text(
+                cfg, system=EVALUATOR_SYSTEM_PROMPT, user=user_prompt
+            )
+        except ai_provider.AIProviderError as exc:
+            failure = {
+                "timeout": EvaluatorFailureType.EVALUATOR_TIMEOUT,
+                "invalid_response": EvaluatorFailureType.EVALUATOR_INVALID_RESPONSE,
+                "truncated": EvaluatorFailureType.EVALUATOR_INVALID_RESPONSE,
+            }.get(exc.kind, EvaluatorFailureType.EVALUATOR_UNAVAILABLE)
+            raise ContentEvaluatorError(failure.value, exc.message) from exc
+        return parse_structured_evaluator_output(result.text, expected_rule_ids=expected)
+
+
 _PROVIDERS: dict[str, ContentEvaluatorProvider] = {
     "mock": MockContentEvaluator(),
     "openai": OpenAIContentEvaluator(),
@@ -582,11 +645,14 @@ _PROVIDERS: dict[str, ContentEvaluatorProvider] = {
     "google_ai": GeminiContentEvaluator(),
     "openai_compatible": OpenAICompatibleContentEvaluator(),
     "vertex": VertexContentEvaluator(),
+    "anthropic": AnthropicContentEvaluator(),
 }
 
 
 def get_provider(name: str) -> ContentEvaluatorProvider:
-    provider = _PROVIDERS.get(name.lower())
+    from rai_gateway.core.ai_provider import normalize_provider
+
+    provider = _PROVIDERS.get(name.lower()) or _PROVIDERS.get(normalize_provider(name))
     if not provider:
         raise ContentEvaluatorError(
             EvaluatorFailureType.EVALUATOR_UNAVAILABLE.value,

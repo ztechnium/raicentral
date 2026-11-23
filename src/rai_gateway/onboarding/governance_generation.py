@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from rai_gateway.models.onboarding import (
     OnboardingExtractedBlock,
+    OnboardingInventoryProposal,
     OnboardingGovernanceCall,
     OnboardingGovernanceClause,
     OnboardingGovernanceProposal,
@@ -18,6 +19,8 @@ from rai_gateway.models.onboarding import (
     OnboardingRun,
 )
 from rai_gateway.models.productization import BackgroundJob
+from rai_gateway.models.registry import AISystem
+from rai_gateway.onboarding import ai_calls, governance_ai
 from rai_gateway.onboarding.governance_proposals import (
     clauses_from_fixture_partition,
     proposals_from_clauses,
@@ -161,6 +164,95 @@ def _publish_set(
     return ps
 
 
+def _known_systems(db: Session, inventory_set_id: uuid.UUID | None) -> list[tuple[str, str]]:
+    """AI systems a requirement may bind to: this session's proposals + the registry."""
+    known: dict[str, str] = {}
+    if inventory_set_id is not None:
+        for row in db.query(OnboardingInventoryProposal).filter(
+            OnboardingInventoryProposal.set_id == inventory_set_id,
+            OnboardingInventoryProposal.entity_type == "ai_system",
+        ):
+            claims = (row.generated or {}).get("claims") or {}
+            if claims.get("system_key"):
+                known[claims["system_key"]] = claims.get("name") or claims["system_key"]
+    for key, name in db.query(AISystem.system_key, AISystem.name).limit(200):
+        known.setdefault(key, name or key)
+    return sorted(known.items())
+
+
+def _fail(db: Session, run_id: uuid.UUID, job_id: uuid.UUID, token: str, code: str) -> str:
+    db.rollback()
+    ok = publish_failure(db, run_id, job_id, token, code=code, terminal=True)
+    return "failed" if ok else "lost_ownership"
+
+
+def _run_live(
+    db: Session,
+    run: OnboardingRun,
+    job_id: uuid.UUID,
+    token: str,
+    plan: dict[str, Any],
+) -> str:
+    """Extract governance requirements with the configured AI, then compile them."""
+    run_id = run.id
+    limits = plan.get("limits") or {}
+    known = _known_systems(db, run.inventory_proposal_set_id)
+    keys = {k for k, _ in known}
+    try:
+        ctx = ai_calls.resolve_context(db, plan)
+        baseline = capture_governance_baseline(db)
+        parsed = ai_calls.execute_partitions(
+            db,
+            plan,
+            ctx,
+            run_id=run_id,
+            job_id=job_id,
+            token=token,
+            call_model=OnboardingGovernanceCall,
+            system=governance_ai.system_prompt(),
+            schema=governance_ai.OUTPUT_SCHEMA,
+            schema_name="onboarding_governance",
+            user_prompt=lambda blocks: governance_ai.build_user_prompt(blocks, known),
+            parse=lambda text, blocks: governance_ai.parse_partition(text, blocks, keys),
+            summarize=lambda r: {
+                "requirement_count": len(r.requirements),
+                "dropped_unverified": r.dropped_unverified,
+                "dropped_invalid": r.dropped_invalid,
+            },
+        )
+    except ai_calls.LiveFailure as exc:
+        return _fail(db, run_id, job_id, token, exc.code)
+    clauses, proposals = governance_ai.compile_requirements(
+        [p.requirements for p in parsed]
+    )
+    if len(clauses) > int(limits.get("max_clauses", 1000)) or len(proposals) > int(
+        limits.get("max_proposals", 500)
+    ):
+        return _fail(db, run_id, job_id, token, "TOO_MANY_PROPOSALS")
+    outcome = {
+        "clauses": clauses,
+        "proposals": proposals,
+        "partitions_processed": len(plan.get("partitions") or []),
+    }
+    try:
+        ps = _publish_set(db, run, outcome, baseline.digest)
+        ok = publish_success(
+            db,
+            run_id,
+            job_id,
+            token,
+            {
+                "governance_set_id": str(ps.id),
+                "clause_count": len(clauses),
+                "proposal_count": len(proposals),
+                "partitions_processed": outcome["partitions_processed"],
+            },
+        )
+        return "succeeded" if ok else "lost_ownership"
+    except Exception:
+        return _fail(db, run_id, job_id, token, "INTERNAL_ERROR")
+
+
 def process_governance_job(
     session_factory: SessionFactory,
     job_id: uuid.UUID,
@@ -186,10 +278,7 @@ def process_governance_job(
     try:
         run = db.query(OnboardingRun).filter(OnboardingRun.id == run_id).one()
         if not plan.get("fixture_mode"):
-            ok = publish_failure(
-                db, run_id, job_id, token, code="AI_PROVIDER_REQUIRED", terminal=True
-            )
-            return "failed" if ok else "lost_ownership"
+            return _run_live(db, run, job_id, token, plan)
         baseline = capture_governance_baseline(db)
         outcome = _execute_plan(db, run)
         for ordinal, part in enumerate(plan.get("partitions") or []):

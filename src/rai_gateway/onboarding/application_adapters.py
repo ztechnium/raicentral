@@ -7,9 +7,18 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from rai_gateway.models.policy_engine import ContentRule, PolicyCollection
+from rai_gateway.models.policy_engine import ContentRule, PolicyCollection, ToolRule
 from rai_gateway.models.policy_library import PolicySource, PolicySourceObligation
-from rai_gateway.models.registry import Agent, AISystem
+from rai_gateway.models.registry import (
+    Agent,
+    AISystem,
+    DataSource,
+    ExternalService,
+    MCPServer,
+    ModelResource,
+    ToolResource,
+)
+from rai_gateway.models.risk_intelligence import RuntimeBudget
 from rai_gateway.policy.domain import PolicyEffect
 
 _DRAFT_SYSTEM_FIELDS = frozenset(
@@ -119,7 +128,158 @@ def reuse_target(db: Session, *, target_kind: str, target_id: uuid.UUID) -> uuid
         raise ApplyAdapterError("NOT_FOUND", "AI system not found")
     if target_kind == "agent" and db.get(Agent, target_id) is None:
         raise ApplyAdapterError("NOT_FOUND", "Agent not found")
+    resource = {
+        **RESOURCE_MODELS,
+        "tool_rule": ToolRule,
+        "runtime_budget": RuntimeBudget,
+        "content_rule": ContentRule,
+    }.get(target_kind)
+    if resource is not None and db.get(resource, target_id) is None:
+        raise ApplyAdapterError("NOT_FOUND", f"{target_kind} not found")
     return target_id
+
+
+# Registry resources onboarding can create. Keys are unique per (scope, key).
+RESOURCE_MODELS: dict[str, Any] = {
+    "model": ModelResource,
+    "tool": ToolResource,
+    "mcp_server": MCPServer,
+    "external_service": ExternalService,
+    "data_source": DataSource,
+}
+_RESOURCE_KEY = {
+    "tool": "tool_key",
+    "mcp_server": "server_key",
+    "external_service": "service_key",
+    "data_source": "data_source_key",
+}
+_SCOPE = "ORGANIZATION"
+
+
+def create_resource(db: Session, *, kind: str, claims: dict[str, Any]) -> uuid.UUID:
+    """Register a model, tool, MCP server, external service or data source."""
+    note = {"onboarding": {k: claims[k] for k in ("status", "business_unit") if claims.get(k)}}
+    if kind == "model":
+        provider = claims.get("provider") or "unknown"
+        name = claims.get("model_name")
+        if not isinstance(name, str) or not name.strip():
+            raise ApplyAdapterError("INVALID_CLAIMS", "model_name is required")
+        existing = (
+            db.query(ModelResource)
+            .filter(
+                ModelResource.scope == _SCOPE,
+                ModelResource.provider == provider,
+                ModelResource.model_name == name,
+            )
+            .first()
+        )
+        if existing:
+            raise ApplyAdapterError("DUPLICATE_KEY", f"model '{name}' already exists")
+        row = ModelResource(
+            scope=_SCOPE,
+            provider=provider,
+            model_name=name,
+            status="ACTIVE",
+            metadata_=note,
+        )
+    else:
+        field = _RESOURCE_KEY[kind]
+        key = claims.get(field)
+        if not isinstance(key, str) or not key.strip():
+            raise ApplyAdapterError("INVALID_CLAIMS", f"{field} is required")
+        model = RESOURCE_MODELS[kind]
+        if db.query(model).filter(model.scope == _SCOPE, getattr(model, field) == key).first():
+            raise ApplyAdapterError("DUPLICATE_KEY", f"{field} '{key}' already exists")
+        values: dict[str, Any] = {
+            "scope": _SCOPE,
+            field: key,
+            "name": claims.get("name") or key,
+            "description": claims.get("description"),
+            "status": "ACTIVE",
+            "metadata_": note,
+        }
+        if kind == "data_source" and claims.get("owner_name"):
+            values["owner"] = claims["owner_name"]
+        row = model(**values)
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+_TOOL_RULE_EFFECTS = frozenset({"DENY", "REQUIRE_APPROVAL"})
+
+
+def create_tool_rule_disabled(
+    db: Session,
+    *,
+    ai_system_id: uuid.UUID,
+    tool_id: uuid.UUID,
+    generated: dict[str, Any],
+) -> ToolRule:
+    tool = db.get(ToolResource, tool_id)
+    if tool is None:
+        raise ApplyAdapterError("NOT_FOUND", "Tool not found")
+    effect = generated.get("effect")
+    if effect not in _TOOL_RULE_EFFECTS:
+        raise ApplyAdapterError("INVALID_ACTION", "Tool rule needs a DENY or REQUIRE_APPROVAL effect")
+    collection = _collection_for_system(db, ai_system_id)
+    text = generated.get("text") or ""
+    rule = ToolRule(
+        policy_collection_id=collection.id,
+        title=str(generated.get("title") or "Onboarding tool rule")[:255],
+        description=(
+            f"{text}\n\nCreated disabled by onboarding. Conditions in the source were not "
+            "mapped to tool parameters, so this rule applies to every call of the tool until "
+            "conditions are added."
+        ).strip(),
+        mcp_server_id=tool.mcp_server_id,
+        tool_id=tool.id,
+        match_mode="ALL",
+        effect=effect,
+        enabled=False,
+        required_approver_role=generated.get("approval_role"),
+    )
+    db.add(rule)
+    db.flush()
+    return rule
+
+
+def create_budget_disabled(
+    db: Session,
+    *,
+    ai_system_id: uuid.UUID,
+    generated: dict[str, Any],
+) -> RuntimeBudget:
+    metric = generated.get("metric")
+    limit = generated.get("limit_value")
+    seconds = generated.get("window_seconds")
+    if (
+        metric not in _BUDGET_METRICS
+        or not isinstance(limit, (int, float))
+        or isinstance(limit, bool)
+        or limit <= 0
+        or not isinstance(seconds, int)
+        or seconds <= 0
+    ):
+        raise ApplyAdapterError("INVALID_ACTION", "Budget needs a metric, a limit and a fixed window")
+    budget = RuntimeBudget(
+        ai_system_id=ai_system_id,
+        name=str(generated.get("title") or "Onboarding budget")[:255],
+        scope_type="AI_SYSTEM",
+        metric=metric,
+        limit_value=float(limit),
+        window_seconds=seconds,
+        warning_threshold=0.8,
+        effect_on_exceed="DENY",
+        enforcement_mode=generated.get("enforcement_mode") or "MANDATORY",
+        enabled=False,
+    )
+    db.add(budget)
+    db.flush()
+    return budget
+
+
+_BUDGET_METRICS = frozenset({"ACTION_COUNT", "TOOL_COUNT", "AMOUNT", "TOKEN_USAGE", "COST"})
 
 
 def create_policy_source_structured(

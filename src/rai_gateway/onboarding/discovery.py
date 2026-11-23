@@ -17,6 +17,7 @@ from rai_gateway.models.onboarding import (
     OnboardingRun,
 )
 from rai_gateway.models.productization import BackgroundJob
+from rai_gateway.onboarding import ai_calls, discovery_ai
 from rai_gateway.onboarding.preparation import (
     TerminalError,
     publish_failure,
@@ -104,15 +105,39 @@ def _publish_set(
             )
         )
     db.flush()
+    rows = (
+        db.query(OnboardingInventoryProposal)
+        .filter(OnboardingInventoryProposal.set_id == ps.id)
+        .all()
+    )
+    linked = discovery_ai.link_parents(
+        [(str(r.id), r.entity_type, r.generated) for r in rows],
+        snapshot.projection["indexes"]["system_by_key"],
+    )
+    for row in rows:
+        if str(row.id) in linked:
+            row.generated = {
+                **row.generated,
+                "relationships": {
+                    **(row.generated.get("relationships") or {}),
+                    **linked[str(row.id)],
+                },
+            }
+    renamed = discovery_ai.deconflict_agent_keys(
+        [(str(r.id), r.entity_type, r.generated) for r in rows],
+        snapshot.projection["indexes"]["agent_by_key"],
+    )
+    for row in rows:
+        if str(row.id) in renamed:
+            row.generated = renamed[str(row.id)]
+    db.flush()
     proposals = [
         {
             "id": str(p.id),
             "entity_type": p.entity_type,
             "generated": p.generated,
         }
-        for p in db.query(OnboardingInventoryProposal)
-        .filter(OnboardingInventoryProposal.set_id == ps.id)
-        .all()
+        for p in rows
     ]
     recon_body = reconcile_proposals(proposals, snapshot)
     snap = OnboardingReconciliationSnapshot(
@@ -128,6 +153,67 @@ def _publish_set(
     db.flush()
     ps.current_reconciliation_id = snap.id
     return ps
+
+
+def _fail(db: Session, run_id: uuid.UUID, job_id: uuid.UUID, token: str, code: str) -> str:
+    db.rollback()
+    ok = publish_failure(db, run_id, job_id, token, code=code, terminal=True)
+    return "failed" if ok else "lost_ownership"
+
+
+def _run_live(
+    db: Session,
+    run: OnboardingRun,
+    job_id: uuid.UUID,
+    token: str,
+    plan: dict[str, Any],
+) -> str:
+    """Analyze the extracted sources with the configured AI, one bounded call per partition."""
+    run_id = run.id
+    limits = plan.get("limits") or {}
+    try:
+        ctx = ai_calls.resolve_context(db, plan)
+        snapshot = capture_snapshot(db)
+        parsed = ai_calls.execute_partitions(
+            db,
+            plan,
+            ctx,
+            run_id=run_id,
+            job_id=job_id,
+            token=token,
+            call_model=OnboardingDiscoveryCall,
+            system=discovery_ai.system_prompt(),
+            schema=discovery_ai.OUTPUT_SCHEMA,
+            schema_name="onboarding_inventory",
+            user_prompt=discovery_ai.build_user_prompt,
+            parse=discovery_ai.parse_partition,
+            summarize=lambda r: {
+                "proposal_count": len(r.proposals),
+                "dropped_unverified": r.dropped_unverified,
+                "dropped_invalid": r.dropped_invalid,
+            },
+        )
+    except ai_calls.LiveFailure as exc:
+        return _fail(db, run_id, job_id, token, exc.code)
+
+    proposals = discovery_ai.merge_proposals([p.proposals for p in parsed])
+    if len(proposals) > int(limits.get("max_proposals", 500)):
+        return _fail(db, run_id, job_id, token, "TOO_MANY_PROPOSALS")
+    outcome = {
+        "proposals": proposals,
+        "partitions_processed": len(plan.get("partitions") or []),
+    }
+    try:
+        ps = _publish_set(db, run, outcome, snapshot)
+        result_body = {
+            "proposal_set_id": str(ps.id),
+            "proposal_count": len(proposals),
+            "partitions_processed": outcome["partitions_processed"],
+        }
+        ok = publish_success(db, run_id, job_id, token, result_body)
+        return "succeeded" if ok else "lost_ownership"
+    except Exception:
+        return _fail(db, run_id, job_id, token, "INTERNAL_ERROR")
 
 
 def process_discovery_job(
@@ -155,10 +241,7 @@ def process_discovery_job(
     try:
         run = db.query(OnboardingRun).filter(OnboardingRun.id == run_id).one()
         if not plan.get("fixture_mode"):
-            ok = publish_failure(
-                db, run_id, job_id, token, code="AI_PROVIDER_REQUIRED", terminal=True
-            )
-            return "failed" if ok else "lost_ownership"
+            return _run_live(db, run, job_id, token, plan)
         snapshot = capture_snapshot(db)
         outcome = _execute_plan(db, run)
         for ordinal, part in enumerate(plan.get("partitions") or []):

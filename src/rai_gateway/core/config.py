@@ -101,6 +101,25 @@ class Settings(BaseSettings):
     content_evaluator_fail_closed: bool = False
     content_evaluator_min_confidence_to_intervene: float = 0.9
 
+    # Unified internal AI. ONE environment-only configuration shared by every internal AI
+    # feature (content evaluation, AI onboarding, future features). See core/ai_provider.py.
+    # provider: openai | anthropic | gemini | vertex | openai_compatible
+    # vertex authenticates with RAI_AI_API_KEY *or* a Google service account
+    # (RAI_AI_GCP_SERVICE_ACCOUNT_JSON, else GCP_SERVICE_ACCOUNT_JSON / key file / metadata).
+    rai_ai_provider: Optional[str] = None
+    rai_ai_model: Optional[str] = None
+    rai_ai_models: str = ""  # extra allowed models, comma separated
+    rai_ai_api_key: Optional[str] = None
+    rai_ai_base_url: Optional[str] = None
+    rai_ai_gcp_project_id: Optional[str] = None  # defaults to GCP_PROJECT_ID
+    rai_ai_location: Optional[str] = None  # defaults to GCP_LOCATION (Gemini 3.x: global)
+    rai_ai_gcp_service_account_json: Optional[str] = None
+    rai_ai_timeout_seconds: float = 30.0
+    rai_ai_temperature: float = 0.0
+    rai_ai_max_output_tokens: int = 8192
+    rai_ai_structured_mode: Optional[str] = None  # JSON_SCHEMA | JSON_OBJECT | JSON_PROMPT
+    rai_ai_allow_private_network: bool = False
+
     # Observability
     otel_endpoint: Optional[str] = None
     log_level: str = "INFO"
@@ -241,8 +260,9 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_ADMIN_TOKEN is set; omitting it fails browser preflight (400).
     # Include X-RAI-Agent-Key — the enforcement test console sends the runtime
     # credential from the browser; omitting it fails that preflight (400).
+    # Include Idempotency-Key — onboarding writes (AI test, sources) send it directly from the browser.
     cors_allow_headers: str = (
-        "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key"
+        "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key,Idempotency-Key"
     )
     cors_max_age: int = 600
 
@@ -301,6 +321,8 @@ class Settings(BaseSettings):
     onboarding_ai_probe_default_max_tokens: int = 256
     # Step 04: deterministic partition parser for CI (no live provider calls).
     onboarding_discovery_fixture: bool = False
+    # Live inventory/governance model calls: per-call deadline (the lease is renewed to match).
+    onboarding_ai_call_timeout_seconds: float = 120.0
     onboarding_governance_fixture: bool = False
     # Step 08: incremental update workflow (default off until worker + migrations land).
     onboarding_update_workflow_enabled: bool = False

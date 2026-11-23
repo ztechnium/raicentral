@@ -1,4 +1,4 @@
-"""OPENAI_COMPATIBLE_CHAT adapter for the onboarding synthetic probe.
+"""Provider adapter for the onboarding synthetic probe (OpenAI-style, Anthropic, Gemini, Vertex).
 
 Receives a fully resolved immutable snapshot plus an explicit secret and nonce. It does
 not use the legacy provider factory, fallback chain, runtime-context resolver or global
@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from rai_gateway.core import ai_provider
 from rai_gateway.core.config import settings
 
 _METADATA_NETS = (
@@ -60,6 +61,7 @@ class PreparedRequest:
     body: bytes
     headers: dict[str, str]
     timeout_seconds: float
+    provider: str = "openai_compatible"
 
 
 @dataclass(frozen=True)
@@ -101,12 +103,38 @@ def _address_allowed(address: str, allow_private: bool) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class Generation:
+    """A real (non-probe) structured-output request over the same pinned transport."""
+
+    system: str
+    user: str
+    schema: dict[str, Any]
+    schema_name: str
+    max_output_tokens: int
+    timeout_seconds: float
+
+
 def prepare_request(
-    snapshot: dict[str, Any], secret: str, nonce: str
+    snapshot: dict[str, Any],
+    secret: str,
+    nonce: str,
+    *,
+    generation: Generation | None = None,
 ) -> PreparedRequest:
     """Validate the final URL and destination; build the exact outbound request."""
     base = str(snapshot["base_url"])
-    final = f"{base.rstrip('/')}/chat/completions"
+    provider = str(snapshot.get("provider") or "openai_compatible")
+    if provider not in ai_provider.PROVIDERS:
+        raise DestinationRejected("DESTINATION_REJECTED")
+    path = ai_provider.request_path(
+        provider,
+        str(snapshot["model"]),
+        auth=str(snapshot.get("auth") or "api_key"),
+        project=snapshot.get("gcp_project_id"),
+        location=snapshot.get("location"),
+    )
+    final = f"{base.rstrip('/')}{path}"
     parts = urlsplit(final)
     approved = urlsplit(base)
     if (
@@ -136,46 +164,53 @@ def prepare_request(
     pinned_url = f"https://{literal}{port}{parts.path}"
 
     mode = snapshot["structured_mode"]
+    if mode not in ai_provider.STRUCTURED_MODES:  # never downgrade or guess
+        raise DestinationRejected("UNSUPPORTED_MODE")
     instruction = "Return exactly this JSON object and nothing else: " + json.dumps(
         {"ok": True, "nonce": nonce}
     )
-    body: dict[str, Any] = {
-        "model": snapshot["model"],
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a connectivity probe. Reply with JSON only.",
-            },
-            {"role": "user", "content": instruction},
-        ],
-        snapshot["token_param"]: int(snapshot["max_output_tokens"]),
-        "stream": False,
-    }
-    if mode == "JSON_SCHEMA":
-        body["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "onboarding_connection_probe",
-                "strict": True,
-                "schema": PROBE_SCHEMA,
-            },
-        }
-    elif mode == "JSON_OBJECT":
-        body["response_format"] = {"type": "json_object"}
-    else:  # never downgrade or guess
-        raise DestinationRejected("UNSUPPORTED_MODE")
+    try:
+        body = ai_provider.build_body(
+            provider,
+            model=str(snapshot["model"]),
+            system=(
+                generation.system
+                if generation
+                else "You are a connectivity probe. Reply with JSON only."
+            ),
+            user=generation.user if generation else instruction,
+            max_output_tokens=(
+                generation.max_output_tokens
+                if generation
+                else int(snapshot["max_output_tokens"])
+            ),
+            structured_mode=mode,
+            token_param=str(snapshot.get("token_param") or "max_tokens"),
+            schema_name=generation.schema_name if generation else "onboarding_connection_probe",
+            schema=generation.schema if generation else PROBE_SCHEMA,
+        )
+    except ai_provider.AIProviderError as exc:
+        raise DestinationRejected("UNSUPPORTED_MODE") from exc
+    # The probe carries no temperature: the provider's own default applies.
     return PreparedRequest(
         url=pinned_url,
         host_header=host + port,
         sni_hostname=host,
+        provider=provider,
         body=json.dumps(body).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {secret}",
+            **ai_provider.auth_headers(
+                provider, str(snapshot.get("auth") or "api_key"), secret or None
+            ),
             "Content-Type": "application/json",
             "Accept": "application/json",
             "Host": host + port,
         },
-        timeout_seconds=float(snapshot.get("timeout_seconds", 30.0)),
+        timeout_seconds=(
+            generation.timeout_seconds
+            if generation
+            else float(snapshot.get("timeout_seconds", 30.0))
+        ),
     )
 
 
@@ -184,20 +219,13 @@ def _fail(code: str, started: float | None = None) -> ProbeResult:
     return ProbeResult(OUTCOME_FAILED, code, latency, None)
 
 
-def _usage(body: dict[str, Any]) -> dict[str, int] | None:
-    usage = body.get("usage")
-    if not isinstance(usage, dict):
-        return None
-    out = {
-        k: int(usage[k])
-        for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-        if isinstance(usage.get(k), int) and not isinstance(usage.get(k), bool)
-    }
-    return out or None  # missing usage is unknown, never zero
-
-
 def validate_response(
-    raw: bytes, status: int, nonce: str, *, started: float
+    raw: bytes,
+    status: int,
+    nonce: str,
+    *,
+    started: float,
+    provider: str = "openai_compatible",
 ) -> ProbeResult:
     """Strict local validation. Refusals, truncation and bad shapes are failures."""
     latency = int((time.monotonic() - started) * 1000)
@@ -214,21 +242,22 @@ def validate_response(
     if status >= 500:
         return _fail("PROVIDER_ERROR", started)
     try:
-        body = json.loads(raw.decode("utf-8"))
-        choice = body["choices"][0]
-        message = choice["message"]
-    except (ValueError, KeyError, IndexError, TypeError):
+        extracted = ai_provider.extract_response(provider, json.loads(raw.decode("utf-8")))
+    except (ValueError, ai_provider.AIProviderError):
         return _fail("INVALID_RESPONSE", started)
-    usage = _usage(body) if isinstance(body, dict) else None
-    if message.get("refusal"):
+    usage = extracted.usage
+    if extracted.refused:
         return ProbeResult(OUTCOME_FAILED, "REFUSAL", latency, usage)
-    if choice.get("finish_reason") == "length":
+    if extracted.truncated:
         return ProbeResult(OUTCOME_FAILED, "TRUNCATED_OUTPUT", latency, usage)
-    content = message.get("content")
+    content = extracted.text
     if not isinstance(content, str) or not content.strip():
         return ProbeResult(OUTCOME_FAILED, "EMPTY_RESPONSE", latency, usage)
+    text = content.strip()
+    if text.startswith("```"):  # some models fence JSON when no JSON mode exists
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
-        parsed = json.loads(content)
+        parsed = json.loads(text)
     except ValueError:
         return ProbeResult(OUTCOME_FAILED, "INVALID_JSON", latency, usage)
     if (
@@ -243,14 +272,37 @@ def validate_response(
     return ProbeResult(OUTCOME_PASSED, None, latency, usage)
 
 
-def send(
+def http_failure_code(status: int) -> str | None:
+    """Stable error code for a non-success HTTP status, else None."""
+    if 300 <= status < 400:
+        return "REDIRECT_REJECTED"
+    if status in (401, 403):
+        return "AUTH_REJECTED"
+    if status == 404:
+        return "MODEL_OR_ENDPOINT_NOT_FOUND"
+    if status == 429:
+        return "RATE_LIMITED"
+    if 400 <= status < 500:
+        return "REQUEST_REJECTED"
+    if status >= 500:
+        return "PROVIDER_ERROR"
+    return None
+
+
+@dataclass(frozen=True)
+class _RoundTrip:
+    failure: ProbeResult | None
+    status: int
+    body: bytes
+    started: float
+
+
+def _round_trip(
     prepared: PreparedRequest,
-    nonce: str,
-    *,
-    transport_factory: Callable[[], httpx.BaseTransport | None] | None = None,
-) -> ProbeResult:
+    max_bytes: int,
+    transport_factory: Callable[[], httpx.BaseTransport | None] | None,
+) -> _RoundTrip:
     """Send once. No retries, no redirects, bounded response, explicit deadline."""
-    max_bytes = settings.onboarding_ai_probe_max_response_bytes
     started = time.monotonic()
     deadline = started + prepared.timeout_seconds
     transport = (transport_factory or build_transport)()
@@ -282,21 +334,86 @@ def send(
                 for chunk in response.iter_bytes():
                     size += len(chunk)
                     if size > max_bytes:
-                        return _fail("RESPONSE_TOO_LARGE", started)
+                        return _RoundTrip(_fail("RESPONSE_TOO_LARGE", started), 0, b"", started)
                     if time.monotonic() > deadline:
-                        return ProbeResult(
-                            OUTCOME_UNKNOWN, "DEADLINE_EXCEEDED", None, None
+                        return _RoundTrip(
+                            ProbeResult(OUTCOME_UNKNOWN, "DEADLINE_EXCEEDED", None, None),
+                            0,
+                            b"",
+                            started,
                         )
                     chunks.append(chunk)
                 status = response.status_code
             finally:
                 response.close()
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        return _fail("CONNECT_FAILED", started)  # nothing reached the provider
+        # nothing reached the provider
+        return _RoundTrip(_fail("CONNECT_FAILED", started), 0, b"", started)
     except httpx.TimeoutException:
-        return ProbeResult(OUTCOME_UNKNOWN, "TIMEOUT_AFTER_DISPATCH", None, None)
-    except httpx.HTTPError:
-        return ProbeResult(
-            OUTCOME_UNKNOWN, "TRANSPORT_ERROR_AFTER_DISPATCH", None, None
+        return _RoundTrip(
+            ProbeResult(OUTCOME_UNKNOWN, "TIMEOUT_AFTER_DISPATCH", None, None), 0, b"", started
         )
-    return validate_response(b"".join(chunks), status, nonce, started=started)
+    except httpx.HTTPError:
+        return _RoundTrip(
+            ProbeResult(OUTCOME_UNKNOWN, "TRANSPORT_ERROR_AFTER_DISPATCH", None, None),
+            0,
+            b"",
+            started,
+        )
+    return _RoundTrip(None, status, b"".join(chunks), started)
+
+
+def send(
+    prepared: PreparedRequest,
+    nonce: str,
+    *,
+    transport_factory: Callable[[], httpx.BaseTransport | None] | None = None,
+) -> ProbeResult:
+    """Send the connection probe once and validate the reply."""
+    trip = _round_trip(
+        prepared, settings.onboarding_ai_probe_max_response_bytes, transport_factory
+    )
+    if trip.failure is not None:
+        return trip.failure
+    return validate_response(
+        trip.body, trip.status, nonce, started=trip.started, provider=prepared.provider
+    )
+
+
+@dataclass(frozen=True)
+class TextResult:
+    outcome: str
+    error_code: str | None
+    text: str | None
+    usage: dict[str, int] | None
+    latency_ms: int | None
+
+
+def send_text(
+    prepared: PreparedRequest,
+    *,
+    max_bytes: int,
+    transport_factory: Callable[[], httpx.BaseTransport | None] | None = None,
+) -> TextResult:
+    """Send one generation request; return the model text or a stable failure code."""
+    trip = _round_trip(prepared, max_bytes, transport_factory)
+    if trip.failure is not None:
+        f = trip.failure
+        return TextResult(f.outcome, f.error_code, None, None, f.latency_ms)
+    latency = int((time.monotonic() - trip.started) * 1000)
+    code = http_failure_code(trip.status)
+    if code:
+        return TextResult(OUTCOME_FAILED, code, None, None, latency)
+    try:
+        extracted = ai_provider.extract_response(
+            prepared.provider, json.loads(trip.body.decode("utf-8"))
+        )
+    except (ValueError, ai_provider.AIProviderError):
+        return TextResult(OUTCOME_FAILED, "INVALID_RESPONSE", None, None, latency)
+    if extracted.refused:
+        return TextResult(OUTCOME_FAILED, "REFUSAL", None, extracted.usage, latency)
+    if extracted.truncated:
+        return TextResult(OUTCOME_FAILED, "TRUNCATED_OUTPUT", None, extracted.usage, latency)
+    if not extracted.text or not extracted.text.strip():
+        return TextResult(OUTCOME_FAILED, "EMPTY_RESPONSE", None, extracted.usage, latency)
+    return TextResult(OUTCOME_PASSED, None, extracted.text, extracted.usage, latency)

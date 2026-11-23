@@ -27,6 +27,8 @@ from rai_gateway.onboarding.service import canonical_digest_obj, sha256_hex
 from rai_gateway.sdk.domain import BackgroundJobStatus
 
 PLAN_VERSION = 1
+# Soft size of one model call's source text (bytes); the hard cap is in DISCOVERY_LIMITS.
+PARTITION_TARGET_BYTES = 24 * 1024
 DISCOVERY_LIMITS = {
     "max_calls_per_run": 32,
     "max_request_bytes_per_call": 96 * 1024,
@@ -91,26 +93,45 @@ def build_discovery_plan(
     partitions: list[dict[str, Any]] = []
     primary_coverage: list[str] = []
     serialized = 0
-    for idx, block in enumerate(blocks):
-        text = block["text"]
-        size = len(text.encode("utf-8"))
+    group: list[dict[str, Any]] = []
+    group_bytes = 0
+
+    def close_group() -> None:
+        nonlocal group, group_bytes
+        if not group:
+            return
+        idx = len(partitions)
+        ids = [b["block_id"] for b in group]
+        partitions.append(
+            {
+                "ordinal": idx,
+                "primary_block_ids": ids,
+                "context_block_ids": [],
+                "request_digest": sha256_hex(
+                    "|".join(f"{b['block_id']}:{b['content_digest']}" for b in group)
+                    + f":{idx}"
+                ),
+            }
+        )
+        group, group_bytes = [], 0
+
+    # Consecutive blocks share one model call up to a byte budget, so a spreadsheet of
+    # many rows is a handful of calls rather than one call per row.
+    for block in blocks:
+        size = len(block["text"].encode("utf-8"))
         if size > DISCOVERY_LIMITS["max_request_bytes_per_call"]:
             raise ValueError("PARTITION_TOO_LARGE")
         serialized += size
         if serialized > DISCOVERY_LIMITS["max_request_bytes_per_run"]:
             raise ValueError("PLAN_TOO_LARGE")
-        bid = block["block_id"]
-        primary_coverage.append(bid)
-        partitions.append(
-            {
-                "ordinal": idx,
-                "primary_block_ids": [bid],
-                "context_block_ids": [],
-                "request_digest": sha256_hex(
-                    f"{bid}:{block['content_digest']}:{idx}"
-                ),
-            }
-        )
+        if group and group_bytes + size > PARTITION_TARGET_BYTES:
+            close_group()
+        group.append(block)
+        group_bytes += size
+        primary_coverage.append(block["block_id"])
+    close_group()
+    if len(partitions) > DISCOVERY_LIMITS["max_calls_per_run"]:
+        raise ValueError("PLAN_TOO_LARGE")
     ai_svc = AIConfigService(db, actor=actor)
     cfg = ai_svc._ensure_row()
     if not cfg.enabled:

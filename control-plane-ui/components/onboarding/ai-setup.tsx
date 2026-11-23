@@ -217,10 +217,51 @@ export function AISetup() {
         <p className="rounded-lg border border-base-200 p-3 text-sm text-ink-600">
           Changing the AI connection needs provider-management access.
         </p>
+      ) : config.managed_by_environment ? (
+        <>
+          <section
+            aria-label="Configuration"
+            className="space-y-1 rounded-lg border border-base-200 p-3 text-sm"
+            data-testid="ai-managed"
+          >
+            <p className="font-medium text-ink-900">Set by the server environment</p>
+            <p className="text-ink-700">
+              {config.provider ?? "provider"} · {config.model ?? "model"}
+              {config.destination_label ? ` · ${config.destination_label}` : ""}
+            </p>
+            <p className="text-xs text-ink-500">
+              {config.credential_configured
+                ? "Credential configured on this server."
+                : "Credential not configured on this server."}{" "}
+              The provider, model and credential come from the RAI_AI_* variables shared by every
+              internal AI feature. Change them in the deployment environment, not here.
+            </p>
+          </section>
+
+          <section aria-label="Connection test" className="space-y-2">
+            <Button variant="outline" disabled={busy || !canTest} onClick={() => void test()}>
+              Test AI connection
+            </Button>
+            <p className="text-xs text-ink-500">
+              Sends one short synthetic request and may use provider tokens. Your documents and
+              prompts are not sent. It is never retried automatically.
+            </p>
+            {activeProbe && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => void cancel(activeProbe)}
+              >
+                Cancel test
+              </Button>
+            )}
+          </section>
+        </>
       ) : targets.length === 0 ? (
         <p className="rounded-lg border border-base-200 p-3 text-sm text-ink-600" role="status">
           No approved AI targets are configured for this deployment. An operator must add one
-          (ONBOARDING_AI_TARGETS_JSON) before you can choose a model.
+          (RAI_AI_PROVIDER, RAI_AI_MODEL and a credential) before you can use AI features.
         </p>
       ) : (
         <>
@@ -288,7 +329,7 @@ export function AISetup() {
                     <option value="">Choose…</option>
                     {target.structured_modes.map((m) => (
                       <option key={m} value={m}>
-                        {m === "JSON_SCHEMA" ? "JSON schema" : "JSON object"}
+                        {m === "JSON_SCHEMA" ? "JSON schema" : m === "JSON_PROMPT" ? "Prompted JSON" : "JSON object"}
                       </option>
                     ))}
                   </select>

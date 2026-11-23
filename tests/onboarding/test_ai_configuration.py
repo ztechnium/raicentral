@@ -843,3 +843,57 @@ def test_unsupported_modes_are_rejected_without_downgrade(api, wire):
         and refused.json()["error"]["code"] == "MODE_NOT_SUPPORTED"
     )
     assert isinstance(IntakeError, type)
+
+
+# ------------------------------------------------------- unified RAI_AI_* config
+def test_env_configuration_applies_itself_and_blocks_ui_changes(
+    api, session_factory, store, db_session, monkeypatch
+):
+    monkeypatch.setattr(settings, "rai_ai_provider", "vertex")
+    monkeypatch.setattr(settings, "rai_ai_model", "gemini-x")
+    monkeypatch.setattr(settings, "rai_ai_api_key", "AIza-test-key-123456")
+    monkeypatch.setattr(ai_adapter, "resolve_host", lambda host: [PUBLIC_IP])
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        nonce = json.loads(
+            json.loads(request.content)["contents"][0]["parts"][0]["text"].split(": ", 1)[1]
+        )["nonce"]
+        text = json.dumps({"ok": True, "nonce": nonce})
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}],
+                "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 4, "totalTokenCount": 9},
+            },
+        )
+
+    monkeypatch.setattr(ai_adapter, "build_transport", lambda: httpx.MockTransport(handler))
+
+    # Nothing to choose or save: the environment is applied on first read.
+    state = status(api)
+    assert state["managed_by_environment"] is True
+    assert state["enabled"] is True and state["model"] == "gemini-x"
+    assert state["provider"] == "vertex" and state["credential_configured"] is True
+    assert state["state"] == "CONFIGURED_UNTESTED"
+    assert "AIza-test-key" not in json.dumps(state)
+
+    # The UI cannot override it.
+    refused = put(api, target_key="rai-ai", model="gemini-x", structured_mode="JSON_OBJECT")
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "AI_MANAGED_BY_ENVIRONMENT"
+
+    # The connection test reaches the Vertex express endpoint with the key header only.
+    assert ask_test(api).status_code in (200, 202)
+    worker(session_factory, store)
+    request = seen[0]
+    assert request.url.path == "/v1/publishers/google/models/gemini-x:generateContent"
+    assert request.headers["x-goog-api-key"] == "AIza-test-key-123456"
+    assert "authorization" not in request.headers
+    assert probe(db_session).outcome == "PASSED"
+    assert status(api)["state"] == "TEST_PASSED"
+
+    # Reading again does not churn the configuration version.
+    version = status(api)["configuration_version"]
+    assert status(api)["configuration_version"] == version

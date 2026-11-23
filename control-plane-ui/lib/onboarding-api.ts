@@ -159,7 +159,7 @@ function headers(extra?: Record<string, string>, json = true): Record<string, st
   return out;
 }
 
-async function toError(response: Response): Promise<IntakeApiError> {
+export async function toError(response: Response): Promise<IntakeApiError> {
   try {
     const body = (await response.json()) as {
       error?: unknown;
@@ -500,6 +500,9 @@ export interface ProbeView {
 export interface AIConfigDetail extends AIStatusSummary {
   configuration_version?: number;
   target_key?: string | null;
+  /** True when RAI_AI_* in the server environment is the only source (nothing to edit). */
+  managed_by_environment?: boolean;
+  provider?: string | null;
   model?: string | null;
   structured_mode?: string | null;
   max_output_tokens?: number | null;
@@ -514,6 +517,8 @@ export interface ProviderTarget {
   key: string;
   label: string;
   protocol: string;
+  provider?: string;
+  managed_by_environment?: boolean;
   destination_label: string;
   models: string[];
   structured_modes: string[];
@@ -872,6 +877,8 @@ export interface ChangeSetSummary {
   inventory_proposal_set_id?: string | null;
   governance_proposal_set_id?: string | null;
   operations: ChangeOperationSummary[];
+  /** Accepted proposals that will NOT be applied, each with the reason. */
+  skipped?: { proposal_id: string; family: string | null; title: string; code: string; reason: string }[];
 }
 
 export interface ApplicationSummary {

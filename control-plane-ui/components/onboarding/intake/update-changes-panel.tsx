@@ -6,6 +6,7 @@ import {
   IntakeApiError,
   getSession,
   newIdempotencyKey,
+  toError,
   type SessionDetail,
 } from "@/lib/onboarding-api";
 
@@ -14,10 +15,7 @@ async function fetchDeltaSummary(sessionId: string) {
     `/api/productization/onboarding/sessions/${sessionId}/delta/summary`,
     { credentials: "include", cache: "no-store" },
   );
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new IntakeApiError(res.status, body);
-  }
+  if (!res.ok) throw await toError(res);
   return res.json();
 }
 
@@ -72,7 +70,7 @@ export function UpdateChangesPanel({ sessionId }: { sessionId: string }) {
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         {Object.entries(counts).map(([key, value]) => (
           <div key={key}>
-            <dt className="text-muted-foreground">{key.replaceAll("_", " ")}</dt>
+            <dt className="text-muted-foreground">{key.replace(/_/g, " ")}</dt>
             <dd className="font-medium tabular-nums">{value}</dd>
           </div>
         ))}

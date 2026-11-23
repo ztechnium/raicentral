@@ -46,6 +46,26 @@ def clean_onboarding(request):
         "DELETE FROM onboarding_review_decisions",
         "DELETE FROM onboarding_change_operations",
         "DELETE FROM onboarding_change_sets",
+        # Rules, budgets and registry resources onboarding applies hang off AI systems.
+        "DELETE FROM tool_rule_conditions WHERE tool_rule_id IN (SELECT id FROM tool_rules "
+        "WHERE policy_collection_id IN (SELECT id FROM policy_collections WHERE ai_system_id IN "
+        "(SELECT id FROM ai_systems WHERE created_by != 'seed')))",
+        "DELETE FROM tool_rules WHERE policy_collection_id IN (SELECT id FROM policy_collections "
+        "WHERE ai_system_id IN (SELECT id FROM ai_systems WHERE created_by != 'seed'))",
+        "DELETE FROM content_rules WHERE policy_collection_id IN (SELECT id FROM "
+        "policy_collections WHERE ai_system_id IN (SELECT id FROM ai_systems "
+        "WHERE created_by != 'seed'))",
+        "DELETE FROM runtime_budget_windows WHERE budget_id IN (SELECT id FROM runtime_budgets "
+        "WHERE ai_system_id IN (SELECT id FROM ai_systems WHERE created_by != 'seed'))",
+        "DELETE FROM runtime_budgets WHERE ai_system_id IN "
+        "(SELECT id FROM ai_systems WHERE created_by != 'seed')",
+        "DELETE FROM policy_collections WHERE ai_system_id IN "
+        "(SELECT id FROM ai_systems WHERE created_by != 'seed')",
+        "DELETE FROM tool_resources WHERE metadata::text LIKE '%\"onboarding\"%'",
+        "DELETE FROM mcp_servers WHERE metadata::text LIKE '%\"onboarding\"%'",
+        "DELETE FROM external_services WHERE metadata::text LIKE '%\"onboarding\"%'",
+        "DELETE FROM data_sources WHERE metadata::text LIKE '%\"onboarding\"%'",
+        "DELETE FROM model_resources WHERE metadata::text LIKE '%\"onboarding\"%'",
         "DELETE FROM agents WHERE created_by != 'seed'",
         "DELETE FROM ai_systems WHERE created_by != 'seed'",
         "DELETE FROM onboarding_governance_proposal_edits",

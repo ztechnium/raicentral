@@ -22,6 +22,13 @@ SUPPORTED_TARGET_KINDS = frozenset(
         "agent",
         "policy_source",
         "content_rule",
+        "model",
+        "tool",
+        "mcp_server",
+        "external_service",
+        "data_source",
+        "tool_rule",
+        "runtime_budget",
     }
 )
 

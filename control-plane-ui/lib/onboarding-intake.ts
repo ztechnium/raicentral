@@ -51,6 +51,26 @@ const ERROR_COPY: Record<string, string> = {
   SOURCE_TOO_LARGE: "A saved source exceeds the size limit.",
   INVALID_RUN_BINDING: "The preparation job was not recognized.",
   LEASE_EXPIRED: "The worker stopped responding repeatedly. Retry to start a new attempt.",
+  AI_CONFIGURATION_UNAVAILABLE:
+    "The AI connection is not available. Check AI setup, then run the analysis again.",
+  AI_CONFIGURATION_CHANGED:
+    "The AI connection changed after this analysis was planned. Review the plan and run it again.",
+  AI_CREDENTIAL_UNAVAILABLE:
+    "The server could not use the AI credential. Check RAI_AI_* in the environment and run an AI connection test.",
+  AI_AUTH_REJECTED: "The AI provider rejected the credential. Check the API key or service account.",
+  AI_MODEL_OR_ENDPOINT_NOT_FOUND:
+    "The AI provider does not know this model or endpoint. Check RAI_AI_MODEL.",
+  AI_RATE_LIMITED: "The AI provider rate-limited the request. Wait a moment and run the analysis again.",
+  AI_PROVIDER_ERROR: "The AI provider returned an error. Run the analysis again later.",
+  AI_TRUNCATED_OUTPUT:
+    "The AI reply was cut off. Raise RAI_AI_MAX_OUTPUT_TOKENS (up to 8192) or use fewer sources, then run again.",
+  AI_INVALID_OUTPUT: "The AI reply was not in the required format. Run the analysis again.",
+  AI_INVALID_RESPONSE: "The AI provider reply could not be read. Run the analysis again.",
+  AI_REFUSAL: "The AI provider declined the request.",
+  AI_TIMEOUT_AFTER_DISPATCH:
+    "The AI provider did not answer in time. The request may have been processed; run the analysis again.",
+  AI_CONNECT_FAILED: "The server could not reach the AI provider.",
+  TOO_MANY_PROPOSALS: "The sources produced more proposals than the review limit. Use fewer sources.",
   PARSER_PROFILE_MISMATCH:
     "The worker uses a different parser configuration than the server. Ask an operator to align them, then extract again.",
 };
@@ -82,8 +102,8 @@ export function runStatus(run: RunSummary | null): { title: string; detail: stri
       };
     case "FAILED":
       return {
-        title: "Preparation failed",
-        detail: (run.error_code && ERROR_COPY[run.error_code]) || "Preparation did not complete.",
+        title: run.stage === "PREPARE_SOURCES" ? "Preparation failed" : "Analysis failed",
+        detail: (run.error_code && ERROR_COPY[run.error_code]) || run.stage === "PREPARE_SOURCES" ? "Preparation did not complete." : "The analysis did not complete.",
       };
     case "CANCELLED":
       return { title: "Preparation cancelled", detail: "You can edit inputs or retry." };

@@ -20,6 +20,10 @@ from rai_gateway.models.onboarding import (
 )
 from rai_gateway.models.productization import BackgroundJob
 from rai_gateway.onboarding.application_adapters import (
+    RESOURCE_MODELS,
+    create_budget_disabled,
+    create_resource,
+    create_tool_rule_disabled,
     ApplyAdapterError,
     create_agent,
     create_ai_system,
@@ -329,9 +333,52 @@ class ApplicationCoordinator:
             )
             return row.id
 
+        if kind in RESOURCE_MODELS and verb == "CREATE":
+            return create_resource(db, kind=kind, claims=action.get("claims") or {})
+
+        if kind in ("tool_rule", "runtime_budget") and verb == "CREATE":
+            generated = action.get("generated") or action
+            system_id = ApplicationCoordinator._system_for(db, generated, op, bindings)
+            if kind == "runtime_budget":
+                return create_budget_disabled(
+                    db, ai_system_id=system_id, generated=generated
+                ).id
+            tool_id = action.get("tool_id")
+            if action.get("tool_ordinal") is not None:
+                tool_id = bindings.get(int(action["tool_ordinal"]))
+            if not tool_id:
+                raise ApplyAdapterError("UNBOUND_TOOL", "Tool rule requires a registered tool")
+            return create_tool_rule_disabled(
+                db,
+                ai_system_id=system_id,
+                tool_id=uuid.UUID(str(tool_id)),
+                generated=generated,
+            ).id
+
         raise ApplyAdapterError(
             "UNSUPPORTED_OPERATION", f"Unsupported {verb} on {kind}"
         )
+
+    @staticmethod
+    def _system_for(
+        db: Session,
+        generated: dict[str, Any],
+        op: OnboardingChangeOperation,
+        bindings: dict[int, uuid.UUID],
+    ) -> uuid.UUID:
+        """The AI system a rule or budget belongs to: its key, else a bound dependency."""
+        from rai_gateway.models.registry import AISystem
+
+        sys_key = generated.get("system_key")
+        if sys_key:
+            system = db.query(AISystem).filter(AISystem.system_key == sys_key).first()
+            if system:
+                return system.id
+        for dep in op.dependency_ordinals or []:
+            bound = bindings.get(dep)
+            if bound is not None and db.get(AISystem, bound) is not None:
+                return bound
+        raise ApplyAdapterError("UNBOUND_SYSTEM", "A rule or budget requires an AI system")
 
     def cancel(
         self,

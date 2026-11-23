@@ -20,6 +20,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from rai_gateway.core import ai_provider
 from rai_gateway.core.config import settings
 from rai_gateway.models.database import AdminAudit
 from rai_gateway.models.onboarding import (
@@ -43,7 +44,8 @@ from rai_gateway.sdk.domain import BackgroundJobStatus
 from rai_gateway.sdk.jobs import JobQueue
 
 PROTOCOL = "OPENAI_COMPATIBLE_CHAT"
-STRUCTURED_MODES = ("JSON_SCHEMA", "JSON_OBJECT")
+STRUCTURED_MODES = ai_provider.STRUCTURED_MODES
+ENV_TARGET_KEY = "rai-ai"  # the target built from RAI_AI_* (environment-managed)
 TOKEN_PARAMS = ("max_tokens", "max_completion_tokens")
 _ALIAS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -71,13 +73,27 @@ class Target:
     credential_version: int
     timeout_seconds: float
     allow_private_network: bool
+    # Set only for the target built from RAI_AI_* (see core/ai_provider.py).
+    provider: str = "openai_compatible"
+    auth: str = "api_key"
+    gcp_project_id: str | None = None
+    location: str | None = None
+    managed: bool = False
 
     @property
     def host(self) -> str:
         return urlsplit(self.base_url).hostname or ""
 
     @property
+    def protocol(self) -> str:
+        if self.provider in ai_provider.OPENAI_FAMILY:
+            return PROTOCOL
+        return f"{self.provider.upper()}_GENERATE"
+
+    @property
     def credential_env(self) -> str:
+        if self.managed:
+            return "RAI_AI_API_KEY"
         return f"{CREDENTIAL_ENV_PREFIX}{self.credential_alias.upper()}"
 
 
@@ -85,13 +101,8 @@ class TargetRegistryError(ValueError):
     pass
 
 
-def _parse_target(raw: dict[str, Any]) -> Target:
-    key = str(raw.get("key", ""))
-    if not _KEY_RE.match(key):
-        raise TargetRegistryError("invalid target key")
-    if raw.get("protocol") != PROTOCOL:
-        raise TargetRegistryError(f"{key}: unsupported protocol")
-    url = str(raw.get("base_url", "")).rstrip("/")
+def _validated_https(key: str, value: str) -> str:
+    url = value.rstrip("/")
     parts = urlsplit(url)
     if (
         parts.scheme != "https"
@@ -103,6 +114,41 @@ def _parse_target(raw: dict[str, Any]) -> Target:
         or parts.hostname.lower() in _METADATA_HOSTS
     ):
         raise TargetRegistryError(f"{key}: base_url must be a plain https URL")
+    return url
+
+
+def _env_target(cfg: ai_provider.AIConfig) -> Target:
+    base = _validated_https(
+        ENV_TARGET_KEY,
+        ai_provider.api_base(cfg.provider, base_url=cfg.base_url, location=cfg.location),
+    )
+    return Target(
+        key=ENV_TARGET_KEY,
+        label=f"{cfg.provider} (set by the environment)",
+        base_url=base,
+        models=cfg.models,
+        structured_modes=(cfg.structured_mode,),
+        token_param=cfg.token_param,
+        max_output_tokens=min(cfg.max_output_tokens, 8192),
+        credential_alias="RAI_AI",
+        credential_version=1,
+        timeout_seconds=min(cfg.timeout_seconds, 30.0),
+        allow_private_network=cfg.allow_private_network,
+        provider=cfg.provider,
+        auth=cfg.auth,
+        gcp_project_id=cfg.gcp_project_id,
+        location=cfg.location,
+        managed=True,
+    )
+
+
+def _parse_target(raw: dict[str, Any]) -> Target:
+    key = str(raw.get("key", ""))
+    if not _KEY_RE.match(key):
+        raise TargetRegistryError("invalid target key")
+    if raw.get("protocol") != PROTOCOL:
+        raise TargetRegistryError(f"{key}: unsupported protocol")
+    url = _validated_https(key, str(raw.get("base_url", "")))
     models = tuple(str(m) for m in raw.get("models", []) if str(m))
     modes = tuple(raw.get("structured_modes", []))
     if not models or not modes or any(m not in STRUCTURED_MODES for m in modes):
@@ -131,7 +177,25 @@ def _parse_target(raw: dict[str, Any]) -> Target:
 
 
 def load_targets() -> tuple[dict[str, Target], list[str]]:
-    """Parse the deployment registry. Invalid entries are skipped and reported by key."""
+    """The approved targets.
+
+    ``RAI_AI_*`` is the single source when set: it yields exactly one environment-managed
+    target and the legacy ``ONBOARDING_AI_TARGETS_JSON`` registry is not consulted.
+    Otherwise the legacy registry applies. Invalid entries are reported, never trusted.
+    """
+    unified, problem = ai_provider.try_load_ai_config()
+    if unified is not None:
+        try:
+            return {ENV_TARGET_KEY: _env_target(unified)}, []
+        except TargetRegistryError as exc:
+            return {}, [str(exc)[:120]]
+    registry, problems = _load_registry()
+    if problem:
+        problems = [f"RAI_AI: {problem}"[:120], *problems]
+    return registry, problems
+
+
+def _load_registry() -> tuple[dict[str, Target], list[str]]:
     raw = (settings.onboarding_ai_targets_json or "").strip()
     if not raw:
         return {}, []
@@ -154,11 +218,22 @@ def load_targets() -> tuple[dict[str, Target], list[str]]:
 
 
 def credential_configured(target: Target) -> bool:
+    if target.managed:
+        # Vertex with a service account is resolved by the worker; the test reports it.
+        return target.auth != "none" or target.provider == "openai_compatible"
     return bool(os.environ.get(target.credential_env))
 
 
 def resolve_secret(target: Target) -> str:
-    """Resolve the onboarding-only credential through the existing low-level resolver."""
+    """Resolve the credential: RAI_AI_* (API key or Google token) or the legacy alias."""
+    if target.managed:
+        cfg, _problem = ai_provider.try_load_ai_config()
+        if cfg is None:
+            raise SecretResolutionError("RAI_AI configuration is unavailable")
+        try:
+            return ai_provider.resolve_credential(cfg) or ""
+        except ai_provider.AIProviderError as exc:
+            raise SecretResolutionError(exc.kind) from exc
     resolved = EnvironmentSecretResolver().resolve("ENVIRONMENT", target.credential_env)
     return str(resolved.payload["value"])
 
@@ -168,7 +243,11 @@ def effective_snapshot(
 ) -> dict[str, Any]:
     """Nonsecret effective configuration: DB choices plus deployment target policy."""
     return {
-        "protocol": PROTOCOL,
+        "protocol": target.protocol,
+        "provider": target.provider,
+        "auth": target.auth,
+        "gcp_project_id": target.gcp_project_id,
+        "location": target.location,
         "target_key": target.key,
         "base_url": target.base_url,
         "model": cfg.model,
@@ -213,11 +292,13 @@ class AIConfigService:
         self.actor = actor
 
     # ---------------------------------------------------------------- helpers
-    def _audit(self, action: str, target: dict[str, Any], reason: str) -> None:
+    def _audit(
+        self, action: str, target: dict[str, Any], reason: str, *, actor: str | None = None
+    ) -> None:
         self.db.add(
             AdminAudit(
                 trace_id=uuid.uuid4().hex,
-                actor_user_id=self.actor,
+                actor_user_id=actor or self.actor,
                 actor_role="onboarding_ai",
                 action=action,
                 target=target,
@@ -253,6 +334,47 @@ class AIConfigService:
         assert row is not None
         return row
 
+    def _sync_env(self) -> None:
+        """Pin the stored configuration to the RAI_AI_* target.
+
+        The environment is the only source, so there is nothing to choose or save in
+        the UI. The row is kept (versioned, audited) so probes and fingerprints work
+        exactly as they do for an operator-chosen target.
+        """
+        env = next((t for t in load_targets()[0].values() if t.managed), None)
+        if env is None:
+            return
+        desired = {
+            "enabled": True,
+            "target_key": env.key,
+            "model": env.models[0],
+            "structured_mode": env.structured_modes[0],
+            "max_output_tokens": env.max_output_tokens,
+        }
+
+        def current(row: OnboardingAIConfiguration | None) -> bool:
+            return row is not None and all(getattr(row, k) == v for k, v in desired.items())
+
+        if current(self._row()):
+            return
+        row = self._ensure_row(lock=True)
+        try:
+            if not current(row):
+                for key, value in desired.items():
+                    setattr(row, key, value)
+                row.config_version += 1
+                row.updated_by = "environment"
+                self._audit(
+                    "onboarding.ai.configure",
+                    {"configuration_version": row.config_version, "target_key": env.key},
+                    "ENVIRONMENT_SYNC",
+                    actor="environment",
+                )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def _matching_probe(
         self, cfg: OnboardingAIConfiguration | None, fingerprint: str | None
     ) -> OnboardingProviderProbe | None:
@@ -270,9 +392,13 @@ class AIConfigService:
 
     # ---------------------------------------------------------------- status
     def summary(self, *, detailed: bool) -> dict[str, Any]:
+        self._sync_env()
         cfg = self._row()
         targets, problems = load_targets()
+        managed = next((t for t in targets.values() if t.managed), None)
         out: dict[str, Any] = {"state": "UNCONFIGURED", "enabled": False}
+        if detailed:  # readers get the minimal, allow-listed view
+            out["managed_by_environment"] = managed is not None
         if cfg is None or not cfg.target_key:
             out["available_targets"] = len(targets)
             if detailed:
@@ -309,6 +435,7 @@ class AIConfigService:
             out.update(
                 configuration_version=cfg.config_version,
                 target_key=cfg.target_key,
+                provider=target.provider if target else None,
                 model=cfg.model,
                 structured_mode=cfg.structured_mode,
                 max_output_tokens=cfg.max_output_tokens,
@@ -326,7 +453,9 @@ class AIConfigService:
                 {
                     "key": t.key,
                     "label": t.label,
-                    "protocol": PROTOCOL,
+                    "protocol": t.protocol,
+                    "provider": t.provider,
+                    "managed_by_environment": t.managed,
                     "destination_label": t.host,
                     "models": list(t.models),
                     "structured_modes": list(t.structured_modes),
@@ -372,6 +501,13 @@ class AIConfigService:
         structured_mode: str | None,
         max_output_tokens: int | None,
     ) -> dict[str, Any]:
+        if any(t.managed for t in load_targets()[0].values()):
+            raise IntakeError(
+                409,
+                "AI_MANAGED_BY_ENVIRONMENT",
+                "The AI connection is set by the RAI_AI_* environment variables "
+                "and cannot be changed here.",
+            )
         cfg = self._ensure_row(lock=True)
         try:
             if cfg.config_version != expected_configuration_version:
@@ -436,6 +572,7 @@ class AIConfigService:
     ) -> OnboardingProviderProbe:
         from rai_gateway.onboarding.service import IntakeService
 
+        self._sync_env()
         scope = f"ai-test:{self.actor}"
         fingerprint = digest_of(
             {

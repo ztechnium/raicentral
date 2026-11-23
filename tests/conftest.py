@@ -263,3 +263,13 @@ def _isolate_content_evaluator_env(monkeypatch):
     monkeypatch.setattr(settings, "content_evaluator_api_key", None)
     monkeypatch.setattr(settings, "content_evaluator_base_url", None)
     monkeypatch.setattr(settings, "content_evaluator_service_account_json", None)
+    # The unified RAI_AI_* config feeds the evaluator and onboarding too.
+    for name in (
+        "rai_ai_provider",
+        "rai_ai_model",
+        "rai_ai_api_key",
+        "rai_ai_base_url",
+        "rai_ai_gcp_service_account_json",
+        "rai_ai_structured_mode",
+    ):
+        monkeypatch.setattr(settings, name, None)
