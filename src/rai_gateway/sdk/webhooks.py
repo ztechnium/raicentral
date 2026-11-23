@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from rai_gateway.core.config import settings
+from rai_gateway.events.alert_catalog import any_subscription_matches
 from rai_gateway.models.productization import WebhookDelivery, WebhookEndpoint
 from rai_gateway.sdk.auth import hash_webhook_secret
 from rai_gateway.sdk.domain import SdkErrorCode, WebhookDeliveryStatus
@@ -66,6 +67,24 @@ def encrypt_webhook_secret(plaintext: str) -> str:
 
 def decrypt_webhook_secret(ciphertext: str) -> str:
     return _fernet().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+
+
+_RESERVED_HEADER_PREFIXES = ("x-rai-", "content-type", "host", "content-length")
+
+
+def sanitize_custom_headers(raw: dict[str, Any] | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        normalized = key.strip()
+        lower = normalized.lower()
+        if any(lower.startswith(p) for p in _RESERVED_HEADER_PREFIXES):
+            continue
+        out[normalized] = str(value)
+    return out
 
 
 def validate_webhook_url(url: str) -> None:
@@ -125,6 +144,7 @@ class WebhookService:
         url: str,
         event_types: list[str],
         created_by: str,
+        custom_headers: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], str]:
         validate_webhook_url(url)
         plaintext = f"whsec_{secrets.token_urlsafe(32)}"
@@ -135,6 +155,7 @@ class WebhookService:
             secret_prefix=plaintext[:12],
             secret_ciphertext=encrypt_webhook_secret(plaintext),
             event_types=event_types,
+            custom_headers=sanitize_custom_headers(custom_headers),
             enabled=True,
             status="ACTIVE",
             created_by=created_by,
@@ -172,10 +193,8 @@ class WebhookService:
         eid = event_id or str(uuid4())
         for endpoint in endpoints:
             types = endpoint.event_types or []
-            if (
-                event_type not in types
-                and "*" not in types
-                and not self._legacy_decided_match(event_type, types)
+            if not any_subscription_matches(types, event_type) and not self._legacy_decided_match(
+                event_type, types
             ):
                 continue
             delivery = WebhookDelivery(
@@ -275,6 +294,7 @@ class WebhookService:
             "X-RAI-Webhook-Timestamp": timestamp,
             "X-RAI-Webhook-Signature": f"v1={signature}",
         }
+        headers.update(sanitize_custom_headers(endpoint.custom_headers))
         row.attempt_count = (row.attempt_count or 0) + 1
         try:
             with httpx.Client(timeout=10.0, follow_redirects=False) as client:
@@ -337,6 +357,31 @@ class WebhookService:
             for r in rows
         ]
 
+    def update_endpoint(
+        self,
+        endpoint_id: UUID,
+        *,
+        name: str | None = None,
+        url: str | None = None,
+        event_types: list[str] | None = None,
+        custom_headers: dict[str, Any] | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        endpoint = self._get_endpoint(endpoint_id)
+        if url is not None:
+            validate_webhook_url(url)
+            endpoint.url = url
+        if name is not None:
+            endpoint.name = name
+        if event_types is not None:
+            endpoint.event_types = event_types
+        if custom_headers is not None:
+            endpoint.custom_headers = sanitize_custom_headers(custom_headers)
+        if enabled is not None:
+            endpoint.enabled = enabled
+        self._db.flush()
+        return self._serialize(endpoint)
+
     def _serialize(self, endpoint: WebhookEndpoint) -> dict[str, Any]:
         return {
             "id": str(endpoint.id),
@@ -344,6 +389,7 @@ class WebhookService:
             "url": endpoint.url,
             "secret_prefix": endpoint.secret_prefix,
             "event_types": endpoint.event_types,
+            "custom_headers": endpoint.custom_headers or {},
             "enabled": endpoint.enabled,
             "status": endpoint.status,
             "created_by": endpoint.created_by,

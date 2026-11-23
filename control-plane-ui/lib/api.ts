@@ -3319,11 +3319,80 @@ export function createWebhookEndpoint(payload: {
   name: string;
   url: string;
   event_types: string[];
+  custom_headers?: Record<string, string>;
 }) {
   return apiPost<{
     endpoint: import("@/lib/types").WebhookEndpointSummary;
     secret: string;
   }>("/v1/productization/webhooks", payload);
+}
+
+export function updateWebhookEndpoint(
+  endpointId: string,
+  payload: {
+    name?: string;
+    url?: string;
+    event_types?: string[];
+    custom_headers?: Record<string, string>;
+    enabled?: boolean;
+  },
+) {
+  return apiPatch<{ endpoint: import("@/lib/types").WebhookEndpointSummary }>(
+    `/v1/productization/webhooks/${endpointId}`,
+    payload,
+  );
+}
+
+export function getAlertEventGroups() {
+  return apiGet<{ groups: import("@/lib/types").AlertEventGroup[] }>(
+    "/v1/productization/alert-events",
+  );
+}
+
+export function getAlertIntegrationCatalog() {
+  return apiGet<{ providers: import("@/lib/types").AlertIntegrationProvider[] }>(
+    "/v1/productization/alert-integrations/catalog",
+  );
+}
+
+export function listAlertIntegrations() {
+  return apiGet<{ items: import("@/lib/types").AlertIntegrationSummary[] }>(
+    "/v1/productization/alert-integrations",
+  );
+}
+
+export function createAlertIntegration(payload: {
+  name: string;
+  provider: string;
+  event_types: string[];
+  config: Record<string, string>;
+  custom_headers?: Record<string, string>;
+  enabled?: boolean;
+}) {
+  return apiPost<{ integration: import("@/lib/types").AlertIntegrationSummary }>(
+    "/v1/productization/alert-integrations",
+    payload,
+  );
+}
+
+export function updateAlertIntegration(
+  integrationId: string,
+  payload: {
+    name?: string;
+    event_types?: string[];
+    config?: Record<string, string>;
+    custom_headers?: Record<string, string>;
+    enabled?: boolean;
+  },
+) {
+  return apiPatch<{ integration: import("@/lib/types").AlertIntegrationSummary }>(
+    `/v1/productization/alert-integrations/${integrationId}`,
+    payload,
+  );
+}
+
+export function deleteAlertIntegration(integrationId: string) {
+  return apiDelete<{ ok: boolean }>(`/v1/productization/alert-integrations/${integrationId}`);
 }
 
 export function rotateWebhookEndpoint(endpointId: string) {

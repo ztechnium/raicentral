@@ -46,14 +46,24 @@ def process_outbox_to_webhooks(db: Session, *, limit: int = 50) -> int:
     if not rows:
         return 0
 
+    from rai_gateway.alert_integrations import AlertIntegrationService
+
     webhook = WebhookService(db)
+    integrations = AlertIntegrationService(db)
     processed = 0
     for row in rows:
         try:
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            event_id = str(row.id)
             webhook.enqueue(
                 event_type=row.event_type,
-                payload=row.payload if isinstance(row.payload, dict) else {},
-                event_id=str(row.id),
+                payload=payload,
+                event_id=event_id,
+            )
+            integrations.broadcast(
+                event_type=row.event_type,
+                payload=payload,
+                event_id=event_id,
             )
             row.processed_at = _utcnow()
             row.last_error = None

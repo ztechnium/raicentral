@@ -8,8 +8,17 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
+from rai_gateway.events.alert_catalog import (
+    ENFORCEMENT_ALLOW,
+    ENFORCEMENT_DENY,
+    ENFORCEMENT_MONITOR,
+    ENFORCEMENT_REQUIRE_APPROVAL,
+    RISK_FINDING_CREATED,
+)
 from rai_gateway.models.approval import ApprovalRequest
 from rai_gateway.models.events import EventOutbox
+from rai_gateway.models.risk_intelligence import RuntimeRiskFinding
+from rai_gateway.models.runtime_enforcement import RuntimeEnforcementReceipt
 
 
 def _utcnow() -> datetime:
@@ -71,4 +80,94 @@ def enqueue_approval_event(
         aggregate_type="approval_request",
         aggregate_id=request.id,
         payload=approval_event_payload(request),
+    )
+
+
+def enforcement_event_type(receipt: RuntimeEnforcementReceipt) -> str | None:
+    decision = (receipt.enforcement_decision or "").upper()
+    if decision == "DENY":
+        return ENFORCEMENT_DENY
+    if decision == "REQUIRE_APPROVAL":
+        return ENFORCEMENT_REQUIRE_APPROVAL
+    if decision == "ALLOW" and receipt.monitor:
+        return ENFORCEMENT_MONITOR
+    if decision == "ALLOW" and (receipt.policy_effect or "").upper() == "MONITOR":
+        return ENFORCEMENT_MONITOR
+    if decision == "ALLOW":
+        return ENFORCEMENT_ALLOW
+    if receipt.monitor:
+        return ENFORCEMENT_MONITOR
+    return None
+
+
+def enforcement_event_payload(receipt: RuntimeEnforcementReceipt) -> dict[str, Any]:
+    return {
+        "receipt_id": str(receipt.id),
+        "enforcement_decision": receipt.enforcement_decision,
+        "reason_code": receipt.reason_code,
+        "human_explanation": receipt.human_explanation,
+        "policy_effect": receipt.policy_effect,
+        "monitor": bool(receipt.monitor),
+        "ai_system_id": str(receipt.ai_system_id),
+        "agent_id": str(receipt.agent_id),
+        "agent_version_id": str(receipt.agent_version_id),
+        "runtime_identity_id": str(receipt.runtime_identity_id),
+        "action_digest": receipt.action_digest,
+        "correlation_id": receipt.correlation_id,
+        "approval_request_id": str(receipt.approval_request_id)
+        if receipt.approval_request_id
+        else None,
+    }
+
+
+def enqueue_enforcement_alert(
+    db: Session,
+    receipt: RuntimeEnforcementReceipt,
+) -> EventOutbox | None:
+    event_type = enforcement_event_type(receipt)
+    if not event_type:
+        return None
+    # Skip noisy pure allows unless subscribed explicitly via enforcement.allow
+    if event_type == ENFORCEMENT_ALLOW:
+        return None
+    return enqueue_outbox_event(
+        db,
+        event_type=event_type,
+        aggregate_type="enforcement_receipt",
+        aggregate_id=receipt.id,
+        payload=enforcement_event_payload(receipt),
+    )
+
+
+def finding_event_payload(finding: RuntimeRiskFinding) -> dict[str, Any]:
+    return {
+        "finding_id": str(finding.id),
+        "finding_type": finding.finding_type,
+        "title": finding.title,
+        "description": finding.description,
+        "severity": finding.severity,
+        "status": finding.status,
+        "category": finding.category,
+        "ai_system_id": str(finding.ai_system_id),
+        "agent_id": str(finding.agent_id) if finding.agent_id else None,
+        "agent_version_id": str(finding.agent_version_id)
+        if finding.agent_version_id
+        else None,
+        "runtime_identity_id": str(finding.runtime_identity_id)
+        if finding.runtime_identity_id
+        else None,
+        "intervention_effect": finding.intervention_effect,
+    }
+
+
+def enqueue_finding_alert(
+    db: Session,
+    finding: RuntimeRiskFinding,
+) -> EventOutbox:
+    return enqueue_outbox_event(
+        db,
+        event_type=RISK_FINDING_CREATED,
+        aggregate_type="runtime_risk_finding",
+        aggregate_id=finding.id,
+        payload=finding_event_payload(finding),
     )

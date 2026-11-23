@@ -228,6 +228,9 @@ class RiskIntelligenceRepository:
         row = RuntimeRiskFinding(**fields)
         self._db.add(row)
         self._db.flush()
+        from rai_gateway.events.outbox import enqueue_finding_alert
+
+        enqueue_finding_alert(self._db, row)
         return row
 
     def get_finding(

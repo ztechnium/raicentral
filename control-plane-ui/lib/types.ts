@@ -3297,16 +3297,45 @@ export interface TrajectoryEconomics {
 
 export interface WebhookEndpointSummary {
   id: string;
-  organization_id: string;
+  organization_id?: string;
   name: string;
   url: string;
   secret_prefix: string;
   event_types: string[];
+  custom_headers?: Record<string, string>;
   enabled: boolean;
   status: string;
   created_by: string;
   created_at?: string | null;
   last_rotated_at?: string | null;
+}
+
+export interface AlertEventGroup {
+  id: string;
+  label: string;
+  description?: string;
+  events: Array<{ type: string; label: string; includes?: string[] }>;
+}
+
+export interface AlertIntegrationProvider {
+  id: string;
+  label: string;
+  config_fields: Array<{ key: string; label: string; type: string }>;
+}
+
+export interface AlertIntegrationSummary {
+  id: string;
+  name: string;
+  provider: string;
+  provider_label: string;
+  event_types: string[];
+  config: Record<string, string>;
+  custom_headers: Record<string, string>;
+  enabled: boolean;
+  status: string;
+  created_by: string;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface WebhookDeliverySummary {
