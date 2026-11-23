@@ -61,6 +61,7 @@ from rai_gateway.services.prompt_catalog import PromptCatalogService
 from rai_gateway.services.provider_settings_store import (
     load_provider_settings_into_runtime,
 )
+from rai_gateway.assistant.api import register as register_assistant
 from rai_gateway.mcp.integration import integrate_management_mcp
 from rai_gateway.services.rai_guard import RaiGuardService
 
@@ -97,6 +98,7 @@ app.include_router(welcome_router)
 app.include_router(health_router)
 app.include_router(security_router)
 
+register_assistant(app)
 integrate_management_mcp(app)
 
 # Setup CORS (Phase 23: Environment-driven configuration)

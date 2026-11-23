@@ -70,3 +70,27 @@ def test_create_integration_rejects_unknown_provider(db_session) -> None:
             custom_headers=None,
             created_by="tester",
         )
+
+def test_slack_delivery_includes_finding_and_trajectory_links(monkeypatch):
+    import json
+
+    from rai_gateway.alert_integrations.providers import build_delivery
+    from rai_gateway.core.config import settings
+
+    monkeypatch.setattr(settings, "app_public_url", "https://rai.example.com/")
+    payload = {
+        "finding_id": "f1",
+        "trajectory_id": "t1",
+        "ai_system_id": "s1",
+        "title": "Policy denial",
+    }
+    _url, _headers, body = build_delivery(
+        "slack",
+        event_type="risk.finding.created",
+        payload=payload,
+        config={"webhook_url": "https://hooks.slack.com/services/x"},
+    )
+    text = body.decode()
+    assert "https://rai.example.com/runtime/trajectories/t1" in text
+    assert "https://rai.example.com/risk/findings?finding_id=f1&ai_system_id=s1" in text
+    json.loads(text)

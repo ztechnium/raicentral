@@ -142,6 +142,7 @@ def enqueue_enforcement_alert(
 def finding_event_payload(finding: RuntimeRiskFinding) -> dict[str, Any]:
     return {
         "finding_id": str(finding.id),
+        "trajectory_id": str(finding.trajectory_id) if finding.trajectory_id else None,
         "finding_type": finding.finding_type,
         "title": finding.title,
         "description": finding.description,

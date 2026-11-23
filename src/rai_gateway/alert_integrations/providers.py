@@ -62,6 +62,26 @@ def _summary_text(event_type: str, payload: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def build_links(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    """Console deep links (label, absolute URL) for the ids present in ``payload``."""
+    from urllib.parse import urlencode
+
+    from rai_gateway.core.config import settings
+
+    base = (settings.app_public_url or "").strip().rstrip("/")
+    if not base:
+        return []
+    links: list[tuple[str, str]] = []
+    if payload.get("finding_id"):
+        query = {"finding_id": payload["finding_id"]}
+        if payload.get("ai_system_id"):
+            query["ai_system_id"] = payload["ai_system_id"]
+        links.append(("Finding", f"{base}/risk/findings?{urlencode(query)}"))
+    if payload.get("trajectory_id"):
+        links.append(("Trajectory", f"{base}/runtime/trajectories/{payload['trajectory_id']}"))
+    return links
+
+
 def build_delivery(
     provider: str,
     *,
@@ -107,7 +127,17 @@ def build_delivery(
         raise ValueError(f"{provider_label(provider)} webhook URL is required in config")
 
     if provider == "slack":
-        body = json.dumps({"text": summary, "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{summary}*\n```{detail[:2800]}```"}}]}).encode()
+        blocks: list[dict[str, Any]] = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{summary}*"}}
+        ]
+        links = build_links(payload)
+        if links:
+            link_text = "  |  ".join(f"<{url}|{label}>" for label, url in links)
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": link_text}})
+        blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"```{detail[:2800]}```"}}
+        )
+        body = json.dumps({"text": summary, "blocks": blocks}).encode()
         return webhook_url, headers, body
 
     if provider == "discord":
