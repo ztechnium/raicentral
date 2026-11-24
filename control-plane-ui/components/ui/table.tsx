@@ -13,14 +13,14 @@ export function Table({
   rowTestIds?: Array<string | null | undefined>;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-base-200 bg-base-50">
+    <div className="rai-table-shell">
       <table className="w-full min-w-[720px] text-left text-sm">
-        <thead className="bg-base-100 text-ink-400">
+        <thead className="border-b border-base-200 bg-surface-muted text-ink-500">
           <tr>
             {columns.map((column, index) => (
               <th
                 key={column || `col-${index}`}
-                className="sticky top-0 z-[1] bg-base-100 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide"
+                className="sticky top-0 z-[1] bg-surface-muted px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-[0.08em]"
               >
                 {column}
               </th>
@@ -35,8 +35,8 @@ export function Table({
                 key={index}
                 data-testid={testId}
                 className={cn(
-                  "h-12 bg-base-50",
-                  onRowClick && "cursor-pointer hover:bg-base-700/40",
+                  "h-12 bg-surface transition-colors",
+                  onRowClick && "cursor-pointer hover:bg-surface-hover",
                 )}
                 onClick={
                   onRowClick
@@ -51,7 +51,7 @@ export function Table({
                 }
               >
                 {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="px-3 py-2.5 text-xs text-ink-700">
+                  <td key={cellIndex} className="px-3 py-2.5 text-xs font-normal text-ink-700">
                     {cell}
                   </td>
                 ))}

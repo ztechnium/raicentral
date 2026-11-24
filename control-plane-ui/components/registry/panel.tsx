@@ -20,13 +20,13 @@ export function Panel({
 
   return (
     <section
-      className={cn("overflow-hidden rounded-lg border border-base-200 bg-base-50", className)}
+      className={cn("rai-report-card overflow-hidden", className)}
       data-testid={dataTestId}
     >
       {showHeader && (
-        <header className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-base-200 px-4">
+        <header className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-base-200 bg-surface-muted/60 px-4">
           <div>
-            {title && <h2 className="text-sm font-semibold text-ink-900">{title}</h2>}
+            {title && <h2 className="rai-section-title">{title}</h2>}
             {description && <p className="mt-0.5 text-xs text-ink-500">{description}</p>}
           </div>
           {actions}

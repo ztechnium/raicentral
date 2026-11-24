@@ -6,26 +6,28 @@
 
 :root {
   color-scheme: light;
-  --base-900: #0b1014;
-  --base-800: #12181f;
-  --base-700: #1a222c;
-  --base-300: #cdd3dd;
-  --base-200: #e3e7ee;
-  --base-100: #f3f5f9;
-  --base-50: #f8fafc;
-  --ink-900: #0d0f12;
-  --ink-800: #1a1f26;
-  --ink-700: #2a3138;
-  --ink-600: #3d4650;
-  --ink-500: #525c66;
-  --ink-400: #6b7682;
-  --ink-300: #8c97a3;
-  --accent-700: #17665c;
-  --accent-600: #1f7a6d;
-  --accent-500: #2b9d8b;
-  --accent-200: #b7e4db;
-  --accent-100: #e5f6f2;
-  --accent-50: #f2fbf9;
+  --brand-navy: #122132;
+  --brand-teal: #008467;
+  --base-900: #122132;
+  --base-800: #1a2a3c;
+  --base-700: #243447;
+  --base-300: #c5cdd6;
+  --base-200: #dde3ea;
+  --base-100: #eef1f5;
+  --base-50: #ffffff;
+  --ink-900: #122132;
+  --ink-800: #1e2d3d;
+  --ink-700: #2e3f51;
+  --ink-600: #465869;
+  --ink-500: #5e6f7f;
+  --ink-400: #7a8a98;
+  --ink-300: #9aa8b3;
+  --accent-700: #006b52;
+  --accent-600: #008467;
+  --accent-500: #009e7a;
+  --accent-200: #9fd4c8;
+  --accent-100: #d4ede7;
+  --accent-50: #ecf7f4;
   --warn-700: #92400e;
   --warn-600: #b45309;
   --warn-100: #fff4e5;
@@ -36,43 +38,59 @@
   --danger-200: #fecaca;
   --danger-100: #fdecec;
   --danger-50: #fef2f2;
+  --surface: #ffffff;
+  --surface-muted: #f4f6f8;
+  --surface-hover: #e8ecf1;
+  --border-subtle: var(--base-200);
+  --shadow-panel: 0 1px 2px rgba(18, 33, 50, 0.06), 0 8px 24px rgba(18, 33, 50, 0.06);
+  --sidebar-bg: var(--brand-navy);
+  --sidebar-border: #243447;
+  --sidebar-text: #b4c1cc;
+  --sidebar-text-strong: #f2f5f8;
+  --sidebar-hover: #1a2a3c;
+  --sidebar-active: #243447;
 }
 
 /* RaiCentral admin dashboard. Light theme uses :root tokens; dark via .console-dark. */
 .console {
   color-scheme: light;
   font-size: 14px;
+  line-height: 1.4286;
+  letter-spacing: 0.01em;
+  font-feature-settings: "kern" 1, "liga" 1;
   background-color: var(--base-100);
   background-image:
-    radial-gradient(circle at 10% 10%, rgba(43, 157, 139, 0.06), transparent 40%),
-    radial-gradient(circle at 90% 20%, rgba(17, 97, 85, 0.04), transparent 35%),
-    linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+    radial-gradient(circle at 8% 0%, rgba(0, 132, 103, 0.05), transparent 42%),
+    radial-gradient(circle at 92% 8%, rgba(18, 33, 50, 0.04), transparent 38%),
+    linear-gradient(180deg, #f6f8fa 0%, #eef1f5 100%);
   color: var(--ink-900);
 }
 
 .console.console-dark {
   color-scheme: dark;
   background-image: none;
-  --base-900: oklch(0.13 0.02 252);
-  --base-800: oklch(0.17 0.023 251);
-  --base-700: oklch(0.22 0.034 252);
-  --base-300: oklch(0.45 0.04 250);
-  --base-200: oklch(0.32 0.035 250);
-  --base-100: oklch(0.16 0.022 252);
-  --base-50: oklch(0.205 0.026 251);
-  --ink-900: oklch(0.97 0.008 250);
-  --ink-800: oklch(0.92 0.012 250);
-  --ink-700: oklch(0.86 0.02 249);
-  --ink-600: oklch(0.78 0.025 250);
-  --ink-500: oklch(0.68 0.035 250);
-  --ink-400: oklch(0.62 0.032 250);
-  --ink-300: oklch(0.55 0.03 250);
-  --accent-700: oklch(0.78 0.14 257);
-  --accent-600: oklch(0.65 0.19 257);
-  --accent-500: oklch(0.72 0.16 257);
-  --accent-200: oklch(0.42 0.08 257);
-  --accent-100: oklch(0.32 0.06 257);
-  --accent-50: oklch(0.26 0.045 257);
+  --brand-navy: #122132;
+  --brand-teal: #2db896;
+  --base-900: #0a1219;
+  --base-800: #0e1924;
+  --base-700: #152232;
+  --base-300: oklch(0.42 0.025 230);
+  --base-200: oklch(0.34 0.028 232);
+  --base-100: #122132;
+  --base-50: #1a2a3c;
+  --ink-900: oklch(0.97 0.006 230);
+  --ink-800: oklch(0.91 0.01 230);
+  --ink-700: oklch(0.84 0.014 230);
+  --ink-600: oklch(0.76 0.018 230);
+  --ink-500: oklch(0.66 0.022 230);
+  --ink-400: oklch(0.58 0.02 230);
+  --ink-300: oklch(0.5 0.018 230);
+  --accent-700: oklch(0.72 0.11 166);
+  --accent-600: oklch(0.68 0.12 166);
+  --accent-500: oklch(0.74 0.11 166);
+  --accent-200: oklch(0.38 0.06 166);
+  --accent-100: oklch(0.28 0.045 166);
+  --accent-50: oklch(0.24 0.035 166);
   --warn-700: oklch(0.84 0.14 70);
   --warn-600: oklch(0.77 0.17 70);
   --warn-100: oklch(0.32 0.06 70);
@@ -83,6 +101,17 @@
   --danger-200: oklch(0.42 0.1 25);
   --danger-100: oklch(0.32 0.08 25);
   --danger-50: oklch(0.26 0.05 25);
+  --surface: var(--base-50);
+  --surface-muted: var(--base-700);
+  --surface-hover: oklch(0.26 0.03 232);
+  --border-subtle: var(--base-200);
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.24), 0 12px 32px rgba(0, 0, 0, 0.28);
+  --sidebar-bg: #0e1924;
+  --sidebar-border: #1e3248;
+  --sidebar-text: #9eb0c0;
+  --sidebar-text-strong: #f0f4f8;
+  --sidebar-hover: #152232;
+  --sidebar-active: #1e3248;
 }
 
 .console ::selection {
@@ -95,11 +124,11 @@
 }
 
 body {
-  @apply bg-base-100 text-ink-900;
+  @apply bg-base-100 font-sans text-ink-900 antialiased;
   background-image:
-    radial-gradient(circle at 10% 10%, rgba(43, 157, 139, 0.08), transparent 40%),
-    radial-gradient(circle at 90% 20%, rgba(17, 97, 85, 0.06), transparent 35%),
-    linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+    radial-gradient(circle at 8% 0%, rgba(0, 132, 103, 0.06), transparent 42%),
+    radial-gradient(circle at 92% 8%, rgba(18, 33, 50, 0.04), transparent 38%),
+    linear-gradient(180deg, #f6f8fa 0%, #eef1f5 100%);
 }
 
 * {
@@ -109,6 +138,69 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+@layer components {
+  .console .rai-page-title {
+    @apply text-xl font-semibold tracking-tight text-ink-900;
+    letter-spacing: -0.01em;
+  }
+
+  .console .rai-section-title {
+    @apply text-sm font-semibold text-ink-900;
+  }
+
+  .console .rai-eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-400;
+  }
+
+  .console .rai-link {
+    @apply font-medium text-accent-600 underline-offset-2 transition-colors;
+  }
+
+  .console .rai-link:hover {
+    color: var(--accent-500);
+    text-decoration: underline;
+  }
+
+  .console .rai-report-card {
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    box-shadow: var(--shadow-panel);
+  }
+
+  .console .rai-table-shell {
+    @apply overflow-x-auto rounded-lg border border-base-200 bg-surface;
+    box-shadow: var(--shadow-panel);
+  }
+
+  .console .rai-field {
+    @apply w-full rounded-md border border-base-200 bg-base-50 text-sm text-ink-900 outline-none;
+    @apply placeholder:text-ink-300 focus:border-accent-600 focus:ring-1 focus:ring-accent-600 disabled:opacity-60;
+  }
+
+  .console .rai-btn {
+    @apply inline-flex items-center justify-center gap-2 font-semibold tracking-wide transition;
+    @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-600;
+    @apply disabled:pointer-events-none disabled:opacity-60;
+  }
+
+  .console .rai-wordmark-rai {
+    color: var(--brand-navy);
+  }
+
+  .console.console-dark .rai-wordmark-rai {
+    color: var(--ink-900);
+  }
+
+  .console .rai-wordmark-central {
+    color: var(--brand-teal);
+  }
+
+  .console.console-dark .rai-wordmark-central {
+    color: var(--accent-500);
+  }
 }
 
 .prose-docs h2 {
@@ -129,7 +221,7 @@ a {
 }
 
 .prose-docs pre {
-  @apply mt-4 overflow-x-auto rounded-lg bg-base-900 p-4 text-sm text-base-100;
+  @apply mt-4 overflow-x-auto rounded-lg bg-base-900 p-4 text-sm text-base-50;
 }
 
 .prose-docs code {
@@ -137,7 +229,7 @@ a {
 }
 
 .prose-docs pre code {
-  @apply bg-transparent p-0 text-base-100;
+  @apply bg-transparent p-0 text-base-50;
 }
 
 .prose-docs a {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ComponentType } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -108,21 +109,6 @@ const NAV_ICONS: Record<NavIcon, IconComponent> = {
   coins: Coins,
 };
 
-function GateMark() {
-  return (
-    <svg aria-hidden viewBox="0 0 36 36" className="size-9 shrink-0">
-      <path
-        d="M4 7h8l6 7 6-7h8M4 29h8l6-7 6 7h8"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-      <circle cx="18" cy="18" r="4" fill="none" stroke="currentColor" strokeWidth="2" />
-      <path d="m16.4 18 1.1 1.1 2.3-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -162,21 +148,29 @@ export function Sidebar() {
       )}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-base-200 bg-base-800 text-ink-700 transition-transform lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-sidebar-border bg-sidebar-bg text-sidebar-text transition-transform lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-[68px] items-center gap-3 border-b border-base-200 px-4 text-accent-600">
-          <GateMark />
+        <div className="flex h-[68px] items-center gap-3 border-b border-sidebar-border px-4">
+          <Image
+            src="/raicentral-logo.png"
+            alt=""
+            width={36}
+            height={36}
+            className="size-9 shrink-0 rounded-md"
+            priority
+          />
           <div>
-            <div className="text-base font-bold text-ink-900">RaiCentral</div>
-            <div className="text-[9px] font-semibold tracking-wide text-ink-400">
-              AI CONTROL & ASSURANCE
+            <div className="text-base font-semibold tracking-tight text-sidebar-strong">
+              <span>Rai</span>
+              <span className="text-accent-500">Central</span>
             </div>
+            <div className="rai-eyebrow text-sidebar-text">AI control & assurance</div>
           </div>
           <button
             type="button"
-            className="ml-auto text-ink-400 lg:hidden"
+            className="ml-auto text-sidebar-text hover:text-sidebar-strong lg:hidden"
             onClick={() => setOpen(false)}
             aria-label="Close navigation"
           >
@@ -196,7 +190,7 @@ export function Sidebar() {
 
             return (
               <div className="mb-5" key={section.label}>
-                <p className="px-2 pb-2 text-[9px] font-semibold uppercase tracking-wide text-ink-400">
+                <p className="rai-eyebrow px-2 pb-2 text-sidebar-text">
                   {section.label}
                 </p>
                 {visibleItems.map((item) => {
@@ -205,8 +199,8 @@ export function Sidebar() {
                   const className = cn(
                     "mb-0.5 flex h-9 items-center gap-2 rounded-md border-l-2 px-3 text-sm transition-colors",
                     active
-                      ? "border-accent-600 bg-base-700 font-medium text-ink-900"
-                      : "border-transparent text-ink-500 hover:bg-base-700 hover:text-ink-900",
+                      ? "border-accent-500 bg-sidebar-active font-medium text-sidebar-strong"
+                      : "border-transparent text-sidebar-text hover:bg-sidebar-hover hover:text-sidebar-strong",
                   );
                   return (
                     <Link
@@ -225,7 +219,7 @@ export function Sidebar() {
             );
           })}
         </nav>
-        <div className="border-t border-base-200 p-3 text-xs text-ink-400">
+        <div className="border-t border-sidebar-border p-3 text-xs text-sidebar-text">
           <div className="flex items-center gap-2">
             <span className="size-2 rounded-full bg-accent-500" />
             Control plane operational

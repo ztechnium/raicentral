@@ -53,9 +53,26 @@ const config: Config = {
         primary: mix("--accent-600"),
         "muted-foreground": mix("--ink-500"),
         destructive: mix("--danger-600"),
+        brand: {
+          navy: mix("--brand-navy"),
+          teal: mix("--brand-teal"),
+        },
+        surface: {
+          DEFAULT: mix("--surface"),
+          muted: mix("--surface-muted"),
+          hover: mix("--surface-hover"),
+        },
+        sidebar: {
+          bg: mix("--sidebar-bg"),
+          border: mix("--sidebar-border"),
+          text: mix("--sidebar-text"),
+          strong: mix("--sidebar-text-strong"),
+          hover: mix("--sidebar-hover"),
+          active: mix("--sidebar-active"),
+        },
       },
       boxShadow: {
-        panel: "0 10px 30px rgba(15, 20, 25, 0.08)",
+        panel: "var(--shadow-panel)",
       },
       fontFamily: {
         sans: ["IBM Plex Sans", "ui-sans-serif", "system-ui"],
