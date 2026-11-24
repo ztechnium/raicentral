@@ -197,6 +197,26 @@ class AlertChannelIntegration(Base):
     )
 
 
+class SearchBackendIntegration(Base):
+    """Elasticsearch (or future) search backend for runtime log sync and queries."""
+
+    __tablename__ = "search_backend_integrations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    provider = Column(String, nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    sync_logs = Column(Boolean, nullable=False, default=True)
+    use_for_search = Column(Boolean, nullable=False, default=True)
+    status = Column(String, nullable=False, default="ACTIVE", index=True)
+    config = Column(JSON, nullable=False)
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
 

@@ -78,6 +78,19 @@ class AuditSearchService:
         limit: int = 50,
     ) -> dict[str, Any]:
         self._validate_range(filters.date_from, filters.date_to)
+        from rai_gateway.search_integrations.query import ElasticsearchAuditSearch
+        from rai_gateway.search_integrations.service import SearchIntegrationService
+
+        integration = SearchIntegrationService(self._db).get_for_search()
+        if integration is not None:
+            es_result = ElasticsearchAuditSearch(self._db, integration).search(
+                filters=filters,
+                cursor=cursor,
+                limit=limit,
+            )
+            if es_result is not None:
+                return es_result
+
         page_size = max(1, min(limit, 100))
 
         cursor_ts: datetime | None = None

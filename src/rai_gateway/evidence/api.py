@@ -52,6 +52,7 @@ def list_trajectories(
     completeness: str | None = Query(default=None, description="e.g. lt:80"),
     tokens: str | None = Query(default=None, description="e.g. gt:1000"),
     cost: str | None = Query(default=None, description="e.g. lte:0.5"),
+    q: str | None = Query(default=None, description="Full-text search (Elasticsearch)"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):
@@ -67,6 +68,24 @@ def list_trajectories(
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    trajectory_ids: tuple[UUID, ...] | None = None
+    search_backend: str | None = None
+    if q and q.strip():
+        from rai_gateway.search_integrations.query import search_trajectory_ids
+
+        matched = search_trajectory_ids(db, query_text=q, limit=500)
+        if matched is not None:
+            search_backend = "elasticsearch"
+            if not matched:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "metrics": TrajectoryService(db).trajectory_metrics(),
+                    "search_backend": search_backend,
+                }
+            trajectory_ids = tuple(matched)
     filters = dict(
         ai_system_id=ai_system_id,
         agent_id=agent_id,
@@ -81,6 +100,8 @@ def list_trajectories(
         delegator_id=delegator_id,
         **numeric,
     )
+    if trajectory_ids is not None:
+        filters["trajectory_ids"] = trajectory_ids
     svc = TrajectoryService(db)
     rows = svc.list_trajectories(limit=limit, offset=offset, **filters)
     total = svc.count_trajectories(**filters)
@@ -92,13 +113,16 @@ def list_trajectories(
     )
     for item in items:
         item["economics"] = economics.get(item["id"])
-    return {
+    response = {
         "items": items,
         "total": total,
         "limit": limit,
         "offset": offset,
         "metrics": svc.trajectory_metrics(),
     }
+    if search_backend:
+        response["search_backend"] = search_backend
+    return response
 
 
 @router.get("/observed-prompts")

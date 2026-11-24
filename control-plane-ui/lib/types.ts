@@ -3338,6 +3338,27 @@ export interface AlertIntegrationSummary {
   updated_at?: string | null;
 }
 
+export interface SearchIntegrationProvider {
+  id: string;
+  label: string;
+  description?: string;
+  config_fields: Array<{ key: string; label: string; type: string; placeholder?: string }>;
+}
+
+export interface SearchIntegrationSummary {
+  id: string;
+  name: string;
+  provider: string;
+  provider_label: string;
+  enabled: boolean;
+  sync_logs: boolean;
+  use_for_search: boolean;
+  status: string;
+  config: Record<string, string>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface WebhookDeliverySummary {
   id: string;
   endpoint_id: string;

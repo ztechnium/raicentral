@@ -129,8 +129,14 @@ class RuntimeEnforcementRepository:
         receipt.decision_finalized_at = _utcnow()
         self._db.flush()
         from rai_gateway.events.outbox import enqueue_enforcement_alert
+        from rai_gateway.search_integrations.indexer import index_enforcement_receipt
 
         enqueue_enforcement_alert(self._db, receipt)
+        index_enforcement_receipt(
+            self._db,
+            receipt=receipt,
+            include_execution=bool(receipt.execution_attempted),
+        )
         return receipt
 
     def compute_decision_digest(
@@ -197,6 +203,13 @@ class RuntimeEnforcementRepository:
         }:
             receipt.completed_at = _utcnow()
         self._db.flush()
+        from rai_gateway.search_integrations.indexer import index_enforcement_receipt
+
+        index_enforcement_receipt(
+            self._db,
+            receipt=receipt,
+            include_execution=True,
+        )
 
     def update_receipt(self, receipt: RuntimeEnforcementReceipt, **fields: Any) -> None:
         """Legacy updater — blocks finalized decision field mutation."""
