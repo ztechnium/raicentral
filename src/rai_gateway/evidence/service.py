@@ -222,6 +222,9 @@ class TrajectoryService:
             trajectory_semantics="TURN",
         )
         self._project_conversation(trajectory)
+        from rai_gateway.search_integrations.indexer import index_trajectory_summary
+
+        index_trajectory_summary(self._db, trajectory=trajectory)
         return trajectory
 
     def _project_conversation(self, trajectory: RuntimeTrajectory) -> None:
@@ -311,6 +314,13 @@ class TrajectoryService:
                 ),
                 source_event_ids=[str(event.id)],
             )
+        from rai_gateway.search_integrations.indexer import (
+            index_evidence_event,
+            index_trajectory_summary,
+        )
+
+        index_evidence_event(self._db, event=event, trajectory=trajectory)
+        index_trajectory_summary(self._db, trajectory=trajectory)
         return event, True
 
     def ensure_relation(

@@ -96,6 +96,7 @@ export default function TrajectoriesPage() {
   const [applied, setApplied] = useState(EMPTY_FILTERS);
   const [draftConditions, setDraftConditions] = useState<Condition[]>([]);
   const [appliedConditions, setAppliedConditions] = useState<Condition[]>([]);
+  const [searchBackend, setSearchBackend] = useState<string | null>(null);
   const [systems, setSystems] = useState<AISystemSummary[]>([]);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -148,19 +149,23 @@ export default function TrajectoriesPage() {
             ? new Date(`${applied.dateTo}T23:59:59.999`).toISOString()
             : undefined,
           ...Object.fromEntries(appliedConditions.map((c) => [c.metric, `${c.op}:${c.value}`])),
+          q: search.trim() || undefined,
           limit: PAGE_SIZE,
           offset: pageIndex * PAGE_SIZE,
         });
         setItems(res.data.items ?? []);
         setTotal(res.data.total ?? res.data.items?.length ?? 0);
         if (res.data.metrics) setMetrics(res.data.metrics);
+        setSearchBackend(
+          (res.data as { search_backend?: string }).search_backend ?? null,
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load trajectories");
       } finally {
         setLoading(false);
       }
     },
-    [statusFilter, applied, appliedConditions],
+    [statusFilter, applied, appliedConditions, search],
   );
 
   useEffect(() => {
@@ -169,6 +174,7 @@ export default function TrajectoriesPage() {
 
   const filtered = useMemo(() => {
     if (!search.trim()) return items;
+    if (searchBackend === "elasticsearch") return items;
     const q = search.toLowerCase();
     return items.filter(
       (t) =>
@@ -181,7 +187,7 @@ export default function TrajectoriesPage() {
         t.client_type?.toLowerCase().includes(q) ||
         t.id.toLowerCase().includes(q),
     );
-  }, [items, search]);
+  }, [items, search, searchBackend]);
 
   const stats = useMemo(
     () => ({

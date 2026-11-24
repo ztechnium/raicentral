@@ -11,14 +11,21 @@ import { Input } from "@/components/ui/input";
 import {
   createAlertIntegration,
   deleteAlertIntegration,
+  deleteSearchIntegration,
   getAlertEventGroups,
   getAlertIntegrationCatalog,
+  getSearchIntegrationCatalog,
   listAlertIntegrations,
+  listSearchIntegrations,
+  testSearchIntegration,
+  upsertElasticsearchIntegration,
 } from "@/lib/api";
 import type {
   AlertEventGroup,
   AlertIntegrationProvider,
   AlertIntegrationSummary,
+  SearchIntegrationProvider,
+  SearchIntegrationSummary,
 } from "@/lib/types";
 
 const PROVIDER_ORDER = [
@@ -58,6 +65,13 @@ export default function IntegrationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [searchItems, setSearchItems] = useState<SearchIntegrationSummary[]>([]);
+  const [searchProviders, setSearchProviders] = useState<SearchIntegrationProvider[]>([]);
+  const [esConfig, setEsConfig] = useState<Record<string, string>>({});
+  const [esEnabled, setEsEnabled] = useState(true);
+  const [esSync, setEsSync] = useState(true);
+  const [esUseSearch, setEsUseSearch] = useState(true);
+  const [esMessage, setEsMessage] = useState<string | null>(null);
 
   const providerMeta = useMemo(
     () => providers.find((p) => p.id === provider),
@@ -75,11 +89,27 @@ export default function IntegrationsPage() {
       listAlertIntegrations(),
       getAlertIntegrationCatalog(),
       getAlertEventGroups(),
+      listSearchIntegrations(),
+      getSearchIntegrationCatalog(),
     ])
-      .then(([list, cat, ev]) => {
+      .then(([list, cat, ev, searchList, searchCat]) => {
         setItems(list.data.items ?? []);
         setProviders(cat.data.providers ?? []);
         setGroups(ev.data.groups ?? []);
+        const sItems = searchList.data.items ?? [];
+        setSearchItems(sItems);
+        setSearchProviders(searchCat.data.providers ?? []);
+        const es = sItems.find((i) => i.provider === "elasticsearch");
+        if (es) {
+          setEsEnabled(es.enabled);
+          setEsSync(es.sync_logs);
+          setEsUseSearch(es.use_for_search);
+          setEsConfig({
+            url: es.config.url ?? "",
+            index_prefix: es.config.index_prefix ?? "rai",
+            verify_tls: String(es.config.verify_tls ?? "true"),
+          });
+        }
       })
       .catch((err: Error) => setError(err.message));
   }, []);
@@ -143,11 +173,71 @@ export default function IntegrationsPage() {
     }
   };
 
+  const esProvider = searchProviders.find((p) => p.id === "elasticsearch");
+
+  const onSaveElasticsearch = async () => {
+    setSaving(true);
+    setError(null);
+    setEsMessage(null);
+    try {
+      await upsertElasticsearchIntegration({
+        name: "Elasticsearch",
+        config: esConfig,
+        enabled: esEnabled,
+        sync_logs: esSync,
+        use_for_search: esUseSearch,
+      });
+      setEsMessage("Elasticsearch integration saved.");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onTestElasticsearch = async () => {
+    const row = searchItems.find((i) => i.provider === "elasticsearch");
+    if (!row) {
+      setError("Save Elasticsearch settings before testing the connection.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setEsMessage(null);
+    try {
+      const res = await testSearchIntegration(row.id);
+      setEsMessage(
+        `Connected to cluster “${res.data.cluster_name ?? "unknown"}” (indexes: ${res.data.audit_index}, ${res.data.trajectory_index}).`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connection test failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onRemoveElasticsearch = async () => {
+    const row = searchItems.find((i) => i.provider === "elasticsearch");
+    if (!row) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await deleteSearchIntegration(row.id);
+      setEsConfig({});
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <SectionHeader
         title="Integrations"
-        subtitle="Send governance findings and enforcement signals to Slack, Teams, chat apps, and work trackers."
+        subtitle="Alert channels, Elasticsearch log sync, and outbound work trackers."
         actions={
           <div className="flex flex-wrap gap-3 text-sm">
             <Link href="/settings/webhooks" className="text-primary hover:underline">
@@ -244,7 +334,80 @@ export default function IntegrationsPage() {
         </div>
       </Panel>
 
-      <Panel title="Active integrations">
+      <Panel title="Elasticsearch — runtime log search">
+        <p className="mb-4 text-sm text-muted-foreground">
+          When enabled, runtime audit records and trajectories are indexed to Elasticsearch.
+          Audit Explorer and trajectory search use Elasticsearch queries instead of PostgreSQL
+          scans.
+        </p>
+        {esMessage ? (
+          <div className="mb-4 rounded-xl border border-base-200 bg-base-50 p-4 text-sm">
+            {esMessage}
+          </div>
+        ) : null}
+        <div className="space-y-4">
+          {(esProvider?.config_fields ?? []).map((field) => (
+            <FormField key={field.key} label={field.label}>
+              <Input
+                type={field.type === "secret" ? "password" : "text"}
+                placeholder={field.placeholder}
+                value={esConfig[field.key] ?? ""}
+                onChange={(e) => setEsConfig((c) => ({ ...c, [field.key]: e.target.value }))}
+                autoComplete="off"
+              />
+            </FormField>
+          ))}
+          <div className="flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={esEnabled}
+                onChange={(e) => setEsEnabled(e.target.checked)}
+              />
+              Integration active
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={esSync}
+                onChange={(e) => setEsSync(e.target.checked)}
+              />
+              Sync logs to Elasticsearch
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={esUseSearch}
+                onChange={(e) => setEsUseSearch(e.target.checked)}
+              />
+              Query Audit Explorer / trajectories from Elasticsearch
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={saving} onClick={() => void onSaveElasticsearch()}>
+              Save Elasticsearch
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={saving}
+              onClick={() => void onTestElasticsearch()}
+            >
+              Test connection
+            </Button>
+            {searchItems.some((i) => i.provider === "elasticsearch") ? (
+              <Button
+                variant="secondary"
+                disabled={saving}
+                onClick={() => void onRemoveElasticsearch()}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Active alert integrations">
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground">No integrations configured yet.</p>
         ) : (

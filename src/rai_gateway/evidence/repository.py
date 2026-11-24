@@ -62,8 +62,11 @@ def _apply_trajectory_filters(
     completeness: tuple[str, float] | None = None,
     tokens: tuple[str, float] | None = None,
     cost: tuple[str, float] | None = None,
+    trajectory_ids: tuple[UUID, ...] | None = None,
 ):
     T = RuntimeTrajectory
+    if trajectory_ids:
+        query = query.filter(T.id.in_(list(trajectory_ids)))
     if ai_system_id:
         query = query.filter(T.ai_system_id == ai_system_id)
     if agent_id:

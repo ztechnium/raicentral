@@ -1642,6 +1642,7 @@ export function getTrajectories(params?: {
   model?: string;
   department_id?: string;
   delegator_id?: string;
+  q?: string;
   limit?: number;
   offset?: number;
   /** Metric conditions, e.g. `{ tokens: "gt:1000" }`. */
@@ -3393,6 +3394,46 @@ export function updateAlertIntegration(
 
 export function deleteAlertIntegration(integrationId: string) {
   return apiDelete<{ ok: boolean }>(`/v1/productization/alert-integrations/${integrationId}`);
+}
+
+export function getSearchIntegrationCatalog() {
+  return apiGet<{ providers: import("@/lib/types").SearchIntegrationProvider[] }>(
+    "/v1/productization/search-integrations/catalog",
+  );
+}
+
+export function listSearchIntegrations() {
+  return apiGet<{ items: import("@/lib/types").SearchIntegrationSummary[] }>(
+    "/v1/productization/search-integrations",
+  );
+}
+
+export function upsertElasticsearchIntegration(payload: {
+  name?: string;
+  config: Record<string, string>;
+  enabled?: boolean;
+  sync_logs?: boolean;
+  use_for_search?: boolean;
+}) {
+  return apiPut<{ integration: import("@/lib/types").SearchIntegrationSummary }>(
+    "/v1/productization/search-integrations/elasticsearch",
+    payload,
+  );
+}
+
+export function testSearchIntegration(integrationId: string) {
+  return apiPost<{
+    ok: boolean;
+    cluster_name?: string;
+    audit_index?: string;
+    trajectory_index?: string;
+  }>(`/v1/productization/search-integrations/${integrationId}/test`, {});
+}
+
+export function deleteSearchIntegration(integrationId: string) {
+  return apiDelete<{ ok: boolean }>(
+    `/v1/productization/search-integrations/${integrationId}`,
+  );
 }
 
 export function rotateWebhookEndpoint(endpointId: string) {

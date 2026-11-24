@@ -10,15 +10,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import rai_gateway.models.productization  # noqa: F401
+from rai_gateway.alert_integrations import AlertIntegrationService
 from rai_gateway.core.authorization import require_permission
 from rai_gateway.core.database import get_db
 from rai_gateway.core.tenant_context import TenantContext
+from rai_gateway.events.alert_catalog import ALERT_EVENT_GROUPS
 from rai_gateway.sdk.errors import SdkError
 from rai_gateway.sdk.jobs import JobQueue
 from rai_gateway.sdk.service import SdkService
-from rai_gateway.alert_integrations import AlertIntegrationService
-from rai_gateway.events.alert_catalog import ALERT_EVENT_GROUPS
 from rai_gateway.sdk.webhooks import WebhookService
+from rai_gateway.search_integrations import SearchIntegrationService
 
 router = APIRouter(prefix="/sdk/v1", tags=["sdk-v1"])
 admin_router = APIRouter(
@@ -191,6 +192,14 @@ class AlertIntegrationUpdateBody(BaseModel):
     config: dict[str, Any] | None = None
     custom_headers: dict[str, str] | None = None
     enabled: bool | None = None
+
+
+class SearchIntegrationUpsertBody(BaseModel):
+    name: str = "Elasticsearch"
+    config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    sync_logs: bool = True
+    use_for_search: bool = True
 
 
 class EnqueueJobBody(BaseModel):
@@ -842,6 +851,69 @@ def delete_alert_integration(
 ):
     try:
         AlertIntegrationService(db).delete_integration(integration_id)
+        db.commit()
+        return {"ok": True}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.get("/search-integrations/catalog")
+def search_integration_catalog(
+    _tenant: TenantContext = Depends(require_permission("sdk:read")),
+):
+    return {"providers": SearchIntegrationService.catalog()}
+
+
+@admin_router.get("/search-integrations")
+def list_search_integrations(
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:read")),
+):
+    return {"items": SearchIntegrationService(db).list_integrations()}
+
+
+@admin_router.put("/search-integrations/elasticsearch")
+def upsert_elasticsearch_integration(
+    body: SearchIntegrationUpsertBody,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        item = SearchIntegrationService(db).upsert_elasticsearch(
+            name=body.name,
+            config=body.config,
+            enabled=body.enabled,
+            sync_logs=body.sync_logs,
+            use_for_search=body.use_for_search,
+            created_by=tenant.user_id,
+        )
+        db.commit()
+        return {"integration": item}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.post("/search-integrations/{integration_id}/test")
+def test_search_integration(
+    integration_id: UUID,
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        result = SearchIntegrationService(db).test_connection(integration_id)
+        return result
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
+
+
+@admin_router.delete("/search-integrations/{integration_id}")
+def delete_search_integration(
+    integration_id: UUID,
+    db: Session = Depends(get_db),
+    _tenant: TenantContext = Depends(require_permission("sdk:manage")),
+):
+    try:
+        SearchIntegrationService(db).delete_integration(integration_id)
         db.commit()
         return {"ok": True}
     except SdkError as exc:
