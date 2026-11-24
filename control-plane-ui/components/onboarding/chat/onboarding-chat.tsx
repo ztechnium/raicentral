@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { getConversation, saveConversation } from "@/lib/assistant-conversations";
+import { Markdown } from "@/components/onboarding/chat/markdown";
 import { ProposalCard } from "@/components/onboarding/chat/proposal-card";
 import { ResultsCard } from "@/components/onboarding/chat/results-card";
 import {
@@ -15,12 +17,9 @@ import {
   IntakeApiError,
   createSession,
   getChangeSet,
-  getSession,
   listChangeSets,
-  listSessions,
   newIdempotencyKey,
   type ChangeSetSummary,
-  type SessionDetail,
 } from "@/lib/onboarding-api";
 import {
   ChatPipelineError,
@@ -29,6 +28,8 @@ import {
   applyReview,
   initialSteps,
   isApplyConfirmation,
+  isApplyIntent,
+  wantsReanalysis,
   type OnboardingResults,
   type StepId,
   type StepState,
@@ -52,35 +53,31 @@ const WELCOME =
   "Ask me anything about your AI systems, agents, rules, budgets, risks or audit trail, or tell me what to change. To onboard from documents, attach policies or inventories with the + button and I will analyze them. I always show you a change before making it; say “apply” to confirm.";
 const WELCOME_MESSAGE: ChatMessage = { id: "welcome", role: "assistant", text: WELCOME };
 
-// One conversation per browser. Server state (sessions, change sets) is the source of truth.
-const HISTORY_KEY = "rai-assistant-chat";
 const HISTORY_LIMIT = 100;
 
-function loadHistory(): ChatMessage[] {
-  try {
-    const raw = window.localStorage.getItem(HISTORY_KEY);
-    const parsed = raw ? (JSON.parse(raw) as ChatMessage[]) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(messages: ChatMessage[]) {
-  // Progress checklists are transient; a reload mid-run would show them frozen.
-  const keep = messages.filter((m) => m.id !== "welcome" && !m.steps);
-  try {
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(keep.slice(-HISTORY_LIMIT)));
-  } catch {
-    // storage unavailable or full: the chat still works, it just won't survive a refresh
-  }
+/** Progress checklists are transient; a reload mid-run would show them frozen. */
+function persistable(messages: ChatMessage[]): ChatMessage[] {
+  return messages.filter((m) => m.id !== "welcome" && !m.steps).slice(-HISTORY_LIMIT);
 }
 
 const STEP_ORDER = Object.keys(STEP_LABELS) as StepId[];
 let counter = 0;
 const nextId = () => `m${Date.now()}-${counter++}`;
 
-export function OnboardingChat() {
+export function OnboardingChat({
+  conversationId,
+  variant = "page",
+  onClose,
+  onNewChat,
+}: {
+  /** Which stored conversation this chat shows. Remount (key) it to switch. */
+  conversationId: string;
+  /** "widget" is the compact floating panel; "page" is the full-screen assistant. */
+  variant?: "page" | "widget";
+  onClose?: () => void;
+  onNewChat: () => void;
+}) {
+  const widget = variant === "widget";
   const access = useIntakeAccess();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
@@ -105,45 +102,40 @@ export function OnboardingChat() {
     return id;
   }, []);
 
-  // Restore the conversation, the open onboarding session and its reviewed change set.
+  // Restore this conversation and, if it saved files, its reviewed change set.
   useEffect(() => {
-    const stored = loadHistory();
-    if (stored.length) setMessages([WELCOME_MESSAGE, ...stored]);
+    const stored = getConversation(conversationId);
+    if (stored?.messages.length) setMessages([WELCOME_MESSAGE, ...(stored.messages as ChatMessage[])]);
+    setSessionId(stored?.sessionId ?? null);
     setHydrated(true);
-  }, []);
+  }, [conversationId]);
 
   useEffect(() => {
-    if (!access.canManage) return;
+    if (!access.canManage || !sessionId || pendingChangeSet.current) return;
     let cancelled = false;
     (async () => {
       try {
-        const page = await listSessions({ limit: 1 });
-        const latest = page.items.find((s) => s.lifecycle === "OPEN");
-        if (!latest || cancelled) return;
-        const detail: SessionDetail = await getSession(latest.id);
-        if (cancelled) return;
-        setSessionId(detail.id);
-        const sets = await listChangeSets(detail.id);
+        const sets = await listChangeSets(sessionId);
         const prepared = sets.items.find((c) => c.status === "PREPARED");
         if (prepared && !cancelled) {
-          pendingChangeSet.current = await getChangeSet(detail.id, prepared.id);
+          pendingChangeSet.current = await getChangeSet(sessionId, prepared.id);
         }
       } catch {
-        // No resumable onboarding session; one is created when files are attached.
+        // Nothing to resume; a change set is prepared again when files are analyzed.
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [access.canManage]);
+  }, [access.canManage, sessionId]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
   useEffect(() => {
-    if (hydrated) saveHistory(messages);
-  }, [messages, hydrated]);
+    if (hydrated) saveConversation(conversationId, { messages: persistable(messages), sessionId });
+  }, [messages, sessionId, hydrated, conversationId]);
 
   function addFiles(files: File[]) {
     if (files.length) setPending((p) => [...p, ...files]);
@@ -176,29 +168,43 @@ export function OnboardingChat() {
         await runAnalysis(text, files);
         return;
       }
-      if (isApplyConfirmation(text)) {
+      const waiting = Boolean(pendingProposal.current || pendingChangeSet.current);
+      if (isApplyConfirmation(text) || (waiting && isApplyIntent(text))) {
         if (pendingProposal.current) await runProposal(pendingProposal.current);
         else if (pendingChangeSet.current) await runApply(pendingChangeSet.current);
         else push({ role: "assistant", text: "There is nothing waiting for confirmation." });
         return;
       }
       pendingProposal.current = null; // an unconfirmed proposal expires with the next message
-      await runAssistant([...history, { role: "user", content: text }]);
+      await runAssistant([...history, { role: "user", content: text }], text);
     } finally {
       setBusy(false);
     }
   }
 
-  async function runAssistant(turns: { role: "user" | "assistant"; content: string }[]) {
+  async function runAssistant(
+    turns: { role: "user" | "assistant"; content: string }[],
+    userText: string,
+  ) {
     try {
       const answer = await chatWithAssistant(turns);
       if (answer.pending_action) pendingProposal.current = answer.pending_action;
+      // The analysis is slow and already done once. Re-running it is only for an explicit request;
+      // otherwise a reviewed change that is waiting is what the person is talking about.
+      const rerun = answer.ui_action === "run_onboarding";
+      if (rerun && pendingChangeSet.current && !wantsReanalysis(userText)) {
+        push({
+          role: "assistant",
+          text: "The files are already analyzed and the review is waiting. Say **apply** to register it, tell me what to change, or ask me to re-analyze the files.",
+        });
+        return;
+      }
       push({
         role: "assistant",
         text: answer.reply || undefined,
         proposal: answer.pending_action ?? undefined,
       });
-      if (answer.ui_action === "run_onboarding") {
+      if (rerun) {
         if (!sessionId) {
           push({ role: "assistant", text: "No files are saved yet. Attach them with the + button." });
         } else {
@@ -229,19 +235,33 @@ export function OnboardingChat() {
   async function runAnalysis(text: string, files: File[]) {
     const progressId = push({ role: "assistant", steps: initialSteps() });
     try {
-      const id = await ensureSession();
+      let id = await ensureSession();
       pendingChangeSet.current = null;
-      const outcome = await analyzeMessage({
-        sessionId: id,
-        text,
-        files,
-        onStep: (step, status) =>
-          setMessages((all) =>
-            all.map((m) =>
-              m.id === progressId ? { ...m, steps: { ...(m.steps as StepState), [step]: status } } : m,
+      const run = (sid: string) =>
+        analyzeMessage({
+          sessionId: sid,
+          text,
+          files,
+          onStep: (step, status) =>
+            setMessages((all) =>
+              all.map((m) =>
+                m.id === progressId ? { ...m, steps: { ...(m.steps as StepState), [step]: status } } : m,
+              ),
             ),
-          ),
-      });
+        });
+      let outcome;
+      try {
+        outcome = await run(id);
+      } catch (error) {
+        if (!(error instanceof ChatPipelineError) || !/limit of \d+ files/i.test(error.message)) {
+          throw error;
+        }
+        // The saved session is full. Move to a fresh one and retry once.
+        const created = await createSession("AI onboarding chat", newIdempotencyKey());
+        setSessionId(created.id);
+        id = created.id;
+        outcome = await run(id);
+      }
       pendingChangeSet.current = outcome.changeSet?.status === "PREPARED" ? outcome.changeSet : null;
       const attention = outcome.attention.length
         ? ` Note: ${outcome.attention.map((a) => a.label).join(", ")} could only be partly read.`
@@ -276,16 +296,6 @@ export function OnboardingChat() {
     }
   }
 
-  function clearConversation() {
-    setMessages([WELCOME_MESSAGE]);
-    pendingProposal.current = null;
-    try {
-      window.localStorage.removeItem(HISTORY_KEY);
-    } catch {
-      // ignore
-    }
-  }
-
   if (!access.canRead) {
     return <p className="text-sm text-ink-600">You do not have access to the assistant.</p>;
   }
@@ -294,7 +304,7 @@ export function OnboardingChat() {
 
   return (
     <div
-      className="mx-auto flex h-[calc(100vh-9rem)] min-h-[28rem] w-full max-w-3xl flex-col"
+      className="flex h-full min-h-0 w-full flex-col"
       data-testid="onboarding-chat"
       onDragOver={(e) => {
         e.preventDefault();
@@ -307,52 +317,71 @@ export function OnboardingChat() {
         if (!composerDisabled) addFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      <header className="flex items-center justify-between gap-3 pb-3">
-        <div>
-          <h1 className="text-lg font-semibold text-ink-900">RAI assistant</h1>
-          <p className="text-xs text-ink-500">
-            Ask about your AI estate, request changes, or attach documents to onboard.
+      <header className={`flex items-center justify-between gap-3 border-b border-base-200 ${widget ? "px-4 py-3" : "px-6 py-3"}`}>
+        <div className="min-w-0">
+          <h1 className="text-base font-semibold text-ink-900">RAI assistant</h1>
+          <p className="truncate text-xs text-ink-500">
+            Ask about your AI estate, usage and cost, or request changes.
           </p>
         </div>
-        <div className="flex gap-1">
-          <Button variant="ghost" size="sm" disabled={busy} onClick={clearConversation}>
-            Clear chat
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onNewChat}>
+            New chat
           </Button>
-          <Link href="/app/onboarding/ai-setup">
-            <Button variant="ghost" size="sm">
-              AI connection
-            </Button>
-          </Link>
-          {sessionId && (
-            <Link href={`/app/onboarding/sessions/${sessionId}`}>
-              <Button variant="ghost" size="sm">
-                Details
-              </Button>
-            </Link>
+          {widget &&
+            (busy ? (
+              <span
+                title="Wait for the answer before opening full screen"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-ink-500 opacity-50"
+              >
+                <ExpandIcon />
+              </span>
+            ) : (
+              <Link
+                href="/assistant"
+                aria-label="Open full-screen assistant"
+                title="Open full screen"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-ink-600 hover:bg-base-100"
+              >
+                <ExpandIcon />
+              </Link>
+            ))}
+          {widget && onClose && (
+            <button
+              type="button"
+              aria-label="Close assistant"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-ink-600 hover:bg-base-100"
+            >
+              ×
+            </button>
           )}
         </div>
       </header>
 
       <div
-        className="flex-1 space-y-4 overflow-y-auto rounded-xl border border-base-200 bg-base-50 p-4"
+        className={`min-h-0 flex-1 overflow-y-auto bg-base-50 ${widget ? "p-4" : "px-6 py-5"}`}
         role="log"
         aria-live="polite"
         aria-label="Conversation"
       >
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
-        ))}
-        <div ref={bottom} />
+        <div className={`space-y-4 ${widget ? "" : "mx-auto max-w-3xl"}`}>
+          {messages.map((m) => (
+            <MessageBubble key={m.id} message={m} />
+          ))}
+          {busy && <TypingDots />}
+          <div ref={bottom} />
+        </div>
       </div>
 
       {!access.canManage && (
-        <p className="pt-2 text-xs text-ink-500">
+        <p className="px-4 pt-2 text-xs text-ink-500">
           You can view this page, but chatting needs manage and source permissions.
         </p>
       )}
 
       <div
-        className={`mt-3 rounded-2xl border bg-base-50 p-2 ${dragging ? "border-accent-600" : "border-base-200"}`}
+        className={`rounded-2xl border bg-base-50 p-2 ${widget ? "m-3" : "mx-auto mb-4 mt-2 w-[calc(100%-3rem)] max-w-3xl"} ${dragging ? "border-accent-600" : "border-base-200"}`}
       >
         {pending.length > 0 && (
           <ul className="flex flex-wrap gap-2 px-1 pb-2" aria-label="Attached files">
@@ -394,7 +423,7 @@ export function OnboardingChat() {
             title="Attach PDF, DOCX, XLSX, CSV, TXT or Markdown to onboard from documents"
             disabled={composerDisabled || busy}
             onClick={() => fileInput.current?.click()}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg text-ink-600 hover:bg-base-700 disabled:opacity-50"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg text-ink-600 hover:bg-base-100 disabled:opacity-50"
           >
             +
           </button>
@@ -450,15 +479,20 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[92%] space-y-2 rounded-2xl px-4 py-2.5 text-sm ${
+        className={`min-w-0 space-y-2 rounded-2xl px-4 py-2.5 text-sm ${
           isUser
-            ? "bg-accent-600 text-white"
+            ? "max-w-[85%] rounded-br-md bg-accent-600 text-white"
             : message.error
-              ? "border border-danger-600 text-ink-900"
-              : "border border-base-200 text-ink-900"
+              ? "max-w-full rounded-bl-md border border-danger-600 text-ink-900"
+              : "max-w-full rounded-bl-md border border-base-200 bg-base-100/40 text-ink-900"
         }`}
       >
-        {message.text && <p className="whitespace-pre-wrap">{message.text}</p>}
+        {message.text &&
+          (isUser ? (
+            <p className="whitespace-pre-wrap">{message.text}</p>
+          ) : (
+            <Markdown text={message.text} />
+          ))}
         {message.files && message.files.length > 0 && (
           <ul className="space-y-1 text-xs opacity-90">
             {message.files.map((f, i) => (
@@ -475,6 +509,30 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {(message.proposal || message.executed) && (
           <ProposalCard proposal={message.proposal} executed={message.executed} />
         )}
+      </div>
+    </div>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+    </svg>
+  );
+}
+
+function TypingDots() {
+  return (
+    <div className="flex justify-start" aria-label="The assistant is working">
+      <div className="flex gap-1 rounded-2xl rounded-bl-md border border-base-200 px-4 py-3">
+        {[0, 150, 300].map((delay) => (
+          <span
+            key={delay}
+            className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-500"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
       </div>
     </div>
   );

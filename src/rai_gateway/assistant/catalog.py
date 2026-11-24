@@ -37,6 +37,12 @@ class Tool:
 
 _LIST = ("q", "status", "ai_system_id", "agent_id", "limit", "offset", "severity")
 _TIME = ("from_time", "to_time")
+# FinOps/report endpoints default to a recent window when the period is omitted.
+_FINOPS = (
+    "period_start", "period_end", "ai_system_id", "agent_id", "agent_version_id",
+    "provider", "model", "environment", "cost_state", "currency",
+)
+_REPORT = ("ai_system_id", "period_start", "period_end")
 
 
 def _t(name: str, description: str, method: str, path: str, query: tuple[str, ...] = ()) -> Tool:
@@ -90,6 +96,37 @@ TOOLS: tuple[Tool, ...] = (
     _t("monitors_list", "List risk monitors", "GET", "/v1/risk/monitors"),
     _t("monitor_rules_list", "List monitor rules", "GET", "/v1/risk/monitor-rules"),
     _t("signals_list", "List risk signals", "GET", "/v1/risk/signals", _LIST),
+    # FinOps and reports: tokens, calls and cost (USD). Same data as the Reports and FinOps pages.
+    _t(
+        "finops_dashboard",
+        "Total cost, tokens and calls for a period, split billed/metered/estimated",
+        "GET",
+        "/v1/finops/dashboard",
+        _FINOPS,
+    ),
+    _t(
+        "finops_breakdown",
+        "Cost, tokens, calls per dimension (ai_system, agent, model, provider, environment, ...). "
+        "Use dimension=ai_system for per-AI-system usage; sort=cost|tokens|calls|trajectories",
+        "GET",
+        "/v1/finops/breakdown",
+        (*_FINOPS, "dimension", "limit", "offset", "sort", "order", "search"),
+    ),
+    _t("finops_timeseries", "Cost and tokens over time", "GET", "/v1/finops/timeseries", _FINOPS),
+    _t("finops_budgets", "Current-window budget health, headroom and projection", "GET", "/v1/finops/budgets", ("ai_system_id",)),
+    _t(
+        "finops_trajectories",
+        "Top trajectories by known cost and tokens",
+        "GET",
+        "/v1/finops/trajectories",
+        (*_FINOPS, "limit", "offset"),
+    ),
+    _t("trajectory_economics", "Cost and tokens of one trajectory", "GET", "/v1/trajectories/{id}/economics"),
+    _t("reports_summary", "Executive summary report", "GET", "/v1/reports/summary", _REPORT),
+    _t("reports_risk", "Risk report", "GET", "/v1/reports/risk", _REPORT),
+    _t("reports_policies", "Policy report", "GET", "/v1/reports/policies", _REPORT),
+    _t("reports_budgets", "Budget report", "GET", "/v1/reports/budgets", _REPORT),
+    _t("reports_runtime", "Runtime report", "GET", "/v1/reports/runtime", _REPORT),
 )
 
 BY_NAME: dict[str, Tool] = {t.name: t for t in TOOLS}

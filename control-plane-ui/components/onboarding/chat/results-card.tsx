@@ -139,7 +139,7 @@ export function ResultsCard({
       )}
 
       {changeSet && (
-        <p className="rounded-lg bg-base-700 px-3 py-2 text-xs text-ink-800">
+        <p className="rounded-lg border border-base-200 bg-base-100 px-3 py-2 text-xs text-ink-800">
           Pending change: {create} to create · {reuse} already exist · {update} to update
           {(changeSet.skipped?.length ?? 0) > 0 &&
             ` · ${changeSet.skipped?.length} cannot be applied yet`}
@@ -166,7 +166,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="ml-1 rounded bg-base-700 px-1.5 py-0.5 text-[10px] font-normal text-ink-600">
+    <span className="ml-1 rounded border border-base-200 bg-base-100 px-1.5 py-0.5 text-[10px] font-normal text-ink-600">
       {children}
     </span>
   );

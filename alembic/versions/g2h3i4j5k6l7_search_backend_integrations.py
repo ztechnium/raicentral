@@ -1,7 +1,7 @@
 """search backend integrations (Elasticsearch)
 
-Revision ID: a2b3c4d5e6f7
-Revises: z1a2b3c4d5e6
+Revision ID: g2h3i4j5k6l7
+Revises: g0h1i2j3k4l5
 Create Date: 2026-11-24 00:05:00.000000
 
 """
@@ -11,8 +11,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a2b3c4d5e6f7"
-down_revision: Union[str, None] = "z1a2b3c4d5e6"
+revision: str = "g2h3i4j5k6l7"
+down_revision: Union[str, None] = "g0h1i2j3k4l5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

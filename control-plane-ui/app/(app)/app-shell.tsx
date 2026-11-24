@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
+import { AssistantWidget } from "@/components/onboarding/chat/assistant-widget";
 import { AuthProvider } from "@/providers/auth-provider";
+import { OnboardingVisibilityProvider } from "@/providers/onboarding-visibility-provider";
 import { OrganizationProvider } from "@/providers/organization-provider";
 import { PermissionProvider } from "@/providers/permission-provider";
 import { useAuth } from "@/lib/hooks/use-auth";
@@ -62,26 +64,29 @@ function AppShellContent({ children }: { children: ReactNode }) {
 
   return (
     <div className={shellClass}>
-      <Sidebar />
-      <div className="min-h-screen lg:pl-60">
-        <div className="sticky top-0 z-20 border-b border-base-200 bg-base-100/95 px-4 backdrop-blur">
-          <Topbar />
-        </div>
-        {!emailVerified && (
-          <div className="border-b border-warn-600/40 bg-warn-50 px-4 py-3 text-sm text-warn-700">
-            Verify your email to create or change AI systems and other governed resources.{" "}
-            <button
-              type="button"
-              className="font-semibold underline"
-              onClick={() => void onResend()}
-            >
-              Resend verification
-            </button>
-            {resendMsg ? <span className="ml-2">{resendMsg}</span> : null}
+      <OnboardingVisibilityProvider>
+        <Sidebar />
+        <div className="min-h-screen lg:pl-60">
+          <div className="sticky top-0 z-20 border-b border-base-200 bg-base-100/95 px-4 backdrop-blur">
+            <Topbar />
           </div>
-        )}
-        <main className="mx-auto max-w-[1680px] animate-fadeUp p-4 sm:p-6">{children}</main>
-      </div>
+          {!emailVerified && (
+            <div className="border-b border-warn-600/40 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+              Verify your email to create or change AI systems and other governed resources.{" "}
+              <button
+                type="button"
+                className="font-semibold underline"
+                onClick={() => void onResend()}
+              >
+                Resend verification
+              </button>
+              {resendMsg ? <span className="ml-2">{resendMsg}</span> : null}
+            </div>
+          )}
+          <main className="mx-auto max-w-[1680px] animate-fadeUp p-4 sm:p-6">{children}</main>
+        </div>
+        <AssistantWidget />
+      </OnboardingVisibilityProvider>
     </div>
   );
 }

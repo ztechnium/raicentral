@@ -244,6 +244,31 @@ export function isApplyConfirmation(text: string): boolean {
   return APPLY_RE.test(text);
 }
 
+const APPLY_VERBS =
+  "apply|approve|approved|create|register|add|confirm|accept|save|submit|proceed|go ahead|do|run|implement|activate";
+// Words that may follow the verb without adding a new instruction: "apply all these rules now".
+const APPLY_FILLER =
+  "all|this|these|those|that|them|it|the|rules?|polic(?:y|ies)|budgets?|changes?|proposals?|proposed|reviewed|review|above|everything|now|please|for me|and|then|to|my|system|registry|onboarding";
+const APPLY_INTENT_RE = new RegExp(
+  String.raw`^\s*(?:(?:yes|ok|okay|sure|please)[\s,.!]*)?(?:(?:can|could|would|will)(?:\s+(?:you|we|i))?\s+)?(?:please\s+)?(?:let'?s\s+)?(?:${APPLY_VERBS})(?:\s+(?:${APPLY_FILLER}|${APPLY_VERBS}))*[\s?.!]*$`,
+  "i",
+);
+
+/**
+ * While a reviewed change is waiting, "can apply all this rules?" or "approve and create the
+ * policies" mean apply it. Anything that names something specific is still new instructions.
+ */
+export function isApplyIntent(text: string): boolean {
+  return isApplyConfirmation(text) || APPLY_INTENT_RE.test(text);
+}
+
+const REANALYZE_RE = /\b(re-?analy[sz]e|analy[sz]e (?:it |them |the files )?again|re-?run|redo|start over)\b/i;
+
+/** An explicit request to run the document analysis again. */
+export function wantsReanalysis(text: string): boolean {
+  return REANALYZE_RE.test(text);
+}
+
 // --------------------------------------------------------------------- pipeline
 
 const POLL_MS = 1200;

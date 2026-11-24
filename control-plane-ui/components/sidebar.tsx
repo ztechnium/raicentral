@@ -57,6 +57,7 @@ import {
 import { navSections, type NavIcon } from "@/lib/nav";
 import { useAuth, useOrganization, usePermissions } from "@/lib/hooks/use-auth";
 import { tenantHasNavRole } from "@/lib/platform-roles";
+import { useOnboardingVisibility } from "@/providers/onboarding-visibility-provider";
 import { cn } from "@/lib/utils";
 
 type IconComponent = ComponentType<LucideProps>;
@@ -115,6 +116,7 @@ export function Sidebar() {
   const { isPlatformAdmin, organizations } = useAuth();
   const { activeOrganization } = useOrganization();
   const { tenant } = usePermissions();
+  const onboardingVisibility = useOnboardingVisibility();
 
   const userRoles = useMemo(() => {
     if (tenant?.roles?.length) return tenant.roles;
@@ -180,6 +182,12 @@ export function Sidebar() {
         <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">
           {navSections.map((section) => {
             const visibleItems = section.items.filter((item) => {
+              if (
+                item.href === "/app/onboarding" &&
+                onboardingVisibility?.state.status === "complete"
+              ) {
+                return false;
+              }
               if (item.roles && item.roles.length > 0) {
                 if (!item.roles.some((role) => hasRole(role))) return false;
               }

@@ -51,6 +51,7 @@ import {
   type ConnectionDisplay,
 } from "@/lib/onboarding-summary";
 import { markWelcomeDoneLocally } from "@/lib/welcome-gate";
+import { useOnboardingVisibility } from "@/providers/onboarding-visibility-provider";
 import { cn } from "@/lib/utils";
 import type { AISystemSummary, RuntimeIdentitySummary, TrajectorySummary } from "@/lib/types";
 
@@ -431,6 +432,7 @@ function SecretRevealModal({
 
 export function GuidedOnboarding({ canManage }: { canManage: boolean }) {
   const router = useRouter();
+  const onboardingVisibility = useOnboardingVisibility();
   const [checklist, setChecklist] = useState<OnboardingResponse | null>(null);
   const [progress, setProgress] = useState<WizardProgress>({});
   const [step, setStep] = useState(0);
@@ -1039,6 +1041,7 @@ export function GuidedOnboarding({ canManage }: { canManage: boolean }) {
                       risk_tier: form.risk,
                     });
                     created = res.data;
+                    onboardingVisibility?.refresh();
                     setSystems((prev) => [res.data, ...prev]);
                     await chooseSystem(res.data);
                     setStep(1);
@@ -1072,6 +1075,7 @@ export function GuidedOnboarding({ canManage }: { canManage: boolean }) {
                       name: form.name,
                       business_purpose: form.description || undefined,
                     });
+                    onboardingVisibility?.refresh();
                     updateProgress({
                       agentId: res.data.id,
                       agentName: res.data.name,
@@ -1110,6 +1114,7 @@ export function GuidedOnboarding({ canManage }: { canManage: boolean }) {
                           .filter(Boolean),
                       },
                     });
+                    onboardingVisibility?.refresh();
                     updateProgress({
                       versionId: res.data.id,
                       versionNumber: res.data.version_number,
@@ -1176,6 +1181,7 @@ export function GuidedOnboarding({ canManage }: { canManage: boolean }) {
                       environment: form.environment,
                       identity_type: "SERVICE",
                     });
+                    onboardingVisibility?.refresh();
                     setRuntimes((prev) => [res.data, ...prev]);
                     await chooseRuntime(res.data);
                     setStep(4);

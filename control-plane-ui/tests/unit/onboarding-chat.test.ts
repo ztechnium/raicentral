@@ -77,3 +77,30 @@ describe("buildResults", () => {
     expect(results.otherGovernance).toBe(1);
   });
 });
+
+import { isApplyIntent, wantsReanalysis } from "@/lib/onboarding-chat";
+
+describe("isApplyIntent (a reviewed change is waiting)", () => {
+  it.each([
+    "can apply all this rules?",
+    "Please approve and create these policies",
+    "could you apply the changes now",
+    "yes, register everything",
+    "apply",
+  ])("accepts %s", (text) => expect(isApplyIntent(text)).toBe(true));
+
+  it.each([
+    "apply a refund limit of 500 to the support bot",
+    "create a rule that blocks send_email for Sales AI",
+    "what rules did you find?",
+    "do not apply the second rule",
+    "",
+  ])("treats %j as new instructions", (text) => expect(isApplyIntent(text)).toBe(false));
+});
+
+describe("wantsReanalysis", () => {
+  it.each(["re-analyze the files", "analyze it again", "rerun", "start over"])("accepts %s", (t) =>
+    expect(wantsReanalysis(t)).toBe(true),
+  );
+  it("ignores an apply request", () => expect(wantsReanalysis("can apply all this rules?")).toBe(false));
+});
