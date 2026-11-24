@@ -177,3 +177,16 @@ def test_parse_action_tolerates_fences_and_prose() -> None:
     }
     assert engine.parse_action("no json here") is None
     assert BY_NAME["ai_systems_create"].is_write
+
+
+def test_rule_effect_must_be_a_real_policy_effect():
+    import pytest
+
+    from rai_gateway.assistant.engine import ToolArgError, build_request
+
+    tool = BY_NAME["content_rules_create"]
+    args = {"id": "sys-1", "body": {"title": "t", "content": "c", "effect": "BLOCK"}}
+    with pytest.raises(ToolArgError, match="DENY"):
+        build_request(tool, args)
+    args["body"]["effect"] = "DENY"
+    assert build_request(tool, args)[0].endswith("/sys-1/policies/content-rules")

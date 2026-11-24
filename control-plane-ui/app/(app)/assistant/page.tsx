@@ -8,6 +8,7 @@ import {
   deleteConversation,
   ensureActive,
   listConversations,
+  renameConversation,
   setActive,
   startConversation,
   type StoredConversation,
@@ -27,6 +28,8 @@ function when(ts: number): string {
 export default function AssistantPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [history, setHistory] = useState<StoredConversation[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
 
   const refresh = useCallback(() => setHistory(listConversations()), []);
 
@@ -44,6 +47,16 @@ export default function AssistantPage() {
 
   function newChat() {
     setActiveId(startConversation());
+  }
+
+  function startRename(c: StoredConversation) {
+    setEditingId(c.id);
+    setDraftTitle(c.title);
+  }
+
+  function commitRename() {
+    if (editingId) renameConversation(editingId, draftTitle);
+    setEditingId(null);
   }
 
   function remove(id: string) {
@@ -72,25 +85,63 @@ export default function AssistantPage() {
           )}
           {history.map((c) => (
             <li key={c.id} className="group relative">
-              <button
-                type="button"
-                onClick={() => select(c.id)}
-                aria-current={c.id === activeId ? "true" : undefined}
-                className={`w-full rounded-lg px-3 py-2 pr-9 text-left transition ${
-                  c.id === activeId ? "bg-accent-50 text-ink-900" : "text-ink-700 hover:bg-base-100"
-                }`}
-              >
-                <span className="block truncate text-sm font-medium">{c.title}</span>
-                <span className="block text-xs text-ink-500">{when(c.updatedAt)}</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Delete conversation ${c.title}`}
-                onClick={() => remove(c.id)}
-                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full text-ink-500 opacity-0 hover:bg-base-200 hover:text-ink-900 focus:opacity-100 group-hover:opacity-100"
-              >
-                ×
-              </button>
+              {editingId === c.id ? (
+                <div className="rounded-lg bg-accent-50 px-3 py-2">
+                  <input
+                    autoFocus
+                    aria-label="Chat name"
+                    value={draftTitle}
+                    maxLength={80}
+                    onChange={(e) => setDraftTitle(e.target.value)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitRename();
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    className="w-full rounded border border-accent-600 bg-base-50 px-2 py-1 text-sm text-ink-900 outline-none"
+                  />
+                  <span className="block pt-1 text-xs text-ink-500">Enter to save · Esc to cancel</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => select(c.id)}
+                    onDoubleClick={() => startRename(c)}
+                    title="Double-click to rename"
+                    aria-current={c.id === activeId ? "true" : undefined}
+                    className={`w-full rounded-lg px-3 py-2 pr-16 text-left transition ${
+                      c.id === activeId ? "bg-accent-50 text-ink-900" : "text-ink-700 hover:bg-base-100"
+                    }`}
+                  >
+                    <span className="block truncate text-sm font-medium">{c.title}</span>
+                    <span className="block text-xs text-ink-500">{when(c.updatedAt)}</span>
+                  </button>
+                  <div className="absolute right-1.5 top-2 flex opacity-0 focus-within:opacity-100 group-hover:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={`Rename conversation ${c.title}`}
+                      title="Rename"
+                      onClick={() => startRename(c)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-ink-500 hover:bg-base-200 hover:text-ink-900"
+                    >
+                      <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete conversation ${c.title}`}
+                      title="Delete"
+                      onClick={() => remove(c.id)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-ink-500 hover:bg-base-200 hover:text-ink-900"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </>
+              )}
             </li>
           ))}
         </ul>

@@ -7,6 +7,8 @@
 export interface StoredConversation<M = unknown> {
   id: string;
   title: string;
+  /** The user named this chat, so the first message no longer decides the title. */
+  titleEdited?: boolean;
   createdAt: number;
   updatedAt: number;
   /** Onboarding session holding this conversation's attached files, once any were attached. */
@@ -146,7 +148,12 @@ export function saveConversation(id: string, update: { messages: unknown[]; sess
   if (unchanged) return;
   const next: StoredConversation = {
     id,
-    title: update.messages.length ? deriveTitle(update.messages) : NEW_TITLE,
+    title: existing?.titleEdited
+      ? existing.title
+      : update.messages.length
+        ? deriveTitle(update.messages)
+        : NEW_TITLE,
+    titleEdited: existing?.titleEdited,
     createdAt: existing?.createdAt ?? now,
     updatedAt: update.messages.length ? now : (existing?.updatedAt ?? now),
     sessionId: update.sessionId,
@@ -155,6 +162,24 @@ export function saveConversation(id: string, update: { messages: unknown[]; sess
   write({
     activeId: store.activeId ?? id,
     items: [next, ...store.items.filter((c) => c.id !== id)],
+  });
+}
+
+/** Give a chat a name of the user's choosing. An empty name goes back to the automatic title. */
+export function renameConversation(id: string, title: string) {
+  const store = read();
+  const existing = store.items.find((c) => c.id === id);
+  if (!existing) return;
+  const name = title.replace(/\s+/g, " ").trim().slice(0, 80);
+  write({
+    ...store,
+    items: store.items.map((c) =>
+      c.id === id
+        ? name
+          ? { ...c, title: name, titleEdited: true }
+          : { ...c, title: deriveTitle(c.messages), titleEdited: false }
+        : c,
+    ),
   });
 }
 

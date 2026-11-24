@@ -102,6 +102,7 @@ export function SideDrawer({
         ) : null}
       </aside>
     </div>,
-    document.body,
+    // Portal into the themed .console root so rai-* styles and theme tokens apply.
+    (document.querySelector(".console") as HTMLElement | null) ?? document.body,
   );
 }

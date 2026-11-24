@@ -4,6 +4,7 @@ import {
   ensureActive,
   getConversation,
   listConversations,
+  renameConversation,
   saveConversation,
   startConversation,
 } from "@/lib/assistant-conversations";
@@ -43,5 +44,15 @@ describe("assistant conversations", () => {
     const [only] = listConversations();
     expect(only.title).toBe("old question");
     expect(window.localStorage.getItem("rai-assistant-chat")).toBeNull();
+  });
+
+  it("keeps a custom name when more messages arrive, and an empty name restores the automatic one", () => {
+    const id = ensureActive();
+    saveConversation(id, { messages: [msg("first question")], sessionId: null });
+    renameConversation(id, "  EU AI Act   rules ");
+    saveConversation(id, { messages: [msg("first question"), msg("second")], sessionId: null });
+    expect(getConversation(id)?.title).toBe("EU AI Act rules");
+    renameConversation(id, "");
+    expect(getConversation(id)?.title).toBe("first question");
   });
 });
