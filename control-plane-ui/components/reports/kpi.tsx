@@ -52,11 +52,11 @@ export function Kpi({
 
   return (
     <div
-      className="flex min-w-0 flex-col justify-between rounded-lg border border-base-200 bg-base-50 p-4"
+      className="rai-report-card flex min-w-0 flex-col justify-between p-4"
       aria-describedby={descId}
     >
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">{label}</p>
+        <p className="rai-eyebrow">{label}</p>
         <p
           className={cn(
             "mt-2 break-words text-2xl font-bold",
@@ -85,7 +85,7 @@ export function Kpi({
           {definition}
         </p>
         {href && (
-          <Link href={href} className="text-xs font-semibold text-accent-700 hover:text-accent-500">
+          <Link href={href} className="rai-link text-xs">
             {hrefLabel ?? "View records"} →
           </Link>
         )}

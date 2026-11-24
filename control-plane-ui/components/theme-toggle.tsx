@@ -11,7 +11,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggleTheme}
-      className="rounded-md p-1.5 text-ink-500 hover:bg-base-200 hover:text-ink-900"
+      className="rai-btn rounded-md p-1.5 text-ink-500 hover:bg-surface-hover hover:text-ink-900"
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
       title={isDark ? "Light theme" : "Dark theme"}
     >

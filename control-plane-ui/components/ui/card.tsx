@@ -16,9 +16,11 @@ export function Card({
   };
 
   return (
-    <div className="rounded-lg border border-base-200 bg-base-50 px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">{title}</p>
-      <p className={cn("mt-1 font-mono text-lg font-semibold", toneStyles[tone])}>{value}</p>
+    <div className="rai-report-card border-l-4 border-l-accent-600 px-4 py-3">
+      <p className="rai-eyebrow">{title}</p>
+      <p className={cn("mt-1 font-mono text-lg font-semibold tracking-tight", toneStyles[tone])}>
+        {value}
+      </p>
     </div>
   );
 }
