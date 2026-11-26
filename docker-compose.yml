@@ -1,3 +1,5 @@
+# Base stack for local use. Published ports listen on 127.0.0.1 only.
+# For a server, add docker-compose.prod.yml (see docs/deployment/docker.md).
 services:
   postgres:
     restart: unless-stopped
@@ -5,9 +7,10 @@ services:
     environment:
       POSTGRES_DB: rai_gateway
       POSTGRES_USER: rai_user
-      POSTGRES_PASSWORD: rai_password
+      # Applied only when the data volume is first created.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     ports:
-      - "5434:5432"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +23,7 @@ services:
     restart: unless-stopped
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -33,22 +36,26 @@ services:
     restart: unless-stopped
     build: .
     ports:
-      - "8001:8000"
+      - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:8001:8000"
     # Pass through host `.env` (see `.env.production.example` for the full set).
     # Explicit `environment` keys below override env_file (Docker network URLs, etc.).
     env_file:
       - path: .env
         required: false
     environment:
-      - DATABASE_URL=postgresql://rai_user:rai_password@postgres:5432/rai_gateway
+      # The password travels in PGPASSWORD, which libpq reads directly, so it needs no
+      # URL encoding: @ : / # ? % are all safe in POSTGRES_PASSWORD.
+      - DATABASE_URL=postgresql://rai_user@postgres:5432/rai_gateway
+      - PGPASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       # Phase 21 — environment mode (use production only with strong secrets)
       - ENVIRONMENT=${ENVIRONMENT:-development}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-change-me}
+      # Legacy shared admin token (X-Admin-Token). Empty disables it.
+      - ADMIN_TOKEN=${ADMIN_TOKEN-}
       - REQUIRE_STEP_UP=${REQUIRE_STEP_UP:-true}
-      - STEP_UP_TOKEN=${STEP_UP_TOKEN:-change-me-step-up}
-      - ALLOW_SHARED_SECRET_STEP_UP=${ALLOW_SHARED_SECRET_STEP_UP:-true}
+      - STEP_UP_TOKEN=${STEP_UP_TOKEN-}
+      - ALLOW_SHARED_SECRET_STEP_UP=${ALLOW_SHARED_SECRET_STEP_UP:-false}
       - REQUIRE_API_KEY=${REQUIRE_API_KEY:-true}
       - ENABLE_CACHE=${ENABLE_CACHE:-true}
       - ENABLE_CASES=${ENABLE_CASES:-true}
@@ -66,7 +73,8 @@ services:
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
       - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - EVIDENCE_ENCRYPTION_KEY=${EVIDENCE_ENCRYPTION_KEY:-dev-only-encryption-key}
-      - ADMIN_BOOTSTRAP_ENABLED=${ADMIN_BOOTSTRAP_ENABLED:-true}
+      # Off unless .env turns it on (.env.example does, for development).
+      - ADMIN_BOOTSTRAP_ENABLED=${ADMIN_BOOTSTRAP_ENABLED:-false}
       - ADMIN_BOOTSTRAP_EMAIL=${ADMIN_BOOTSTRAP_EMAIL:-admin@raigateway.local}
       - ADMIN_BOOTSTRAP_PASSWORD=${ADMIN_BOOTSTRAP_PASSWORD:-ChangeMe123!}
       - ADMIN_BOOTSTRAP_NAME=${ADMIN_BOOTSTRAP_NAME:-General Admin}
@@ -173,7 +181,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5).raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -187,7 +195,10 @@ services:
       - path: .env
         required: false
     environment:
-      - DATABASE_URL=postgresql://rai_user:rai_password@postgres:5432/rai_gateway
+      # The password travels in PGPASSWORD, which libpq reads directly, so it needs no
+      # URL encoding: @ : / # ? % are all safe in POSTGRES_PASSWORD.
+      - DATABASE_URL=postgresql://rai_user@postgres:5432/rai_gateway
+      - PGPASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENVIRONMENT=${ENVIRONMENT:-development}
@@ -225,13 +236,14 @@ services:
       context: ./control-plane-ui
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8001}
-        NEXT_PUBLIC_ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+        # Never give the browser bundle a backend secret.
+        NEXT_PUBLIC_ADMIN_TOKEN: ""
     ports:
-      - "3000:3000"
+      - "${UI_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8001}
-      - NEXT_PUBLIC_ADMIN_TOKEN=${ADMIN_TOKEN:-change-me}
+      - NEXT_PUBLIC_ADMIN_TOKEN=
     depends_on:
       rai-gateway:
         condition: service_healthy

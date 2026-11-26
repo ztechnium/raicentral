@@ -14,10 +14,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Bake public env at build time (Next.js inlines NEXT_PUBLIC_* during `next build`).
+# Everything inlined is readable by any browser: never pass a secret this way.
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
-ARG NEXT_PUBLIC_ADMIN_TOKEN=
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
-ENV NEXT_PUBLIC_ADMIN_TOKEN=$NEXT_PUBLIC_ADMIN_TOKEN
+# Fixed empty, with no matching ARG, so a build argument cannot inject it.
+ENV NEXT_PUBLIC_ADMIN_TOKEN=""
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Next.js apps may omit `public/`; ensure it exists for the runner COPY.

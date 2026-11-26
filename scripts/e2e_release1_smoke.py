@@ -11,7 +11,8 @@ This script exercises the first-release flow:
 
 Prereqs:
 - Docker stack running (docker compose up -d)
-- Admin console enabled (ADMIN_TOKEN set; docker-compose defaults to change-me)
+- A development gateway with a shared admin token: set ADMIN_TOKEN in .env and
+  export the same value here (it is disabled unless set; never use it in production)
 - API_KEY set to a client API key for SYSTEM_ID (see docs/API_KEY_STORAGE.md);
   not needed if the gateway runs with REQUIRE_API_KEY=false
 
@@ -26,7 +27,7 @@ import os
 import httpx
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "change-me")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 SYSTEM_ID = os.environ.get("SYSTEM_ID", "test_system")
 MODULE = os.environ.get("MODULE", "test_module")
 PROMPT_ID = os.environ.get("PROMPT_ID", "release1_e2e_prompt")
@@ -40,6 +41,7 @@ def _assert(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    _assert(bool(ADMIN_TOKEN), "Export ADMIN_TOKEN to match the development gateway")
     admin_headers = {"X-Admin-Token": ADMIN_TOKEN}
 
     with httpx.Client(timeout=10.0) as client:

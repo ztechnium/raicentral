@@ -165,7 +165,6 @@ export class ApiError extends Error {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001";
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN;
 
 /** Persist SaaS access + refresh tokens (refresh keeps sessions alive past access TTL). */
 export function persistSessionTokens(accessToken: string, refreshToken?: string | null) {
@@ -192,10 +191,6 @@ function buildHeaders() {
 
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`;
-  }
-
-  if (ADMIN_TOKEN) {
-    headers["X-Admin-Token"] = ADMIN_TOKEN;
   }
 
   return headers;
