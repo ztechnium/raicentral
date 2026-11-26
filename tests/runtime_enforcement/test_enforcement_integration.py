@@ -347,6 +347,61 @@ def test_authorize_consumes_prior_approval_on_later_turn(
     assert approval.status == ApprovalStatus.CONSUMED.value
 
 
+def test_execute_redeems_approval_once_without_approval_id(
+    db_session, runtime_stack, fake_adapter
+) -> None:
+    """A resent action uses its approval once; the next one needs a new approval."""
+    PolicyCollectionService(db_session).create_tool_rule(
+        runtime_stack["system"].id,
+        title="Approve PO",
+        tool_id=runtime_stack["submit_tool"].id,
+        mcp_server_id=runtime_stack["mcp"].id,
+        effect=PolicyEffect.REQUIRE_APPROVAL.value,
+        required_approver_role="business_approver",
+        actor="tester",
+    )
+    svc = _svc(db_session, fake_adapter)
+
+    def execute(**kwargs):
+        return svc.enforce_and_execute(
+            _request(runtime_stack, **kwargs),
+            credential_secret=runtime_stack["credential_secret"],
+        )
+
+    first = execute(idempotency_key="po-1")
+    assert first.effect == EnforcementDecisionType.REQUIRE_APPROVAL.value
+    assert execute(idempotency_key="po-1").approval_request_id == (
+        first.approval_request_id
+    )
+
+    ApprovalService(db_session).approve(
+        first.approval_request_id,
+        approver=ApproverContext(actor="manager", role="admin"),
+    )
+
+    changed = execute(parameters={"supplier": "SUP-104", "amount": 1})
+    assert changed.effect == EnforcementDecisionType.REQUIRE_APPROVAL.value
+    assert changed.approval_request_id != first.approval_request_id
+    assert fake_adapter.invocation_count == 0
+
+    allowed = execute(idempotency_key="po-1")
+    assert allowed.allowed is True
+    assert allowed.approval_consumed is True
+    assert allowed.approval_request_id == first.approval_request_id
+    assert fake_adapter.invocation_count == 1
+    approval = ApprovalService(db_session).get_request(first.approval_request_id)
+    assert approval.status == ApprovalStatus.CONSUMED.value
+
+    replay = execute(idempotency_key="po-1")
+    assert replay.receipt_id == allowed.receipt_id
+    assert fake_adapter.invocation_count == 1
+
+    again = execute(idempotency_key="po-2")
+    assert again.effect == EnforcementDecisionType.REQUIRE_APPROVAL.value
+    assert again.approval_request_id != first.approval_request_id
+    assert fake_adapter.invocation_count == 1
+
+
 def test_authorize_does_not_execute(db_session, runtime_stack, fake_adapter) -> None:
     svc = _svc(db_session, fake_adapter)
     result = svc.authorize(

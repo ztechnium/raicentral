@@ -17,6 +17,11 @@ RAI Control Plane denies actions by default when governance cannot confidently a
 - Risk tier triggers mandatory human review
 - Deployment gate failure without approved waiver
 
+Approving a request does not run it. The caller sends the same action again, and
+RAI allows it once: same runtime identity, same action and parameters, before the
+approval expires. Provider proxy callers must resend an identical request body.
+The next identical action needs a new approval.
+
 ## Configuration
 
 Content evaluator supports explicit `fail_closed: true` for high-risk AI systems. This causes content evaluation errors to deny rather than pass through.
