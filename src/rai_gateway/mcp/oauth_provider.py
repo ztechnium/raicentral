@@ -22,10 +22,11 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl
 from sqlalchemy.orm import Session
 
-from rai_gateway.auth.service import login_with_password
-from rai_gateway.auth.tokens import create_user_access_token, hash_token
+from rai_gateway.auth.service import login_with_password, refresh_session
+from rai_gateway.auth.tokens import hash_token
 from rai_gateway.core.config import settings
 from rai_gateway.core.database import SessionLocal
+from rai_gateway.core.errors import RaiException
 
 MCP_SCOPE_READ = "rai:read"
 MCP_SCOPE_MANAGE = "rai:manage"
@@ -42,20 +43,16 @@ class PendingAuthorization:
     created_at: float = field(default_factory=time.time)
 
 
-@dataclass
+# The SDK token types are Pydantic models: extend them as models, not dataclasses.
 class StoredAuthorizationCode(AuthorizationCode):
-    subject: str
     access_token_raw: str
     refresh_token_raw: str
 
 
-@dataclass
 class StoredRefreshToken(RefreshToken):
-    subject: str
     token_hash: str
 
 
-@dataclass
 class StoredAccessToken(AccessToken):
     pass
 
@@ -101,7 +98,8 @@ class RaiMcpOAuthProvider(
                 "client_id": client_info.client_id or secrets.token_urlsafe(16),
                 "client_secret": client_info.client_secret or secrets.token_urlsafe(32),
                 "client_id_issued_at": int(time.time()),
-                "grant_types": client_info.grant_types or [
+                "grant_types": client_info.grant_types
+                or [
                     "authorization_code",
                     "refresh_token",
                 ],
@@ -162,33 +160,19 @@ class RaiMcpOAuthProvider(
     ) -> OAuthToken:
         db: Session = SessionLocal()
         try:
-            from rai_gateway.models.auth import AuthSession
-            from rai_gateway.models.database import UserAccount
-
-            session = (
-                db.query(AuthSession)
-                .filter(AuthSession.refresh_token_hash == refresh_token.token_hash)
-                .first()
-            )
-            if session is None or session.expires_at.timestamp() < time.time():
-                raise TokenError(error="invalid_grant", error_description="invalid refresh token")
-            user = (
-                db.query(UserAccount).filter(UserAccount.user_id == session.user_id).first()
-            )
-            if user is None:
-                raise TokenError(error="invalid_grant", error_description="invalid refresh token")
-            from rai_gateway.auth.service import _platform_roles
-
-            access = create_user_access_token(
-                email=user.email,
-                user_id=user.user_id,
-                session_id=session.id,
-                platform_roles=_platform_roles(db, user.user_id),
-            )
+            # Rotates the underlying session, so logout, password changes and
+            # deactivation end MCP access exactly as they do for the console.
+            body = refresh_session(db, refresh_token=refresh_token.token)
+        except RaiException as exc:
+            raise TokenError(
+                error="invalid_grant", error_description="invalid refresh token"
+            ) from exc
         finally:
             db.close()
 
-        new_refresh = secrets.token_urlsafe(48)
+        self._refresh.pop(refresh_token.token_hash, None)
+        access = str(body["access_token"])
+        new_refresh = str(body["refresh_token"])
         await self._store_access_token(
             token=access,
             client_id=client.client_id,

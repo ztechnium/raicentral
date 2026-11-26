@@ -135,7 +135,12 @@ def gateway_doctor(
     json_out: bool,
 ) -> None:
     """Validate production gateway readiness (Step 8)."""
-    url = base_url or os.environ.get("RAI_GATEWAY_URL") or settings.app_public_url
+    url = (
+        base_url
+        or os.environ.get("RAI_GATEWAY_URL")
+        or settings.api_public_base_url
+        or settings.app_public_url
+    )
     secret = runtime_secret or os.environ.get("RAI_RUNTIME_SECRET")
     results, all_ok = run_doctor(
         base_url=url, runtime_secret=secret, skip_stream=skip_stream

@@ -34,6 +34,7 @@ from rai_gateway.core.observability import (
     logger,
     setup_telemetry,
 )
+from rai_gateway.core.public_url import PublicDocsPrefixMiddleware
 from rai_gateway.core.security_api import router as security_router
 from rai_gateway.data_access.api import router as data_access_router
 from rai_gateway.evaluations.api import router as evaluations_router
@@ -143,6 +144,8 @@ _cors_methods = (
     else ["*"]
 )
 _cors_headers = _cors_header_list(settings.cors_allow_headers)
+
+app.add_middleware(PublicDocsPrefixMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

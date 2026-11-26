@@ -84,6 +84,13 @@ def _rate_limit_or_429(key: str, *, limit: int, window_seconds: float) -> None:
         )
 
 
+def _refresh_cookie_path() -> str:
+    """Browsers match cookie paths against the public URL, proxy prefix included."""
+    from rai_gateway.core.config import settings
+
+    return f"{settings.api_public_path_prefix}/v1/auth"
+
+
 def _set_auth_cookies(response: Response, body: dict[str, Any]) -> None:
     """
     Optionally mirror tokens into HttpOnly cookies for browser clients.
@@ -120,7 +127,7 @@ def _set_auth_cookies(response: Response, body: dict[str, Any]) -> None:
         secure=secure,
         samesite=samesite,
         max_age=settings.auth_refresh_token_days * 86400,
-        path="/v1/auth",
+        path=_refresh_cookie_path(),
     )
 
     # CSRF token (readable by JavaScript for double-submit pattern)
@@ -134,7 +141,9 @@ def _clear_auth_cookies(response: Response) -> None:
     from rai_gateway.core.csrf import CSRFProtection
 
     response.delete_cookie(settings.auth_access_cookie_name, path="/")
-    response.delete_cookie(settings.auth_refresh_cookie_name, path="/v1/auth")
+    response.delete_cookie(
+        settings.auth_refresh_cookie_name, path=_refresh_cookie_path()
+    )
     response.delete_cookie(CSRFProtection.COOKIE_NAME, path="/")
 
 
