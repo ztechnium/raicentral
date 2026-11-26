@@ -58,6 +58,11 @@ PLATFORM_ROLES: frozenset[str] = frozenset(
     {"platform_admin", "platform_support", "admin"}
 )
 
+# Platform roles that administer this instance. Only these may skip membership
+# checks on writes, and only these receive the organization admin and RAI officer
+# memberships at provisioning. platform_support is read-only.
+INSTANCE_ADMIN_ROLES: frozenset[str] = frozenset({"admin", "platform_admin"})
+
 _tenant_context_ctx: ContextVar[Optional[TenantContext]] = ContextVar(
     "tenant_context_ctx", default=None
 )

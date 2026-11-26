@@ -13,8 +13,11 @@ from getpass import getpass
 from typing import Optional
 
 import click
+from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from rai_gateway.core.authorization import INSTANCE_ADMIN_ROLES, PLATFORM_ROLES
 from rai_gateway.core.config import settings
 from rai_gateway.core.database import SessionLocal, init_db
 from rai_gateway.models.database import (
@@ -23,50 +26,32 @@ from rai_gateway.models.database import (
     UserAccount,
     UserRole,
 )
-from rai_gateway.services.admin_console import hash_password
+from rai_gateway.services.admin_console import (
+    _ensure_default_rbac_seed,
+    _ensure_instance_foundation,
+    hash_password,
+)
+from rai_gateway.services.admin_console import (
+    _normalize_role as _canonical_role,
+)
 
 
 def _normalize_role(role_input: str) -> str:
-    """Normalize role name to role_id."""
-    normalized = role_input.lower().replace(" ", "_").replace("-", "_")
-    return normalized
+    """Normalize a role name or alias to its role_id ('' when blank)."""
+    return _canonical_role(role_input.replace("-", " ")) or ""
 
 
 def _ensure_rbac_roles(db: Session) -> None:
-    """Ensure default RBAC roles exist."""
-    default_roles = {
-        "admin": {
-            "name": "General Admin",
-            "description": "Full system access (legacy platform bootstrap)",
-            "permissions": ["*"],
-        },
-        "platform_admin": {
-            "name": "Platform Admin",
-            "description": "Internal platform administration for this instance",
-            "permissions": ["*"],
-        },
-        "platform_support": {
-            "name": "Platform Support",
-            "description": "Internal support access for this instance",
-            "permissions": ["platform:support"],
-        },
-    }
+    """Use the canonical RBAC role and permission seeder."""
+    _ensure_default_rbac_seed(db)
 
-    for role_id, role_data in default_roles.items():
-        existing = (
-            db.query(RoleDefinition).filter(RoleDefinition.role_id == role_id).first()
-        )
-        if not existing:
-            db.add(
-                RoleDefinition(
-                    role_id=role_id,
-                    name=role_data["name"],
-                    description=role_data["description"],
-                    permissions=role_data["permissions"],
-                    platform_role=True,
-                )
-            )
-    db.commit()
+
+def _describe_error(exc: Exception) -> str:
+    """Describe a failure without echoing SQL parameters (password hashes)."""
+    if isinstance(exc, SQLAlchemyError):
+        cause = getattr(exc, "orig", None) or "see server logs"
+        return f"database error ({type(exc).__name__}): {cause}"
+    return str(exc)
 
 
 def create_admin_user(
@@ -78,14 +63,17 @@ def create_admin_user(
     user_id: Optional[str] = None,
 ) -> tuple[UserAccount, AdminCredential]:
     """
-    Create a platform admin user with credentials.
+    Create a platform user with credentials.
+
+    The account, its role and credential, and (for instance administrators) the
+    organization foundation are committed together: a failure leaves none of them.
 
     Args:
         db: Database session
         email: Admin email address
         password: Admin password (will be hashed)
         name: Display name
-        role: Platform role (default: platform_admin)
+        role: Platform role (admin, platform_admin or platform_support)
         user_id: Optional user_id (generated from email if not provided)
 
     Returns:
@@ -96,12 +84,27 @@ def create_admin_user(
     """
     email = email.strip().lower()
 
+    # Only platform roles can be provisioned here. Organization roles are granted
+    # through memberships, never as a global UserRole.
+    role_id = _normalize_role(role)
+    if role_id not in PLATFORM_ROLES:
+        raise ValueError(
+            f"Invalid role: {role}. Valid roles: {', '.join(sorted(PLATFORM_ROLES))}"
+        )
+
     # Check if email already exists
     existing_cred = (
-        db.query(AdminCredential).filter(AdminCredential.email == email).first()
+        db.query(AdminCredential)
+        .filter(func.lower(AdminCredential.email) == email)
+        .first()
     )
     if existing_cred:
         raise ValueError(f"Admin with email {email} already exists")
+    if db.query(UserAccount).filter(func.lower(UserAccount.email) == email).first():
+        raise ValueError(f"A user with email {email} already exists")
+
+    # Idempotent catalog seed. It commits on its own, before any account is written.
+    _ensure_rbac_roles(db)
 
     # Generate user_id from email if not provided
     if not user_id:
@@ -120,48 +123,41 @@ def create_admin_user(
             counter += 1
         user_id = f"{user_id}_{counter}"
 
-    # Ensure RBAC roles exist
-    _ensure_rbac_roles(db)
-
-    # Normalize and validate role
-    role_id = _normalize_role(role)
-    role_def = (
-        db.query(RoleDefinition).filter(RoleDefinition.role_id == role_id).first()
-    )
-    if not role_def:
-        raise ValueError(
-            f"Invalid role: {role}. Valid roles: admin, platform_admin, platform_support"
+    try:
+        user = UserAccount(
+            user_id=user_id,
+            email=email,
+            name=name,
+            status="active",
+            email_verified_at=datetime.now(timezone.utc),
         )
+        db.add(user)
+        db.flush()
 
-    # Create UserAccount
-    user = UserAccount(
-        user_id=user_id,
-        email=email,
-        name=name,
-        status="active",
-        email_verified_at=datetime.now(timezone.utc),
-    )
-    db.add(user)
-    db.flush()
+        user_role = UserRole(
+            user_id=user_id,
+            role_id=role_id,
+        )
+        db.add(user_role)
 
-    # Create UserRole
-    user_role = UserRole(
-        user_id=user_id,
-        role_id=role_id,
-        granted_at=datetime.now(timezone.utc),
-    )
-    db.add(user_role)
+        credential = AdminCredential(
+            email=email,
+            user_id=user_id,
+            password_hash=hash_password(password),
+            is_active=True,
+        )
+        db.add(credential)
+        db.flush()
 
-    # Create AdminCredential
-    credential = AdminCredential(
-        email=email,
-        user_id=user_id,
-        password_hash=hash_password(password),
-        is_active=True,
-    )
-    db.add(credential)
+        if role_id in INSTANCE_ADMIN_ROLES:
+            # Commits the account together with the foundation rows.
+            _ensure_instance_foundation(db, user_id)
+        else:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
-    db.commit()
     db.refresh(user)
     db.refresh(credential)
 
@@ -281,6 +277,7 @@ def create(
         click.echo("❌ Password must be at least 8 characters", err=True)
         sys.exit(1)
 
+    db = None
     try:
         init_db()
         db = SessionLocal()
@@ -292,17 +289,18 @@ def create(
         click.echo(f"✅ Created admin user: {user.email}")
         click.echo(f"   User ID: {user.user_id}")
         click.echo(f"   Name: {user.name}")
-        click.echo(f"   Role: {role}")
+        click.echo(f"   Role: {_normalize_role(role)}")
         click.echo(f"   Status: {user.status}")
 
     except ValueError as e:
         click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Unexpected error: {e}", err=True)
+        click.echo(f"❌ Unexpected error: {_describe_error(e)}", err=True)
         sys.exit(1)
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 @admin.command()
@@ -410,10 +408,12 @@ def bootstrap():
             err=True,
         )
         click.echo(
-            "\nTo create an admin user, use 'rai-admin create' instead.", err=True
+            "\nTo create an admin user, use 'rai-gateway admin create' instead.",
+            err=True,
         )
         sys.exit(1)
 
+    db = None
     try:
         init_db()
         db = SessionLocal()
@@ -445,16 +445,17 @@ def bootstrap():
         click.echo(f"   Name: {user.name}")
         click.echo(f"   Role: {settings.admin_bootstrap_role}")
         click.echo("\n⚠️  IMPORTANT: Change the bootstrap password immediately!")
-        click.echo("   Use: rai-admin reset-password --email={user.email}")
+        click.echo(f"   Use: rai-gateway admin reset-password --email={user.email}")
 
     except ValueError as e:
         click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Unexpected error: {e}", err=True)
+        click.echo(f"❌ Unexpected error: {_describe_error(e)}", err=True)
         sys.exit(1)
     finally:
-        db.close()
+        if db is not None:
+            db.close()
 
 
 if __name__ == "__main__":

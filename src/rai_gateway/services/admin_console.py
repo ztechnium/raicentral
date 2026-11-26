@@ -35,6 +35,7 @@ from rai_gateway.core.auth import (
     hash_password,
     verify_password,
 )
+from rai_gateway.core.authorization import INSTANCE_ADMIN_ROLES
 from rai_gateway.core.config import settings
 from rai_gateway.core.database import get_db
 from rai_gateway.core.observability import generate_trace_id, log_admin_audit
@@ -585,7 +586,10 @@ def _ensure_bootstrap_admin(db: Session) -> None:
         .first()
     )
     if credential:
-        _ensure_instance_foundation(db, credential.user_id)
+        # Holding the bootstrap email is not authority: a lower-privileged account
+        # provisioned with it must not be handed privileged memberships.
+        if _holds_instance_admin_role(db, credential.user_id):
+            _ensure_instance_foundation(db, credential.user_id)
         return
 
     # Phase 22: Respect admin_bootstrap_enabled flag
@@ -654,7 +658,8 @@ def _ensure_bootstrap_admin(db: Session) -> None:
         )
     )
     db.commit()
-    _ensure_instance_foundation(db, user_id)
+    if role_id in INSTANCE_ADMIN_ROLES:
+        _ensure_instance_foundation(db, user_id)
 
     logger.warning(
         "bootstrap_admin_created",
@@ -662,6 +667,18 @@ def _ensure_bootstrap_admin(db: Session) -> None:
         "IMPORTANT: Change the default password immediately!",
         email=bootstrap_email,
         environment=settings.environment,
+    )
+
+
+def _holds_instance_admin_role(db: Session, user_id: str) -> bool:
+    return (
+        db.query(UserRole)
+        .filter(
+            UserRole.user_id == user_id,
+            UserRole.role_id.in_(INSTANCE_ADMIN_ROLES),
+        )
+        .first()
+        is not None
     )
 
 
