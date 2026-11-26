@@ -25,7 +25,7 @@ We aim to acknowledge reports within 3 business days.
 
 ## Deployment defaults
 
-The Compose file and `.env.example` ship with local-only passwords (`rai_password`, `ChangeMe123!`, `dev-only-change-me`). They are for a private workstation. Replace them, set `ENVIRONMENT=production`, and set `ADMIN_BOOTSTRAP_ENABLED=false` before exposing a deployment. See [Deploy with Docker](docs/deployment/docker.md).
+The Compose file and `.env.example` ship with local-only values (`rai_password`, `ChangeMe123!`, `dev-only-change-me`). They are for a private workstation. For anything reachable by others, start from `.env.production.example` and the `docker-compose.prod.yml` override, which require generated secrets and keep bootstrap and shared admin tokens off. See [Deploy with Docker](docs/deployment/docker.md#production-installation).
 
 ## Scope
 

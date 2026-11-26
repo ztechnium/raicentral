@@ -138,9 +138,11 @@ An administrator must enable on `main`:
 
 **Alembic URL errors with `%`:** Use `DATABASE_URL` without manual URL-encoding in shell; test fixtures handle schema isolation.
 
-**Port 5434 in use:** Compose publishes PostgreSQL on host port `5434`. Edit `docker-compose.yml` or point `DATABASE_URL` at another instance.
+**Port 5434 in use:** Compose publishes PostgreSQL on `127.0.0.1:5434`. Edit `docker-compose.yml` or point `DATABASE_URL` at another instance.
 
-**First login:** `admin@raigateway.local` / `ChangeMe123!` when bootstrap is enabled. See `.env.example`.
+**First login:** `admin@raigateway.local` / `ChangeMe123!` when `ADMIN_BOOTSTRAP_ENABLED=true`, as in `.env.example`. Otherwise run `uv run rai-gateway admin create --role admin`.
+
+**`set POSTGRES_PASSWORD in .env`:** Docker Compose requires it. Copy the line from `.env.example`.
 
 ## Onboarding intake worker
 

@@ -40,8 +40,10 @@ Wait until the API reports healthy. Then open the services:
 | Sign-in page | http://localhost:3000 |
 | API | http://localhost:8001 |
 | Health | http://localhost:8001/health |
-| PostgreSQL | `localhost:5434` (`rai_user` / `rai_password`) |
+| PostgreSQL | `localhost:5434` (`rai_user` / `POSTGRES_PASSWORD` from `.env`) |
 | Redis | `localhost:6380` |
+
+Docker Compose requires `POSTGRES_PASSWORD`; `.env.example` sets a development value. All ports listen on `127.0.0.1` only.
 
 ### Sign in
 
@@ -54,7 +56,13 @@ The first page is the login form. After sign-in you land on the dashboard or the
 
 Invite more people from **Team & roles**. There is no public registration page.
 
-Change every `change-me` and `dev-only` secret before any shared deployment, and set `ADMIN_BOOTSTRAP_ENABLED=false`. Details are in [Deploy with Docker](docs/deployment/docker.md).
+These development settings are not for a shared deployment. For a server, start from `.env.production.example`, use the production Compose override, and create the first administrator with:
+
+```bash
+docker compose exec rai-gateway rai-gateway admin create --role admin
+```
+
+Details are in [Deploy with Docker](docs/deployment/docker.md#production-installation).
 
 Stop the stack with `docker compose down` from this directory.
 

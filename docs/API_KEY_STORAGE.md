@@ -42,7 +42,7 @@ OLLAMA_ENDPOINT=http://localhost:11434     # Local Ollama
 # Security Keys
 JWT_SECRET_KEY=...                         # For session tokens
 EVIDENCE_ENCRYPTION_KEY=...                # For encrypted evidence storage
-ADMIN_TOKEN=change-me                      # Admin console access
+ADMIN_TOKEN=                               # Legacy shared token; keep empty
 ```
 
 ### 🚀 **Production Deployment**
