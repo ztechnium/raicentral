@@ -90,24 +90,6 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
-export interface ApiKeySummary {
-  api_key_id: string;
-  system_id: string;
-  scopes: string[];
-  status?: string;
-  created_at: string;
-  revoked_at?: string | null;
-  expires_at?: string | null;
-}
-
-export interface IssuedApiKey {
-  api_key_id: string;
-  system_id: string;
-  scopes: string[];
-  api_key: string;
-  note?: string;
-}
-
 export interface FeatureFlagSummary {
   key: string;
   enabled: boolean;
@@ -3308,6 +3290,8 @@ export interface WebhookEndpointSummary {
   created_by: string;
   created_at?: string | null;
   last_rotated_at?: string | null;
+  last_event_at?: string | null;
+  last_event_status?: string | null;
 }
 
 export interface AlertEventGroup {
@@ -3336,6 +3320,8 @@ export interface AlertIntegrationSummary {
   created_by: string;
   created_at?: string | null;
   updated_at?: string | null;
+  last_event_at?: string | null;
+  last_event_status?: string | null;
 }
 
 export interface SearchIntegrationProvider {

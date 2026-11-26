@@ -1,15 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { SectionHeader } from "@/components/section-header";
-import { FormField } from "@/components/registry/form-field";
+import { useCallback, useEffect, useState } from "react";
+import { ConnectionFormModal } from "@/components/integrations/connection-form-modal";
+import {
+  connectionType,
+  TypeIcon,
+  typeLabel,
+  type Connection,
+} from "@/components/integrations/connection-types";
 import { Panel } from "@/components/registry/panel";
 import { StatusBadge } from "@/components/registry/status-badge";
+import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Table } from "@/components/ui/table";
 import {
-  createAlertIntegration,
   deleteAlertIntegration,
   deleteSearchIntegration,
   getAlertEventGroups,
@@ -17,236 +21,212 @@ import {
   getSearchIntegrationCatalog,
   listAlertIntegrations,
   listSearchIntegrations,
-  testSearchIntegration,
-  upsertElasticsearchIntegration,
+  listWebhookDeliveries,
+  listWebhookEndpoints,
+  rotateWebhookEndpoint,
 } from "@/lib/api";
 import type {
   AlertEventGroup,
   AlertIntegrationProvider,
-  AlertIntegrationSummary,
   SearchIntegrationProvider,
-  SearchIntegrationSummary,
+  WebhookDeliverySummary,
 } from "@/lib/types";
 
-const PROVIDER_ORDER = [
-  "slack",
-  "microsoft_teams",
-  "discord",
-  "telegram",
-  "whatsapp",
-  "jira",
-  "trello",
-  "clickup",
-];
+function formatWhen(value?: string | null) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
 
-function parseHeaders(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const idx = trimmed.indexOf(":");
-    if (idx <= 0) continue;
-    out[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+/** Host only: alert webhook URLs carry secrets in their path. */
+function destinationOf(connection: Connection) {
+  const raw =
+    connection.kind === "webhook"
+      ? connection.item.url
+      : (connection.item.config.webhook_url ?? connection.item.config.url ?? "");
+  if (connection.kind === "webhook") return raw;
+  try {
+    return new URL(raw).host;
+  } catch {
+    return "";
   }
-  return out;
+}
+
+function LastEvent({ connection }: { connection: Connection }) {
+  // Elasticsearch is a log sync target; it does not receive events.
+  if (connection.kind === "search") return <span className="text-ink-400">—</span>;
+  const { last_event_at: at, last_event_status: status } = connection.item;
+  if (!at) return <span className="text-ink-400">Never</span>;
+  return (
+    <div className="space-y-1">
+      <div className="whitespace-nowrap">{formatWhen(at)}</div>
+      {status ? <StatusBadge status={status} /> : null}
+    </div>
+  );
 }
 
 export default function IntegrationsPage() {
-  const [items, setItems] = useState<AlertIntegrationSummary[]>([]);
-  const [providers, setProviders] = useState<AlertIntegrationProvider[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [alertProviders, setAlertProviders] = useState<AlertIntegrationProvider[]>([]);
+  const [searchProviders, setSearchProviders] = useState<SearchIntegrationProvider[]>([]);
   const [groups, setGroups] = useState<AlertEventGroup[]>([]);
-  const [provider, setProvider] = useState("slack");
-  const [name, setName] = useState("");
-  const [config, setConfig] = useState<Record<string, string>>({});
-  const [headerText, setHeaderText] = useState("");
-  const [selectedEvents, setSelectedEvents] = useState<Set<string>>(
-    () => new Set(["enforcement.*", "risk.finding.created"]),
-  );
+  const [deliveries, setDeliveries] = useState<WebhookDeliverySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [searchItems, setSearchItems] = useState<SearchIntegrationSummary[]>([]);
-  const [searchProviders, setSearchProviders] = useState<SearchIntegrationProvider[]>([]);
-  const [esConfig, setEsConfig] = useState<Record<string, string>>({});
-  const [esEnabled, setEsEnabled] = useState(true);
-  const [esSync, setEsSync] = useState(true);
-  const [esUseSearch, setEsUseSearch] = useState(true);
-  const [esMessage, setEsMessage] = useState<string | null>(null);
+  const [secretOnce, setSecretOnce] = useState<string | null>(null);
+  /** null = modal closed; `editing: null` = adding a new connection. */
+  const [modal, setModal] = useState<{ editing: Connection | null } | null>(null);
 
-  const providerMeta = useMemo(
-    () => providers.find((p) => p.id === provider),
-    [providers, provider],
-  );
-
-  const orderedProviders = useMemo(() => {
-    const byId = new Map(providers.map((p) => [p.id, p]));
-    return PROVIDER_ORDER.map((id) => byId.get(id)).filter(Boolean) as AlertIntegrationProvider[];
-  }, [providers]);
-
-  const load = useCallback(() => {
-    setError(null);
-    Promise.all([
-      listAlertIntegrations(),
-      getAlertIntegrationCatalog(),
-      getAlertEventGroups(),
-      listSearchIntegrations(),
-      getSearchIntegrationCatalog(),
-    ])
-      .then(([list, cat, ev, searchList, searchCat]) => {
-        setItems(list.data.items ?? []);
-        setProviders(cat.data.providers ?? []);
-        setGroups(ev.data.groups ?? []);
-        const sItems = searchList.data.items ?? [];
-        setSearchItems(sItems);
-        setSearchProviders(searchCat.data.providers ?? []);
-        const es = sItems.find((i) => i.provider === "elasticsearch");
-        if (es) {
-          setEsEnabled(es.enabled);
-          setEsSync(es.sync_logs);
-          setEsUseSearch(es.use_for_search);
-          setEsConfig({
-            url: es.config.url ?? "",
-            index_prefix: es.config.index_prefix ?? "rai",
-            verify_tls: String(es.config.verify_tls ?? "true"),
-          });
-        }
-      })
-      .catch((err: Error) => setError(err.message));
+  const load = useCallback(async () => {
+    try {
+      const [alerts, alertCatalog, events, search, searchCatalog, webhooks, sent] =
+        await Promise.all([
+          listAlertIntegrations(),
+          getAlertIntegrationCatalog(),
+          getAlertEventGroups(),
+          listSearchIntegrations(),
+          getSearchIntegrationCatalog(),
+          listWebhookEndpoints(),
+          listWebhookDeliveries(20),
+        ]);
+      const rows: Connection[] = [
+        ...(alerts.data.items ?? []).map((item) => ({ kind: "alert" as const, item })),
+        ...(webhooks.data.items ?? []).map((item) => ({ kind: "webhook" as const, item })),
+        ...(search.data.items ?? []).map((item) => ({ kind: "search" as const, item })),
+      ];
+      rows.sort((a, b) => (b.item.created_at ?? "").localeCompare(a.item.created_at ?? ""));
+      setConnections(rows);
+      setAlertProviders(alertCatalog.data.providers ?? []);
+      setSearchProviders(searchCatalog.data.providers ?? []);
+      setGroups(events.data.groups ?? []);
+      setDeliveries(sent.data.items ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load integrations");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  useEffect(() => {
-    const label = providerMeta?.label ?? provider;
-    setName((prev) => (prev ? prev : `${label} alerts`));
-    setConfig({});
-  }, [provider, providerMeta?.label]);
+  const closeModal = useCallback(() => setModal(null), []);
 
-  const toggleEvent = (type: string) => {
-    setSelectedEvents((prev) => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
-    });
-  };
+  function openModal(editing: Connection | null) {
+    setError(null);
+    setMessage(null);
+    setModal({ editing });
+  }
 
-  const onSave = async () => {
-    if (selectedEvents.size === 0) {
-      setError("Select at least one event to send.");
-      return;
-    }
-    setSaving(true);
+  function onSaved(text: string, secret?: string) {
+    setModal(null);
+    setError(null);
+    setMessage(text);
+    if (secret) setSecretOnce(secret);
+    void load();
+  }
+
+  async function runAction(action: () => Promise<void>, failure: string) {
+    setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      await createAlertIntegration({
-        name: name.trim() || `${providerMeta?.label ?? provider} alerts`,
-        provider,
-        event_types: Array.from(selectedEvents),
-        config,
-        custom_headers: parseHeaders(headerText),
-        enabled: true,
-      });
-      setMessage("Integration saved.");
-      setHeaderText("");
-      load();
+      await action();
+      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : failure);
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
-  };
+  }
 
-  const onDelete = async (id: string) => {
-    setSaving(true);
-    setError(null);
-    try {
-      await deleteAlertIntegration(id);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setSaving(false);
-    }
-  };
+  function onRemove(connection: Connection) {
+    if (!window.confirm(`Remove ${connection.item.name}?`)) return;
+    void runAction(async () => {
+      if (connection.kind === "search") await deleteSearchIntegration(connection.item.id);
+      else await deleteAlertIntegration(connection.item.id);
+      setMessage("Integration removed.");
+    }, "Remove failed");
+  }
 
-  const esProvider = searchProviders.find((p) => p.id === "elasticsearch");
-
-  const onSaveElasticsearch = async () => {
-    setSaving(true);
-    setError(null);
-    setEsMessage(null);
-    try {
-      await upsertElasticsearchIntegration({
-        name: "Elasticsearch",
-        config: esConfig,
-        enabled: esEnabled,
-        sync_logs: esSync,
-        use_for_search: esUseSearch,
-      });
-      setEsMessage("Elasticsearch integration saved.");
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const onTestElasticsearch = async () => {
-    const row = searchItems.find((i) => i.provider === "elasticsearch");
-    if (!row) {
-      setError("Save Elasticsearch settings before testing the connection.");
+  function onRotate(id: string, name: string) {
+    if (!window.confirm(`Rotate the signing secret for ${name}? The current secret stops working.`))
       return;
-    }
-    setSaving(true);
-    setError(null);
-    setEsMessage(null);
-    try {
-      const res = await testSearchIntegration(row.id);
-      setEsMessage(
-        `Connected to cluster “${res.data.cluster_name ?? "unknown"}” (indexes: ${res.data.audit_index}, ${res.data.trajectory_index}).`,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Connection test failed");
-    } finally {
-      setSaving(false);
-    }
-  };
+    void runAction(async () => {
+      const res = await rotateWebhookEndpoint(id);
+      setSecretOnce(res.data.secret);
+    }, "Failed to rotate secret");
+  }
 
-  const onRemoveElasticsearch = async () => {
-    const row = searchItems.find((i) => i.provider === "elasticsearch");
-    if (!row) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await deleteSearchIntegration(row.id);
-      setEsConfig({});
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const rows = connections.map((connection) => {
+    const { item } = connection;
+    const type = connectionType(connection);
+    const events = connection.kind === "search" ? [] : (connection.item.event_types ?? []);
+    const destination = destinationOf(connection);
+    return [
+      <div key="name" className="min-w-0">
+        <div className="font-semibold text-ink-900">{item.name}</div>
+        {destination ? (
+          <div className="max-w-[260px] truncate text-[11px] text-ink-400" title={destination}>
+            {destination}
+          </div>
+        ) : null}
+      </div>,
+      <div key="type" className="flex items-center gap-2 whitespace-nowrap">
+        <TypeIcon type={type} />
+        {typeLabel(type)}
+      </div>,
+      <span key="events" className="block max-w-[220px] break-words">
+        {connection.kind === "search" ? "Runtime logs" : events.join(", ")}
+      </span>,
+      <StatusBadge key="status" status={item.enabled ? item.status : "DISABLED"} />,
+      <LastEvent key="last" connection={connection} />,
+      <div key="actions" className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label={`Edit ${item.name}`}
+          disabled={busy}
+          onClick={() => openModal(connection)}
+        >
+          Edit
+        </Button>
+        {connection.kind === "webhook" ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => onRotate(item.id, item.name)}
+          >
+            Rotate secret
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Remove ${item.name}`}
+            disabled={busy}
+            onClick={() => onRemove(connection)}
+          >
+            Remove
+          </Button>
+        )}
+      </div>,
+    ];
+  });
 
   return (
     <div className="space-y-6">
       <SectionHeader
         title="Integrations"
-        subtitle="Alert channels, Elasticsearch log sync, and outbound work trackers."
+        subtitle="Alert channels, signed webhooks, and Elasticsearch log sync."
         actions={
-          <div className="flex flex-wrap gap-3 text-sm">
-            <Link href="/settings/webhooks" className="text-primary hover:underline">
-              Webhooks
-            </Link>
-            <Link href="/settings" className="text-primary hover:underline">
-              Settings
-            </Link>
-          </div>
+          <Button disabled={loading} onClick={() => openModal(null)}>
+            Add integration
+          </Button>
         }
       />
 
@@ -259,188 +239,70 @@ export default function IntegrationsPage() {
         <div className="rounded-xl border border-base-200 bg-base-50 p-4 text-sm">{message}</div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {orderedProviders.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setProvider(p.id)}
-            className={`rounded-xl border p-4 text-left transition ${
-              provider === p.id
-                ? "border-accent-400 bg-accent-50 shadow-sm"
-                : "border-base-200 bg-base-50 hover:border-base-300"
-            }`}
-          >
-            <div className="font-medium">{p.label}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {items.filter((i) => i.provider === p.id).length} configured
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <Panel title={`Configure ${providerMeta?.label ?? provider}`}>
-        <div className="space-y-4">
-          <FormField label="Display name">
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </FormField>
-
-          {(providerMeta?.config_fields ?? []).map((field) => (
-            <FormField key={field.key} label={field.label}>
-              <Input
-                type={field.type === "secret" ? "password" : "text"}
-                value={config[field.key] ?? ""}
-                onChange={(e) => setConfig((c) => ({ ...c, [field.key]: e.target.value }))}
-                autoComplete="off"
-              />
-            </FormField>
-          ))}
-
-          <FormField label="What to send">
-            <div className="max-h-48 space-y-3 overflow-y-auto rounded-lg border border-base-200 p-3">
-              {groups.map((group) => (
-                <div key={group.id}>
-                  <p className="text-xs font-semibold uppercase text-ink-400">{group.label}</p>
-                  <ul className="mt-1 space-y-1">
-                    {group.events.map((ev) => (
-                      <li key={ev.type}>
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={selectedEvents.has(ev.type)}
-                            onChange={() => toggleEvent(ev.type)}
-                          />
-                          {ev.label}
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </FormField>
-
-          <FormField label="Custom headers (optional)">
-            <textarea
-              className="min-h-[72px] w-full rounded-md border border-base-200 bg-base-50 p-2 font-mono text-xs"
-              value={headerText}
-              onChange={(e) => setHeaderText(e.target.value)}
-            />
-          </FormField>
-
-          <Button disabled={saving} onClick={() => void onSave()}>
-            {saving ? "Saving…" : "Save integration"}
-          </Button>
-        </div>
-      </Panel>
-
-      <Panel title="Elasticsearch — runtime log search">
-        <p className="mb-4 text-sm text-muted-foreground">
-          When enabled, runtime audit records and trajectories are indexed to Elasticsearch.
-          Audit Explorer and trajectory search use Elasticsearch queries instead of PostgreSQL
-          scans.
-        </p>
-        {esMessage ? (
-          <div className="mb-4 rounded-xl border border-base-200 bg-base-50 p-4 text-sm">
-            {esMessage}
-          </div>
-        ) : null}
-        <div className="space-y-4">
-          {(esProvider?.config_fields ?? []).map((field) => (
-            <FormField key={field.key} label={field.label}>
-              <Input
-                type={field.type === "secret" ? "password" : "text"}
-                placeholder={field.placeholder}
-                value={esConfig[field.key] ?? ""}
-                onChange={(e) => setEsConfig((c) => ({ ...c, [field.key]: e.target.value }))}
-                autoComplete="off"
-              />
-            </FormField>
-          ))}
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={esEnabled}
-                onChange={(e) => setEsEnabled(e.target.checked)}
-              />
-              Integration active
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={esSync}
-                onChange={(e) => setEsSync(e.target.checked)}
-              />
-              Sync logs to Elasticsearch
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={esUseSearch}
-                onChange={(e) => setEsUseSearch(e.target.checked)}
-              />
-              Query Audit Explorer / trajectories from Elasticsearch
-            </label>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={saving} onClick={() => void onSaveElasticsearch()}>
-              Save Elasticsearch
+      {secretOnce ? (
+        <Panel
+          title="Signing secret (shown once)"
+          actions={
+            <Button size="sm" variant="ghost" onClick={() => setSecretOnce(null)}>
+              Dismiss
             </Button>
-            <Button
-              variant="secondary"
-              disabled={saving}
-              onClick={() => void onTestElasticsearch()}
-            >
-              Test connection
-            </Button>
-            {searchItems.some((i) => i.provider === "elasticsearch") ? (
-              <Button
-                variant="secondary"
-                disabled={saving}
-                onClick={() => void onRemoveElasticsearch()}
-              >
-                Remove
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </Panel>
+          }
+        >
+          <p className="mb-2 text-sm text-ink-500">
+            Store this secret now. It verifies <code>X-RAI-Signature</code> on each delivery.
+          </p>
+          <code className="block break-all rounded bg-base-100 p-3 text-xs">{secretOnce}</code>
+        </Panel>
+      ) : null}
 
-      <Panel title="Active alert integrations">
-        {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No integrations configured yet.</p>
+      <Panel title="Configured integrations">
+        {loading ? (
+          <p className="text-sm text-ink-500">Loading integrations…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-ink-500">
+            No integrations yet. Use Add integration to create one.
+          </p>
         ) : (
-          <ul className="divide-y divide-base-200">
-            {items.map((item) => (
-              <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div>
-                  <div className="font-medium">
-                    {item.name}{" "}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      ({item.provider_label})
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Events: {(item.event_types || []).join(", ")}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={item.enabled ? "ACTIVE" : "DISABLED"} />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={saving}
-                    onClick={() => void onDelete(item.id)}
-                  >
-                    Remove
-                  </Button>
-                </div>
+          <Table
+            columns={["Name", "Type", "Events", "Status", "Last event", "Actions"]}
+            rows={rows}
+          />
+        )}
+      </Panel>
+
+      {deliveries.length > 0 ? (
+        <Panel title="Recent webhook deliveries">
+          <ul className="divide-y divide-base-200 text-sm">
+            {deliveries.map((d) => (
+              <li key={d.id} className="flex flex-wrap justify-between gap-2 py-2">
+                <span>
+                  {connections.find((c) => c.item.id === d.endpoint_id)?.item.name ?? "Webhook"} ·{" "}
+                  {d.event_type} · {formatWhen(d.created_at)}
+                </span>
+                <span className="flex items-center gap-2">
+                  <StatusBadge status={d.status} />
+                  <span className="text-xs text-ink-500">
+                    attempts {d.attempt_count}
+                    {d.last_error ? ` · ${d.last_error}` : ""}
+                  </span>
+                </span>
               </li>
             ))}
           </ul>
-        )}
-      </Panel>
+        </Panel>
+      ) : null}
+
+      {modal ? (
+        <ConnectionFormModal
+          editing={modal.editing}
+          connections={connections}
+          groups={groups}
+          alertProviders={alertProviders}
+          searchProviders={searchProviders}
+          onClose={closeModal}
+          onSaved={onSaved}
+        />
+      ) : null}
     </div>
   );
 }

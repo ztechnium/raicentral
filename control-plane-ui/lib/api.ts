@@ -15,8 +15,6 @@ import type {
   RagSourceSummary,
   CaseSummary,
   CaseDetail,
-  ApiKeySummary,
-  IssuedApiKey,
   SystemSummary,
   ProviderSettings,
   ProviderStatus,
@@ -83,7 +81,6 @@ import type {
   RiskMonitor,
   InterventionDecision,
   PolicyRecommendation,
-  ContentEvaluatorConfig,
   TrajectoryRiskBundle,
   EvaluationSuite,
   EvaluationSuiteDetail,
@@ -551,22 +548,6 @@ export function resolveCase(
       `/admin/api/cases/${caseId}/resolve`,
       data,
     ),
-  );
-}
-
-// Administration
-export function getApiKeys() {
-  return apiGet<ApiKeySummary[]>("/admin/api/api-keys");
-}
-
-export function issueApiKey(payload: { system_id: string; scopes?: string[] }) {
-  return apiPost<IssuedApiKey>("/admin/api/api-keys/issue", payload);
-}
-
-export function revokeApiKey(apiKeyId: string) {
-  return apiPost<{ ok: boolean; api_key_id: string; status: string }>(
-    "/admin/api/api-keys/revoke",
-    { api_key_id: apiKeyId },
   );
 }
 
@@ -1949,34 +1930,6 @@ export function dismissPolicyRecommendation(recommendationId: string, reject = f
   );
 }
 
-export function getContentEvaluatorConfig(aiSystemId?: string) {
-  const query = aiSystemId ? `?ai_system_id=${aiSystemId}` : "";
-  return apiGet<ContentEvaluatorConfig>(`/v1/content-evaluator/config${query}`);
-}
-
-export function upsertContentEvaluatorConfig(payload: {
-  ai_system_id?: string | null;
-  provider: string;
-  model: string;
-  enabled?: boolean;
-  api_key?: string | null;
-  temperature?: number;
-  timeout_seconds?: number;
-  max_rules_per_call?: number;
-  confidence_threshold?: number;
-  minimum_confidence_to_mark?: number;
-  minimum_confidence_to_monitor?: number;
-  minimum_confidence_to_intervene?: number;
-  fail_closed?: boolean;
-  fallback_provider?: string | null;
-  base_url?: string | null;
-  location?: string | null;
-  gcp_project_id?: string | null;
-  service_account_json?: string | null;
-}) {
-  return apiPut<ContentEvaluatorConfig>(`/v1/content-evaluator/config`, payload);
-}
-
 export function testContentEvaluator(payload: {
   ai_system_id: string;
   content: string;
@@ -2484,10 +2437,7 @@ export function listOrganizationDepartments() {
   return apiGet<{ items: Department[]; organization_id: string }>("/v1/organization/departments");
 }
 
-export function createOrganizationDepartment(payload: {
-  name: string;
-  description?: string;
-}) {
+export function createOrganizationDepartment(payload: { name: string; description?: string }) {
   return apiPost<Department>("/v1/organization/departments", payload);
 }
 
@@ -3431,9 +3381,7 @@ export function testSearchIntegration(integrationId: string) {
 }
 
 export function deleteSearchIntegration(integrationId: string) {
-  return apiDelete<{ ok: boolean }>(
-    `/v1/productization/search-integrations/${integrationId}`,
-  );
+  return apiDelete<{ ok: boolean }>(`/v1/productization/search-integrations/${integrationId}`);
 }
 
 export function rotateWebhookEndpoint(endpointId: string) {

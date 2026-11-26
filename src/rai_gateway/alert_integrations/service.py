@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -210,16 +211,20 @@ class AlertIntegrationService:
             types = row.event_types or []
             if not any_subscription_matches(types, event_type):
                 continue
+            row.last_event_at = datetime.now(timezone.utc)
             try:
                 self._deliver_one(row, event_type=event_type, payload=payload, event_id=event_id)
+                row.last_event_status = "DELIVERED"
                 sent += 1
             except Exception as exc:  # noqa: BLE001 — do not block other channels
+                row.last_event_status = "FAILED"
                 logger.warning(
                     "alert integration delivery failed id=%s provider=%s: %s",
                     row.id,
                     row.provider,
                     exc,
                 )
+        self._db.flush()
         return sent
 
     def _deliver_one(
@@ -272,4 +277,8 @@ class AlertIntegrationService:
             "created_by": row.created_by,
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "last_event_at": row.last_event_at.isoformat()
+            if row.last_event_at
+            else None,
+            "last_event_status": row.last_event_status,
         }

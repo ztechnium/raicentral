@@ -15,7 +15,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
-import secrets
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -42,7 +41,6 @@ from rai_gateway.core.observability import generate_trace_id, log_admin_audit
 from rai_gateway.models.database import (
     AdminAudit,
     AdminCredential,
-    ApiKey,
     Case,
     ExecutionAudit,
     PolicyDocument,
@@ -1017,15 +1015,6 @@ class AllowlistUpsertRequest(BaseModel):
     allowed: bool = True
 
 
-class IssueApiKeyRequest(BaseModel):
-    system_id: str = Field(..., min_length=1)
-    scopes: List[str] = Field(default_factory=lambda: ["execute"])
-
-
-class RevokeApiKeyRequest(BaseModel):
-    api_key_id: str = Field(..., min_length=1)
-
-
 class ApprovePromptVersionRequest(BaseModel):
     prompt_id: str = Field(..., min_length=1)
     version: int = Field(..., ge=1)
@@ -1803,7 +1792,6 @@ def admin_home(_: None = Depends(require_admin)) -> str:
     <ul>
       <li><a href='/admin/prompts'>Prompts</a></li>
       <li><a href='/admin/allowlist'>Allowlist</a></li>
-      <li><a href='/admin/api-keys'>API Keys</a></li>
       <li><a href='/admin/executions'>Executions (Audit)</a></li>
       <li><a href='/admin/ops'>Ops</a></li>
     </ul>
@@ -1883,41 +1871,6 @@ def allowlist_page(
     <h2>List</h2>
     <table border='1' cellpadding='6' cellspacing='0'>
       <tr><th>prompt_id</th><th>version</th><th>system_id</th><th>module</th><th>allowed</th></tr>
-      """
-        + "\n".join(rows)
-        + """
-    </table>
-  </body>
-</html>"""
-    )
-
-
-@router.get("/admin/api-keys", response_class=HTMLResponse)
-def api_keys_page(
-    db: Session = Depends(get_db), _: None = Depends(require_admin)
-) -> str:
-    keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).limit(200).all()
-    rows = []
-    for k in keys:
-        rows.append(
-            f"<tr><td>{k.api_key_id}</td><td>{k.system_id}</td><td>{k.status}</td>"
-            f"<td>{','.join(k.scopes or [])}</td></tr>"
-        )
-
-    return (
-        """<!doctype html>
-<html>
-  <head><meta charset='utf-8'><title>API Keys</title></head>
-  <body>
-    <h1>API Keys</h1>
-    <p><a href='/admin'>Back</a></p>
-
-    <h2>Issue Key</h2>
-    <p>POST JSON to <code>/admin/api/api-keys/issue</code> (plaintext key returned once).</p>
-
-    <h2>List</h2>
-    <table border='1' cellpadding='6' cellspacing='0'>
-      <tr><th>api_key_id</th><th>system_id</th><th>status</th><th>scopes</th></tr>
       """
         + "\n".join(rows)
         + """
@@ -2208,130 +2161,6 @@ def upsert_allowlist(
     )
 
     return {"ok": True}
-
-
-@router.post("/admin/api/api-keys/issue")
-def issue_api_key(
-    payload: IssueApiKeyRequest,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_admin),
-    x_admin_role: Optional[str] = Header(default=None, alias="X-Admin-Role"),
-):
-    actor_role = require_admin_permission(db, "api_keys:write", x_admin_role)
-    trace_id = generate_trace_id()
-
-    # Return plaintext once; store hash.
-    plaintext = secrets.token_urlsafe(32)
-    key_hash = _sha256_hex(plaintext)
-
-    record = ApiKey(
-        key_hash=key_hash,
-        system_id=payload.system_id,
-        scopes=payload.scopes,
-        status="active",
-    )
-    db.add(record)
-    db.commit()
-
-    db.add(
-        AdminAudit(
-            trace_id=trace_id,
-            actor_user_id="admin",
-            actor_role=actor_role,
-            action="api_key.issue",
-            target={
-                "api_key_id": str(record.api_key_id),
-                "system_id": payload.system_id,
-                "scopes": payload.scopes,
-            },
-            auth_strength="admin_token",
-        )
-    )
-    db.commit()
-
-    log_admin_audit(
-        trace_id=trace_id,
-        actor_user_id="admin",
-        actor_role=actor_role,
-        action="api_key.issue",
-        target={"api_key_id": str(record.api_key_id), "system_id": payload.system_id},
-        auth_strength="admin_token",
-    )
-
-    return {
-        "api_key_id": str(record.api_key_id),
-        "system_id": payload.system_id,
-        "scopes": payload.scopes,
-        "api_key": plaintext,
-        "note": "Plaintext key is shown only once. Store it securely.",
-    }
-
-
-@router.get("/admin/api/api-keys")
-def list_api_keys(
-    db: Session = Depends(get_db),
-    _: None = Depends(require_admin),
-    x_admin_role: Optional[str] = Header(default=None, alias="X-Admin-Role"),
-):
-    require_admin_permission(db, "api_keys:read", x_admin_role)
-    keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).limit(500).all()
-    return [
-        {
-            "api_key_id": str(k.api_key_id),
-            "system_id": k.system_id,
-            "status": k.status,
-            "scopes": k.scopes or [],
-            "created_at": k.created_at.isoformat() if k.created_at else None,
-            "revoked_at": k.revoked_at.isoformat() if k.revoked_at else None,
-            "expires_at": k.expires_at.isoformat() if k.expires_at else None,
-        }
-        for k in keys
-    ]
-
-
-@router.post("/admin/api/api-keys/revoke")
-def revoke_api_key(
-    payload: RevokeApiKeyRequest,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_admin),
-    x_admin_role: Optional[str] = Header(default=None, alias="X-Admin-Role"),
-):
-    actor_role = require_admin_permission(db, "api_keys:write", x_admin_role)
-    trace_id = generate_trace_id()
-
-    record = db.query(ApiKey).filter(ApiKey.api_key_id == payload.api_key_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="API key not found")
-
-    record.status = "revoked"
-    record.revoked_at = func.now()
-    db.commit()
-
-    db.add(
-        AdminAudit(
-            trace_id=trace_id,
-            actor_user_id="admin",
-            actor_role=actor_role,
-            action="api_key.revoke",
-            target={
-                "api_key_id": str(record.api_key_id),
-                "system_id": record.system_id,
-            },
-            auth_strength="admin_token",
-        )
-    )
-    db.commit()
-
-    log_admin_audit(
-        trace_id=trace_id,
-        actor_user_id="admin",
-        actor_role=actor_role,
-        action="api_key.revoke",
-        target={"api_key_id": str(record.api_key_id), "system_id": record.system_id},
-        auth_strength="admin_token",
-    )
-
-    return {"ok": True, "api_key_id": str(record.api_key_id), "status": record.status}
 
 
 @router.post("/admin/api/prompt-versions/approve")

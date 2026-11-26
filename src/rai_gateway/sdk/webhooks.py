@@ -333,7 +333,18 @@ class WebhookService:
             .order_by(WebhookEndpoint.created_at.desc())
             .all()
         )
-        return [self._serialize(r) for r in rows]
+        latest = self._latest_deliveries()
+        return [self._serialize(r, latest.get(r.id)) for r in rows]
+
+    def _latest_deliveries(self) -> dict[UUID, WebhookDelivery]:
+        """Newest delivery per endpoint (PostgreSQL DISTINCT ON)."""
+        rows = (
+            self._db.query(WebhookDelivery)
+            .distinct(WebhookDelivery.endpoint_id)
+            .order_by(WebhookDelivery.endpoint_id, WebhookDelivery.created_at.desc())
+            .all()
+        )
+        return {r.endpoint_id: r for r in rows}
 
     def list_deliveries(self, *, limit: int = 50) -> list[dict[str, Any]]:
         rows = (
@@ -382,7 +393,9 @@ class WebhookService:
         self._db.flush()
         return self._serialize(endpoint)
 
-    def _serialize(self, endpoint: WebhookEndpoint) -> dict[str, Any]:
+    def _serialize(
+        self, endpoint: WebhookEndpoint, latest: WebhookDelivery | None = None
+    ) -> dict[str, Any]:
         return {
             "id": str(endpoint.id),
             "name": endpoint.name,
@@ -399,4 +412,8 @@ class WebhookService:
             "last_rotated_at": endpoint.last_rotated_at.isoformat()
             if endpoint.last_rotated_at
             else None,
+            "last_event_at": latest.created_at.isoformat()
+            if latest and latest.created_at
+            else None,
+            "last_event_status": latest.status if latest else None,
         }

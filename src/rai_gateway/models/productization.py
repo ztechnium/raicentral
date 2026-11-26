@@ -195,6 +195,9 @@ class AlertChannelIntegration(Base):
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Most recent delivery attempt for this channel.
+    last_event_at = Column(DateTime(timezone=True), nullable=True)
+    last_event_status = Column(String, nullable=True)
 
 
 class SearchBackendIntegration(Base):

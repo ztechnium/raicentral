@@ -89,7 +89,7 @@ export default function RiskOverviewPage() {
           <div className="flex items-center gap-3">
             <StatusBadge status={data?.evaluator?.status || "NOT_ACTIVE"} />
             <Link className="text-sm underline" href="/risk/content-evaluator">
-              Configure
+              Test
             </Link>
           </div>
         </div>

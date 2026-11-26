@@ -13,21 +13,6 @@ vi.mock("@/lib/api", () => ({
       },
     ],
   }),
-  getContentEvaluatorConfig: vi.fn().mockResolvedValue({
-    data: {
-      status: "ACTIVE",
-      enabled: true,
-      provider: "openai",
-      model: "gpt-4o-mini",
-      health_status: "HEALTHY",
-      has_api_key: true,
-      fail_closed: false,
-      minimum_confidence_to_mark: 0.5,
-      minimum_confidence_to_monitor: 0.7,
-      minimum_confidence_to_intervene: 0.9,
-      last_success_at: "2026-09-26T12:00:00.000Z",
-    },
-  }),
   testContentEvaluator: vi.fn().mockResolvedValue({
     data: {
       status: "COMPLETED",
@@ -57,25 +42,19 @@ vi.mock("@/lib/api", () => ({
       ],
     },
   }),
-  upsertContentEvaluatorConfig: vi.fn(),
 }));
 
 import ContentEvaluatorPage from "@/app/(app)/risk/content-evaluator/page";
 import { testContentEvaluator } from "@/lib/api";
 
 describe("ContentEvaluatorPage", () => {
-  it("shows the configured provider and renders a structured test result", async () => {
+  it("shows only the test bench and renders a structured test result", async () => {
     render(<ContentEvaluatorPage />);
 
-    expect(await screen.findByRole("radio", { name: "OpenAI" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.getByLabelText("Model")).toHaveValue("gpt-4o-mini");
-    expect(screen.getByText("On file")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("radio", { name: "DeepSeek" }));
-    expect(screen.getByLabelText("Model")).toHaveValue("deepseek-chat");
+    expect(await screen.findByLabelText("AI system")).toHaveValue("sys-1");
+    expect(screen.queryByText("Provider configuration")).not.toBeInTheDocument();
+    expect(screen.queryByText("Confidence thresholds")).not.toBeInTheDocument();
+    expect(screen.queryByText("Runtime limits")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Run test" }));
 

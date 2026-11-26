@@ -45,9 +45,7 @@ export type NavIcon =
   | "shield"
   | "users"
   | "user-cog"
-  | "key-round"
   | "flag"
-  | "settings"
   | "scroll-text"
   | "file-bar-chart"
   | "coins";
@@ -219,28 +217,9 @@ export const navSections: NavSection[] = [
         roles: ["General Admin", "RAI Officer"],
       },
       {
-        label: "API Keys",
-        href: "/administration/api-keys",
-        icon: "key-round",
-        roles: ["General Admin"],
-        platformOnly: true,
-      },
-      {
-        label: "Settings",
-        href: "/settings",
-        icon: "settings",
-        roles: ["General Admin", "RAI Officer"],
-      },
-      {
         label: "Integrations",
         href: "/settings/integrations",
         icon: "radio",
-        roles: ["General Admin", "RAI Officer"],
-      },
-      {
-        label: "Webhooks",
-        href: "/settings/webhooks",
-        icon: "settings",
         roles: ["General Admin", "RAI Officer"],
       },
     ],

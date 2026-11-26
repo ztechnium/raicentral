@@ -6,13 +6,14 @@ This script exercises the first-release flow:
 - Create prompt + version (draft)
 - Approve version (biz_approved -> active)
 - Allowlist system/module
-- Issue API key
 - Execute prompt via /v1/execute
 - Query executions (admin)
 
 Prereqs:
 - Docker stack running (docker compose up -d)
 - Admin console enabled (ADMIN_TOKEN set; docker-compose defaults to change-me)
+- API_KEY set to a client API key for SYSTEM_ID (see docs/API_KEY_STORAGE.md);
+  not needed if the gateway runs with REQUIRE_API_KEY=false
 
 Run:
 - python scripts/e2e_release1_smoke.py
@@ -30,6 +31,7 @@ SYSTEM_ID = os.environ.get("SYSTEM_ID", "test_system")
 MODULE = os.environ.get("MODULE", "test_module")
 PROMPT_ID = os.environ.get("PROMPT_ID", "release1_e2e_prompt")
 PROMPT_VERSION = int(os.environ.get("PROMPT_VERSION", "1"))
+API_KEY = os.environ.get("API_KEY", "")
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -133,16 +135,6 @@ def main() -> int:
         _assert(r.status_code == 200, f"allowlist failed: {r.status_code} {r.text}")
         print("allowlist ok")
 
-        # Issue key
-        r = client.post(
-            f"{BASE_URL}/admin/api/api-keys/issue",
-            headers=admin_headers,
-            json={"system_id": SYSTEM_ID, "scopes": ["execute"]},
-        )
-        _assert(r.status_code == 200, f"issue key failed: {r.status_code} {r.text}")
-        api_key = r.json()["api_key"]
-        print("issued api key", r.json().get("api_key_id"))
-
         # Execute
         payload = {
             "prompt_id": PROMPT_ID,
@@ -152,7 +144,7 @@ def main() -> int:
             "variables": {"name": "World"},
         }
         r = client.post(
-            f"{BASE_URL}/v1/execute", json=payload, headers={"X-API-Key": api_key}
+            f"{BASE_URL}/v1/execute", json=payload, headers={"X-API-Key": API_KEY}
         )
         _assert(r.status_code == 200, f"execute failed: {r.status_code} {r.text}")
         data = r.json()

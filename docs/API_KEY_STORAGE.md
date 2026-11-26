@@ -173,23 +173,25 @@ docker compose restart rai-gateway
 
 ### Client API Keys
 
+There is no UI or admin endpoint for client API keys. Operators manage them
+directly in the database.
+
 **Rotation on-demand** (compromise, employee offboarding, expiry):
 
 ```bash
-# Option 1: Revoke via API
-curl -X POST http://localhost:8001/admin/api/api-keys/revoke \
-  -H "X-Admin-Token: change-me" \
-  -d '{"api_key_id": "67a646c9-..."}'
+# 1. Generate a new key and its SHA-256 hash
+python -c "import secrets,hashlib; k=secrets.token_urlsafe(32); print(k); print(hashlib.sha256(k.encode()).hexdigest())"
+```
 
-# Option 2: Direct database update
-UPDATE api_keys 
-SET status='revoked', revoked_at=NOW() 
+```sql
+-- 2. Store the hash only
+INSERT INTO api_keys (api_key_id, key_hash, system_id, scopes, status)
+VALUES (gen_random_uuid(), '<sha256-hash>', 'my_system', ARRAY['execute'], 'active');
+
+-- 3. Revoke the old key
+UPDATE api_keys
+SET status='revoked', revoked_at=NOW()
 WHERE api_key_id='67a646c9-...';
-
-# Issue new key
-curl -X POST http://localhost:8001/admin/api/api-keys/issue \
-  -H "X-Admin-Token: change-me" \
-  -d '{"system_id": "test_system", "scopes": ["execute"]}'
 ```
 
 ---
@@ -252,26 +254,15 @@ Response returned
 |-------------|----------------|
 | **At-rest encryption** | PostgreSQL with encryption enabled |
 | **Hashed storage** | SHA-256 for client keys |
-| **Access logs** | All key usage logged in `admin_audit` table |
+| **Access logs** | Executions logged in `executions_audit` table |
 | **Least privilege** | Scoped permissions (execute vs admin) |
 | **Key expiry** | Optional `expires_at` timestamp |
 | **Revocation** | Instant via status flag |
 
 ### Audit Trail
 
-Every key operation is logged:
-
-```sql
-SELECT * FROM admin_audit 
-WHERE action IN ('api_key.issue', 'api_key.revoke')
-ORDER BY created_at DESC;
-
--- Example output:
-trace_id                             | actor      | action          | target
--------------------------------------|------------|-----------------|-------------
-6b664ec7-e0a3-485d-a7eb-382f692aefd1 | admin      | api_key.issue   | {"system_id": "test_system"}
-...                                  | admin      | api_key.revoke  | {"api_key_id": "..."}
-```
+Direct database changes to `api_keys` are not written to `admin_audit`. Record
+key issuance and revocation through your database change process.
 
 ---
 
@@ -324,43 +315,13 @@ vault kv put secret/rai/providers \
 
 ## 7. **Quick Reference**
 
-### Issue New Client API Key
-
-```bash
-curl -X POST http://localhost:8001/admin/api/api-keys/issue \
-  -H "X-Admin-Token: change-me" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "system_id": "my_system",
-    "scopes": ["execute"]
-  }'
-
-# Response (save this - shown only once!)
-{
-  "api_key": "rai_example_key",
-  "api_key_id": "6b664ec7-e0a3-485d-a7eb-382f692aefd1",
-  "system_id": "my_system",
-  "scopes": ["execute"],
-  "note": "Plaintext key is shown only once. Store it securely."
-}
+```sql
+-- List keys (hashes only; plaintext is never stored)
+SELECT api_key_id, system_id, scopes, status, created_at, revoked_at
+FROM api_keys ORDER BY created_at DESC;
 ```
 
-### List Active Keys
-
-```bash
-curl -H "X-Admin-Token: change-me" \
-  http://localhost:8001/admin/api/api-keys
-
-# Returns metadata only (no plaintext keys)
-```
-
-### Revoke Key
-
-```bash
-curl -X POST http://localhost:8001/admin/api/api-keys/revoke \
-  -H "X-Admin-Token: change-me" \
-  -d '{"api_key_id": "6b664ec7-..."}'
-```
+To issue or revoke a key, see [Client API Keys](#client-api-keys) above.
 
 ---
 
@@ -369,7 +330,7 @@ curl -X POST http://localhost:8001/admin/api/api-keys/revoke \
 | Type | Stored | Format | Rotation | Access |
 |------|--------|--------|----------|--------|
 | **Provider Keys** (OpenAI, etc.) | `.env` / Secrets Manager | Plaintext | 90 days | Gateway only |
-| **Client API Keys** (Systems) | PostgreSQL `api_keys` | SHA-256 hash | On-demand | Issued once, never retrievable |
+| **Client API Keys** (Systems) | PostgreSQL `api_keys` | SHA-256 hash | On-demand | Provisioned by operator, never retrievable |
 | **Admin Token** | `.env` / Secrets Manager | Plaintext | On-demand | Admin console access |
 | **Encryption Keys** | `.env` / Secrets Manager | Plaintext | 1 year | Evidence encryption |
 
@@ -378,6 +339,6 @@ curl -X POST http://localhost:8001/admin/api/api-keys/revoke \
 2. ✅ **Provider keys** = plaintext in secure env storage
 3. ✅ **Client keys** = hashed in database, plaintext shown **once**
 4. ✅ **Rotate regularly** (90 days for providers, on-demand for clients)
-5. ✅ **Audit everything** (`admin_audit` table tracks all operations)
+5. ✅ **Audit everything** (record manual key changes yourself)
 
 Your keys are **secure by design**! 🔒

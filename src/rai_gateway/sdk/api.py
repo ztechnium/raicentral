@@ -712,15 +712,18 @@ def create_webhook(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_permission("sdk:manage")),
 ):
-    endpoint, secret = WebhookService(db).create_endpoint(
-        name=body.name,
-        url=body.url,
-        event_types=body.event_types,
-        custom_headers=body.custom_headers,
-        created_by=tenant.user_id,
-    )
-    db.commit()
-    return {"endpoint": endpoint, "secret": secret}
+    try:
+        endpoint, secret = WebhookService(db).create_endpoint(
+            name=body.name,
+            url=body.url,
+            event_types=body.event_types,
+            custom_headers=body.custom_headers,
+            created_by=tenant.user_id,
+        )
+        db.commit()
+        return {"endpoint": endpoint, "secret": secret}
+    except SdkError as exc:
+        raise _sdk_http(exc) from exc
 
 
 @admin_router.get("/webhooks")

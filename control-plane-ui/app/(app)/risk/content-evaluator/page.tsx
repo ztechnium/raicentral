@@ -1,95 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PostureStrip } from "@/components/console/page-parts";
 import { FormField } from "@/components/registry/form-field";
 import { Panel } from "@/components/registry/panel";
 import { StatusBadge } from "@/components/registry/status-badge";
 import { SectionHeader } from "@/components/section-header";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  getAISystems,
-  getContentEvaluatorConfig,
-  testContentEvaluator,
-  upsertContentEvaluatorConfig,
-} from "@/lib/api";
+import { getAISystems, testContentEvaluator } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { AISystemSummary, ContentEvaluatorConfig } from "@/lib/types";
-
-type ProviderId =
-  | "mock"
-  | "openai"
-  | "openai_compatible"
-  | "deepseek"
-  | "gemini"
-  | "vertex";
-
-const PROVIDERS: Array<{
-  id: ProviderId;
-  label: string;
-  description: string;
-  defaultModel: string;
-  modelHint: string;
-  needsApiKey: boolean;
-  needsBaseUrl?: boolean;
-  isVertex?: boolean;
-}> = [
-  {
-    id: "mock",
-    label: "Mock",
-    description: "Deterministic local evaluator for demos and CI.",
-    defaultModel: "mock-evaluator",
-    modelHint: "Fixed model. No external call.",
-    needsApiKey: false,
-  },
-  {
-    id: "openai",
-    label: "OpenAI",
-    description: "Chat Completions against your content rules.",
-    defaultModel: "gpt-4o-mini",
-    modelHint: "gpt-4o-mini, gpt-4o, gpt-4.1-mini",
-    needsApiKey: true,
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    description: "OpenAI-compatible DeepSeek chat API.",
-    defaultModel: "deepseek-chat",
-    modelHint: "deepseek-chat, deepseek-reasoner",
-    needsApiKey: true,
-  },
-  {
-    id: "openai_compatible",
-    label: "OpenAI-compatible",
-    description: "Any OpenAI-style endpoint: Ollama, vLLM, LiteLLM, Groq, OpenRouter, Azure.",
-    defaultModel: "llama3.1",
-    modelHint: "The model name your endpoint serves.",
-    needsApiKey: false,
-    needsBaseUrl: true,
-  },
-  {
-    id: "gemini",
-    label: "Gemini (Google AI Studio)",
-    description: "Google AI Gemini API with an API key (generativelanguage.googleapis.com).",
-    defaultModel: "gemini-2.5-flash",
-    modelHint: "gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash",
-    needsApiKey: true,
-  },
-  {
-    id: "vertex",
-    label: "Gemini on Vertex AI",
-    description:
-      "Vertex AI with a Google service account. Uses the gateway's own account unless you paste a key.",
-    defaultModel: "gemini-3.1-flash-lite",
-    modelHint: "gemini-3.1-flash-lite (global only), gemini-2.5-flash",
-    needsApiKey: false,
-    isVertex: true,
-  },
-];
+import type { AISystemSummary } from "@/lib/types";
 
 const SAMPLES: Array<{ label: string; content: string; contentType: "INPUT" | "OUTPUT" }> = [
   {
@@ -109,10 +31,6 @@ const SAMPLES: Array<{ label: string; content: string; contentType: "INPUT" | "O
   },
 ];
 
-function providerMeta(id: string) {
-  return PROVIDERS.find((item) => item.id === id) ?? PROVIDERS[0];
-}
-
 function humanize(value: string) {
   return value
     .toLowerCase()
@@ -120,19 +38,6 @@ function humanize(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function formatWhen(value?: string | null) {
-  if (!value) return "Never";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
-}
-
-function readUnitInterval(value: string) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) return null;
-  return parsed;
 }
 
 function asRecords(value: unknown) {
@@ -154,56 +59,12 @@ export default function ContentEvaluatorPage() {
   const [systems, setSystems] = useState<AISystemSummary[]>([]);
   const [systemsReady, setSystemsReady] = useState(false);
   const [systemsFailed, setSystemsFailed] = useState(false);
-  const [config, setConfig] = useState<ContentEvaluatorConfig | null>(null);
   const [aiSystemId, setAiSystemId] = useState("");
-  const [provider, setProvider] = useState<ProviderId>("mock");
-  const [model, setModel] = useState(providerMeta("mock").defaultModel);
-  const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [location, setLocation] = useState("global");
-  const [gcpProject, setGcpProject] = useState("");
-  const [serviceAccountJson, setServiceAccountJson] = useState("");
-  const [enabled, setEnabled] = useState(true);
-  const [failClosed, setFailClosed] = useState(false);
-  const [mark, setMark] = useState("0.5");
-  const [monitor, setMonitor] = useState("0.7");
-  const [intervene, setIntervene] = useState("0.9");
-  const [temperature, setTemperature] = useState("0");
-  const [timeoutSeconds, setTimeoutSeconds] = useState("30");
-  const [maxRules, setMaxRules] = useState("20");
-  const [fallback, setFallback] = useState("");
-  const [confidenceThreshold, setConfidenceThreshold] = useState(0.5);
   const [contentType, setContentType] = useState<"INPUT" | "OUTPUT">("OUTPUT");
   const [testContent, setTestContent] = useState(SAMPLES[0].content);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const selected = useMemo(() => providerMeta(provider), [provider]);
-
-  const applyConfig = useCallback((cfg: ContentEvaluatorConfig) => {
-    const meta = providerMeta(cfg.provider || "mock");
-    setConfig(cfg);
-    setProvider(meta.id);
-    setModel(cfg.model || meta.defaultModel);
-    setEnabled(cfg.enabled !== false && cfg.status !== "NOT_ACTIVE");
-    setFailClosed(Boolean(cfg.fail_closed));
-    setMark(String(cfg.minimum_confidence_to_mark ?? 0.5));
-    setMonitor(String(cfg.minimum_confidence_to_monitor ?? 0.7));
-    setIntervene(String(cfg.minimum_confidence_to_intervene ?? 0.9));
-    setTemperature(String(cfg.temperature ?? 0));
-    setTimeoutSeconds(String(cfg.timeout_seconds ?? 30));
-    setMaxRules(String(cfg.max_rules_per_call ?? 20));
-    setFallback(cfg.fallback_provider ?? "");
-    setBaseUrl(cfg.base_url ?? "");
-    setLocation(cfg.location ?? "global");
-    setGcpProject(cfg.gcp_project_id ?? "");
-    setServiceAccountJson("");
-    setConfidenceThreshold(cfg.confidence_threshold ?? cfg.minimum_confidence_to_mark ?? 0.5);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,128 +90,6 @@ export default function ContentEvaluatorPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!systemsReady) return;
-    if (!aiSystemId) {
-      setConfig(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void getContentEvaluatorConfig(aiSystemId)
-      .then((res) => {
-        if (!cancelled) applyConfig(res.data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load config");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [aiSystemId, applyConfig, systemsReady]);
-
-  function onProviderChange(next: string) {
-    const meta = providerMeta(next);
-    setProvider(meta.id);
-    setModel(meta.defaultModel);
-    setApiKey("");
-    setServiceAccountJson("");
-    setMessage(null);
-  }
-
-  async function onSave() {
-    if (!aiSystemId) {
-      setError("Select an AI system before saving.");
-      return;
-    }
-    if (selected.needsApiKey && !apiKey && !config?.has_api_key) {
-      setError(`API key is required for ${selected.label}.`);
-      return;
-    }
-    if (selected.needsBaseUrl && !baseUrl.trim()) {
-      setError(`Base URL is required for ${selected.label}.`);
-      return;
-    }
-    if (serviceAccountJson.trim()) {
-      try {
-        const parsed = JSON.parse(serviceAccountJson) as Record<string, unknown>;
-        if (!parsed.client_email || !parsed.private_key) throw new Error("missing keys");
-      } catch {
-        setError("Service account JSON must be a valid key file with client_email and private_key.");
-        return;
-      }
-    }
-    const markValue = readUnitInterval(mark);
-    const monitorValue = readUnitInterval(monitor);
-    const interveneValue = readUnitInterval(intervene);
-    if (markValue == null || monitorValue == null || interveneValue == null) {
-      setError("Confidence thresholds must be numbers between 0 and 1.");
-      return;
-    }
-    if (!(markValue <= monitorValue && monitorValue <= interveneValue)) {
-      setError("Thresholds must increase: mark, then monitor, then intervene.");
-      return;
-    }
-    const temperatureValue = Number(temperature);
-    const timeoutValue = Number(timeoutSeconds);
-    const maxRulesValue = Number(maxRules);
-    if (!Number.isFinite(temperatureValue) || temperatureValue < 0 || temperatureValue > 2) {
-      setError("Temperature must be between 0 and 2.");
-      return;
-    }
-    if (!Number.isInteger(timeoutValue) || timeoutValue < 1 || timeoutValue > 120) {
-      setError("Timeout must be a whole number of seconds between 1 and 120.");
-      return;
-    }
-    if (!Number.isInteger(maxRulesValue) || maxRulesValue < 1 || maxRulesValue > 100) {
-      setError("Max rules per call must be a whole number between 1 and 100.");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const res = await upsertContentEvaluatorConfig({
-        ai_system_id: aiSystemId,
-        provider,
-        model: model.trim() || selected.defaultModel,
-        enabled,
-        api_key: apiKey || null,
-        temperature: temperatureValue,
-        timeout_seconds: timeoutValue,
-        max_rules_per_call: maxRulesValue,
-        confidence_threshold: confidenceThreshold,
-        minimum_confidence_to_mark: markValue,
-        minimum_confidence_to_monitor: monitorValue,
-        minimum_confidence_to_intervene: interveneValue,
-        fail_closed: failClosed,
-        fallback_provider: fallback || null,
-        base_url: baseUrl.trim() || null,
-        location: selected.isVertex ? location.trim() || null : null,
-        gcp_project_id: selected.isVertex ? gcpProject.trim() || null : null,
-        service_account_json: serviceAccountJson.trim() || null,
-      });
-      applyConfig(res.data);
-      setApiKey("");
-      setServiceAccountJson("");
-      setMessage(
-        enabled ? "Evaluator saved and active for this AI system." : "Evaluator saved as inactive.",
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function onTest() {
     if (!aiSystemId) {
       setError("Select an AI system that has content rules before testing.");
@@ -362,7 +101,6 @@ export default function ContentEvaluatorPage() {
     }
     setTesting(true);
     setError(null);
-    setMessage(null);
     setTestResult(null);
     try {
       const res = await testContentEvaluator({
@@ -378,34 +116,19 @@ export default function ContentEvaluatorPage() {
     }
   }
 
-  const systemName = systems.find((system) => system.id === aiSystemId)?.name;
-  const keyLabel = !selected.needsApiKey
-    ? "Not required"
-    : config?.has_api_key
-      ? "On file"
-      : "Missing";
-
   return (
     <div className="space-y-6">
       <SectionHeader
         eyebrow="Risk intelligence"
         title="Content Evaluator"
-        subtitle="Provider, thresholds, and a test bench for content rules. API keys stay on the server."
+        subtitle="Test bench for content rules. The provider is set in the gateway environment."
         actions={
-          <>
-            <Link
-              href="/governance/rai-rules"
-              className="inline-flex h-9 items-center rounded-md border border-base-200 bg-base-50 px-3 text-sm font-semibold text-ink-700 hover:bg-base-700"
-            >
-              Content rules
-            </Link>
-            <Link
-              href="/settings"
-              className="inline-flex h-9 items-center rounded-md px-3 text-sm font-semibold text-ink-600 hover:bg-base-700"
-            >
-              Settings
-            </Link>
-          </>
+          <Link
+            href="/governance/rai-rules"
+            className="inline-flex h-9 items-center rounded-md border border-base-200 bg-base-50 px-3 text-sm font-semibold text-ink-700 hover:bg-base-700"
+          >
+            Content rules
+          </Link>
         }
       />
 
@@ -414,39 +137,13 @@ export default function ContentEvaluatorPage() {
           {error}
         </div>
       ) : null}
-      {message ? (
-        <div className="rounded-lg border border-accent-200 bg-accent-50 px-4 py-3 text-sm text-accent-700">
-          {message}
-        </div>
-      ) : null}
 
-      <PostureStrip
-        items={[
-          {
-            label: "Status",
-            value: <StatusBadge status={config?.status || (loading ? "LOADING" : "NOT_ACTIVE")} />,
-          },
-          {
-            label: "Health",
-            value: config?.health_status ? humanize(config.health_status) : "Unknown",
-          },
-          {
-            label: "Provider",
-            value: config?.provider
-              ? `${providerMeta(config.provider).label} · ${config.model || "—"}`
-              : "Not configured",
-          },
-          { label: "API key", value: keyLabel },
-          { label: "Last success", value: formatWhen(config?.last_success_at) },
-        ]}
-      />
-
-      {!systemsReady || (loading && !config && !systemsFailed) ? (
+      {!systemsReady ? (
         <div className="rounded-lg border border-base-200 bg-base-50 px-4 py-8 text-sm text-ink-500">
-          Loading evaluator configuration…
+          Loading AI systems…
         </div>
       ) : systemsFailed ? null : systems.length === 0 ? (
-        <Panel title="No AI systems" description="The evaluator is configured per AI system.">
+        <Panel title="No AI systems" description="Content rules are evaluated per AI system.">
           <Link
             href="/governance/registry"
             className="text-sm font-semibold text-accent-700 hover:underline"
@@ -455,14 +152,12 @@ export default function ContentEvaluatorPage() {
           </Link>
         </Panel>
       ) : (
-        <div className="grid items-start gap-6 xl:grid-cols-2">
+        <div className="max-w-3xl">
           <Panel
-            title="Provider configuration"
-            description={
-              systemName ? `Scoped to ${systemName}.` : "Choose the system this provider evaluates."
-            }
+            title="Test evaluation"
+            description="Runs the evaluator against this system's content rules. Nothing is stored as a production finding."
           >
-            <div className="space-y-5">
+            <div className="space-y-4">
               <FormField label="AI system" required hint="Rules and findings stay on this system.">
                 <Select
                   aria-label="AI system"
@@ -470,8 +165,6 @@ export default function ContentEvaluatorPage() {
                   onChange={(event) => {
                     setAiSystemId(event.target.value);
                     setTestResult(null);
-                    setApiKey("");
-                    setMessage(null);
                   }}
                 >
                   {systems.map((system) => (
@@ -482,280 +175,6 @@ export default function ContentEvaluatorPage() {
                 </Select>
               </FormField>
 
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">
-                  Provider
-                </p>
-                <div
-                  className="mt-2 grid gap-2 sm:grid-cols-2"
-                  role="radiogroup"
-                  aria-label="Provider"
-                >
-                  {PROVIDERS.map((item) => {
-                    const active = provider === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        aria-label={item.label}
-                        onClick={() => onProviderChange(item.id)}
-                        className={cn(
-                          "rounded-lg border px-3 py-3 text-left transition",
-                          active
-                            ? "border-accent-600 bg-accent-50 ring-1 ring-accent-600"
-                            : "border-base-200 bg-base-100 hover:border-ink-300",
-                        )}
-                      >
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-ink-900">{item.label}</span>
-                          {active ? (
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-accent-700">
-                              Selected
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="mt-1 block text-xs text-ink-500">{item.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-base-200 bg-base-100 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
-                  {selected.label} connection
-                </p>
-                {config?.source === "ENVIRONMENT" ? (
-                  <p className="mt-2 rounded-md border border-warning-200 bg-warning-50 px-3 py-2 text-xs text-warning-700">
-                    CONTENT_EVALUATOR_PROVIDER is set in the gateway environment, so those
-                    variables are used instead of anything saved here. Remove the variable to
-                    use this screen.
-                  </p>
-                ) : null}
-                <div className="mt-3 grid gap-4">
-                  <FormField label="Model" required hint={selected.modelHint}>
-                    <Input
-                      aria-label="Model"
-                      value={model}
-                      onChange={(event) => setModel(event.target.value)}
-                      placeholder={selected.defaultModel}
-                    />
-                  </FormField>
-                  {selected.needsApiKey ? (
-                    <FormField
-                      label="API key"
-                      required={!config?.has_api_key}
-                      hint={
-                        config?.has_api_key
-                          ? "Leave blank to keep the stored key. The key is write-only."
-                          : "Stored encrypted for this organization. It is never returned to the browser."
-                      }
-                    >
-                      <Input
-                        aria-label="API key"
-                        type="password"
-                        value={apiKey}
-                        autoComplete="off"
-                        onChange={(event) => setApiKey(event.target.value)}
-                        placeholder={
-                          config?.has_api_key ? "••••••••" : `Paste ${selected.label} API key`
-                        }
-                      />
-                    </FormField>
-                  ) : selected.id === "mock" ? (
-                    <p className="text-sm text-ink-500">Mock does not call an external provider.</p>
-                  ) : null}
-                  {selected.needsBaseUrl || selected.id === "openai" || selected.id === "deepseek" ? (
-                    <FormField
-                      label="Base URL"
-                      required={Boolean(selected.needsBaseUrl)}
-                      hint="OpenAI-style endpoint, e.g. http://host.docker.internal:11434/v1. Leave blank for the provider default."
-                    >
-                      <Input
-                        aria-label="Base URL"
-                        value={baseUrl}
-                        onChange={(event) => setBaseUrl(event.target.value)}
-                        placeholder="https://api.example.com/v1"
-                      />
-                    </FormField>
-                  ) : null}
-                  {selected.isVertex ? (
-                    <>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <FormField
-                          label="Location"
-                          hint="Gemini 3.x models are served from global only."
-                        >
-                          <Input
-                            aria-label="Location"
-                            value={location}
-                            onChange={(event) => setLocation(event.target.value)}
-                            placeholder="global"
-                          />
-                        </FormField>
-                        <FormField
-                          label="Google project ID"
-                          hint="Blank uses the gateway's GCP_PROJECT_ID."
-                        >
-                          <Input
-                            aria-label="Google project ID"
-                            value={gcpProject}
-                            onChange={(event) => setGcpProject(event.target.value)}
-                            placeholder="my-gcp-project"
-                          />
-                        </FormField>
-                      </div>
-                      <FormField
-                        label="Service account JSON"
-                        hint={
-                          config?.has_service_account
-                            ? "A key is stored. Paste a new key to replace it, or leave blank to keep it. Write-only."
-                            : "Optional. Blank uses the gateway's own service account (GCP_SERVICE_ACCOUNT_JSON). Needs roles/aiplatform.user. Write-only."
-                        }
-                      >
-                        <Textarea
-                          aria-label="Service account JSON"
-                          rows={4}
-                          value={serviceAccountJson}
-                          autoComplete="off"
-                          onChange={(event) => setServiceAccountJson(event.target.value)}
-                          placeholder={
-                            config?.has_service_account
-                              ? "•••••• stored ••••••"
-                              : '{ "type": "service_account", "client_email": "...", "private_key": "..." }'
-                          }
-                        />
-                      </FormField>
-                    </>
-                  ) : null}
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <FormField label="Runtime" hint="Inactive evaluators are skipped.">
-                      <Select
-                        aria-label="Runtime"
-                        value={enabled ? "on" : "off"}
-                        onChange={(event) => setEnabled(event.target.value === "on")}
-                      >
-                        <option value="on">Active</option>
-                        <option value="off">Inactive</option>
-                      </Select>
-                    </FormField>
-                    <FormField
-                      label="On failure"
-                      hint="Fail closed blocks when the provider errors."
-                    >
-                      <Select
-                        aria-label="On failure"
-                        value={failClosed ? "closed" : "open"}
-                        onChange={(event) => setFailClosed(event.target.value === "closed")}
-                      >
-                        <option value="open">Soft fail</option>
-                        <option value="closed">Fail closed</option>
-                      </Select>
-                    </FormField>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-base-200 bg-base-100 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
-                  Confidence thresholds
-                </p>
-                <p className="mt-1 text-xs text-ink-500">
-                  A violated rule is marked, monitored, or intervened as confidence rises. Values
-                  must increase from left to right.
-                </p>
-                <div className="mt-3 grid gap-4 sm:grid-cols-3">
-                  <FormField label="Mark" hint="Lowest bar">
-                    <Input
-                      aria-label="Mark threshold"
-                      inputMode="decimal"
-                      value={mark}
-                      onChange={(event) => setMark(event.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Monitor" hint="Watch the scope">
-                    <Input
-                      aria-label="Monitor threshold"
-                      inputMode="decimal"
-                      value={monitor}
-                      onChange={(event) => setMonitor(event.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Intervene" hint="Apply the rule effect">
-                    <Input
-                      aria-label="Intervene threshold"
-                      inputMode="decimal"
-                      value={intervene}
-                      onChange={(event) => setIntervene(event.target.value)}
-                    />
-                  </FormField>
-                </div>
-              </div>
-
-              <details className="rounded-lg border border-base-200 bg-base-100 px-4 py-3">
-                <summary className="cursor-pointer text-sm font-semibold text-ink-800">
-                  Runtime limits
-                </summary>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <FormField label="Temperature" hint="0 keeps evaluations stable.">
-                    <Input
-                      aria-label="Temperature"
-                      inputMode="decimal"
-                      value={temperature}
-                      onChange={(event) => setTemperature(event.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Timeout (seconds)">
-                    <Input
-                      aria-label="Timeout seconds"
-                      inputMode="numeric"
-                      value={timeoutSeconds}
-                      onChange={(event) => setTimeoutSeconds(event.target.value)}
-                    />
-                  </FormField>
-                  <FormField label="Max rules per call">
-                    <Input
-                      aria-label="Max rules per call"
-                      inputMode="numeric"
-                      value={maxRules}
-                      onChange={(event) => setMaxRules(event.target.value)}
-                    />
-                  </FormField>
-                  <FormField
-                    label="Fallback provider"
-                    hint="Used only when the primary provider is unavailable."
-                  >
-                    <Select
-                      aria-label="Fallback provider"
-                      value={fallback}
-                      onChange={(event) => setFallback(event.target.value)}
-                    >
-                      <option value="">None</option>
-                      {PROVIDERS.filter((item) => item.id !== provider).map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </FormField>
-                </div>
-              </details>
-
-              <div className="flex flex-wrap gap-2">
-                <Button disabled={saving || !aiSystemId} onClick={() => void onSave()}>
-                  {saving ? "Saving…" : enabled ? "Save and activate" : "Save as inactive"}
-                </Button>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel
-            title="Test evaluation"
-            description="Runs the saved provider against this system's content rules. Nothing is stored as a production finding."
-          >
-            <div className="space-y-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-400">
                   Sample
