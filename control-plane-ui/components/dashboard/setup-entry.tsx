@@ -44,7 +44,11 @@ function EntryAction({ access }: { access: Extract<SetupAccess, "read" | "manage
     );
   }
 
-  const action = setupAction({ access, welcomeComplete: welcome.data.welcome_completed });
+  const action = setupAction({
+    access,
+    welcomeComplete: welcome.data.welcome_completed,
+    skipped: welcome.data.setup_skipped,
+  });
   if (!action) return null;
   return (
     <Shell>

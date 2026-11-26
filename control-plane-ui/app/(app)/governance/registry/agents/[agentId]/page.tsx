@@ -243,7 +243,9 @@ export default function AgentDetailPage() {
               rows={
                 versions.length > 0
                   ? versions.map((v) => [
-                      `v${v.version_number}`,
+                      v.version_label
+                        ? `v${v.version_number} · ${v.version_label}`
+                        : `v${v.version_number}`,
                       <StatusBadge key={`${v.id}-s`} status={v.lifecycle_status} />,
                       v.risk_tier ? <StatusBadge key={`${v.id}-r`} status={v.risk_tier} /> : "—",
                       v.material_change_status !== "NONE" ? (

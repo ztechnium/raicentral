@@ -48,6 +48,7 @@ from rai_gateway.onboarding.api import register as register_onboarding_intake
 from rai_gateway.policy.api import router as policy_router
 from rai_gateway.portfolio.api import router as portfolio_router
 from rai_gateway.provider_gateway.router import router as provider_gateway_router
+from rai_gateway.public_product.first_run_api import router as first_run_router
 from rai_gateway.public_product.welcome_api import router as welcome_router
 from rai_gateway.registry.api import router as registry_router
 from rai_gateway.reporting.api import router as reporting_router
@@ -95,6 +96,7 @@ app.include_router(data_access_router)
 app.include_router(finops_router)
 app.include_router(lineage_router)
 app.include_router(welcome_router)
+app.include_router(first_run_router)
 app.include_router(health_router)
 app.include_router(security_router)
 

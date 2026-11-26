@@ -285,6 +285,7 @@ class OrganizationOnboarding(Base):
     first_trajectory_id = Column(UUID(as_uuid=True), nullable=True)
     status = Column(String, nullable=False, default="NOT_STARTED", index=True)
     welcome_completed_at = Column(DateTime(timezone=True), nullable=True)
+    setup_skipped_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -97,6 +97,8 @@ class AgentVersion(Base):
         UUID(as_uuid=True), ForeignKey("agents.id"), nullable=False, index=True
     )
     version_number = Column(Integer, nullable=False)
+    # Optional human name, e.g. "Support - agent 01 - V1.0.0".
+    version_label = Column(String, nullable=True)
     change_summary = Column(Text)
     lifecycle_status = Column(String, nullable=False, default="DRAFT")
     configuration_snapshot = Column(JSON)

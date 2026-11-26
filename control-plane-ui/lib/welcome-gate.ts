@@ -1,8 +1,8 @@
 /**
  * Setup entry policy (Community, single instance).
  *
- * Setup is discoverable and optional to enter: no authenticated user is forced
- * through /welcome. Capability comes from the exact server permission list
+ * A new organization is sent to /welcome until it finishes or skips setup (see
+ * FirstRunGate); everyone else enters it by choice. Capability comes from the exact server permission list
  * (`sdk:read` / `sdk:manage`), never from a platform-role flag or `canWrite`.
  */
 
@@ -47,14 +47,14 @@ export interface SetupAction {
 export function setupAction(input: {
   access: SetupAccess;
   welcomeComplete: boolean;
+  skipped?: boolean;
 }): SetupAction | null {
   if (input.access === "read") {
     return { label: "View setup status", href: "/app/onboarding" };
   }
   if (input.access !== "manage") return null;
-  return input.welcomeComplete
-    ? { label: "Continue setup", href: "/app/onboarding" }
-    : { label: "Set up RaiCentral", href: "/welcome" };
+  if (input.welcomeComplete) return { label: "Continue setup", href: "/app/onboarding" };
+  return { label: input.skipped ? "Resume setup" : "Set up RaiCentral", href: "/welcome" };
 }
 
 /**

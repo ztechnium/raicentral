@@ -301,6 +301,7 @@ class RegistryService:
         configuration_snapshot: dict[str, Any] | None = None,
         risk_tier: str | None = None,
         evaluation_endpoint_url: str | None = None,
+        version_label: str | None = None,
     ) -> AgentVersion:
         self.get_agent(agent_id)
         max_version = (
@@ -313,6 +314,7 @@ class RegistryService:
         version = AgentVersion(
             agent_id=agent_id,
             version_number=next_number,
+            version_label=version_label,
             change_summary=change_summary,
             configuration_snapshot=configuration_snapshot,
             configuration_digest=digest,
@@ -885,6 +887,7 @@ class RegistryService:
                     {
                         "id": str(version.id),
                         "version_number": version.version_number,
+                        "version_label": version.version_label,
                         "lifecycle_status": version.lifecycle_status,
                         "risk_tier": version.risk_tier,
                         "material_change_status": version.material_change_status,

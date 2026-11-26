@@ -252,7 +252,14 @@ function AgentBlock({
                       <span className="text-ink-500">—</span>
                       <span className="text-ink-500">{formatRelative(version.approved_at)}</span>
                       <span className="font-mono">{bound.length}</span>
-                      <span className="truncate text-ink-600">{version.change_summary || "—"}</span>
+                      <span className="truncate text-ink-600">
+                        {version.version_label ? (
+                          <span className="block truncate font-semibold text-ink-900">
+                            {version.version_label}
+                          </span>
+                        ) : null}
+                        {version.change_summary || "—"}
+                      </span>
                     </Link>
                   </td>
                 </tr>

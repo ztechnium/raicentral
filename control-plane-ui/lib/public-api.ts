@@ -305,6 +305,8 @@ export interface WelcomeSetup {
 export interface WelcomeState {
   welcome_completed: boolean;
   welcome_completed_at?: string | null;
+  /** Absent from servers older than first-run setup. */
+  setup_skipped?: boolean;
   organization: {
     name: string;
     logo?: string | null;
@@ -330,40 +332,6 @@ export async function fetchWelcome(): Promise<WelcomeState> {
   if (!response.ok) {
     throw new PublicApiError(
       await parseError(response, `Failed to load welcome: ${response.status}`),
-      response.status,
-    );
-  }
-  return response.json() as Promise<WelcomeState>;
-}
-
-export async function saveWelcomeProfile(body: {
-  name: string;
-  industry: string;
-  logo?: string | null;
-}): Promise<WelcomeState> {
-  const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome/profile`, {
-    method: "PATCH",
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new PublicApiError(
-      await parseError(response, `Failed to save organization profile: ${response.status}`),
-      response.status,
-    );
-  }
-  return response.json() as Promise<WelcomeState>;
-}
-
-export async function seedWelcomeTemplate(templateKey: string): Promise<WelcomeState> {
-  const response = await fetchWithAuthRetry(`${API_BASE_URL}/v1/productization/welcome/seed`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ template_key: templateKey }),
-  });
-  if (!response.ok) {
-    throw new PublicApiError(
-      await parseError(response, `Failed to seed the example: ${response.status}`),
       response.status,
     );
   }

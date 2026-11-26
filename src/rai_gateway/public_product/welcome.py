@@ -56,6 +56,7 @@ class WelcomeService:
                 "logo": profile.logo,
                 "industry": profile.sector,
             },
+            "setup_skipped": bool(record and record.setup_skipped_at),
             "setup": self._setup(record),
             "templates": templates,
         }

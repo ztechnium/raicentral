@@ -188,7 +188,7 @@ export default function VersionDetailPage() {
       />
 
       <SectionHeader
-        title={`Version ${version.version_number}`}
+        title={version.version_label ?? `Version ${version.version_number}`}
         subtitle={version.change_summary ?? "Immutable governed version"}
         actions={
           <div className="flex gap-2">

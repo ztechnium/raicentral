@@ -364,23 +364,28 @@ def _is_mutating_permission(permission: str) -> bool:
     return True
 
 
+def is_email_verified_for_mutation(db: Session, principal: Principal) -> bool:
+    """Whether this caller may make privileged changes as far as email goes."""
+    # Platform operators are not gated by customer email verification.
+    if principal.has_platform_role("admin") or principal.has_platform_role(
+        "platform_admin"
+    ):
+        return True
+    from rai_gateway.models.database import UserAccount
+
+    user = (
+        db.query(UserAccount).filter(UserAccount.user_id == principal.user_id).first()
+    )
+    return user is not None and user.email_verified_at is not None
+
+
 def _enforce_email_verified_for_mutation(
     db: Session, principal: Principal, permission: str
 ) -> None:
     """Privileged tenant mutations require a verified email (login still allowed)."""
     if not _is_mutating_permission(permission):
         return
-    # Platform operators are not gated by customer email verification.
-    if principal.has_platform_role("admin") or principal.has_platform_role(
-        "platform_admin"
-    ):
-        return
-    from rai_gateway.models.database import UserAccount
-
-    user = (
-        db.query(UserAccount).filter(UserAccount.user_id == principal.user_id).first()
-    )
-    if user is None or user.email_verified_at is None:
+    if not is_email_verified_for_mutation(db, principal):
         raise RaiException(
             error_code=ErrorCode.NOT_ALLOWED,
             message="Email verification required for this action",

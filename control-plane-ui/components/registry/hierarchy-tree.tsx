@@ -85,6 +85,9 @@ export function HierarchyTree({ hierarchy }: { hierarchy: AISystemHierarchy }) {
                             <span className="font-semibold text-ink-800">
                               v{version.version_number}
                             </span>
+                            {version.version_label ? (
+                              <span className="text-xs text-ink-700">{version.version_label}</span>
+                            ) : null}
                             <StatusBadge status={version.lifecycle_status} />
                             {version.is_current && (
                               <span className="rounded bg-accent-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-accent-700">

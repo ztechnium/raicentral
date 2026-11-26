@@ -303,6 +303,7 @@ def _serialize_version(version) -> dict[str, Any]:
         "id": str(version.id),
         "agent_id": str(version.agent_id),
         "version_number": version.version_number,
+        "version_label": version.version_label,
         "change_summary": version.change_summary,
         "lifecycle_status": version.lifecycle_status,
         "configuration_snapshot": version.configuration_snapshot,

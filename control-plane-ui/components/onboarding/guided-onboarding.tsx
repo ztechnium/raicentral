@@ -70,7 +70,7 @@ const CHECKLIST_WIZARD: Record<string, number> = {
 
 const CHECKLIST_GUIDE: Record<string, { detail: string; href?: string; hrefLabel?: string }> = {
   organization_profile: {
-    detail: "Organization name, industry, and logo are saved from the welcome wizard.",
+    detail: "The organization name and industry that describe this installation.",
   },
   team_roles: {
     detail: "Confirm an organization admin and a RAI officer are active.",

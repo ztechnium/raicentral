@@ -1485,6 +1485,8 @@ class SdkService:
         row = (
             self._db.query(ToolResource)
             .filter((ToolResource.tool_key == tool) | (ToolResource.name == tool))
+            # A catalog template and the instance's active copy can share a key.
+            .order_by((ToolResource.status == "ACTIVE").desc())
             .first()
         )
         return row.id if row else None

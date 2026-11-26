@@ -380,6 +380,7 @@ export interface AgentVersionSummary {
   id: string;
   agent_id: string;
   version_number: number;
+  version_label?: string | null;
   change_summary?: string | null;
   lifecycle_status: string;
   risk_tier?: string | null;
@@ -490,6 +491,7 @@ export interface RiskAssessmentSummary {
 export interface HierarchyVersionNode {
   id: string;
   version_number: number;
+  version_label?: string | null;
   lifecycle_status: string;
   risk_tier?: string | null;
   material_change_status: string;

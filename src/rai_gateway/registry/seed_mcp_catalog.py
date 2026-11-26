@@ -105,7 +105,14 @@ class MCPSeedCatalogService:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def seed(self, path: Path | None = None, *, scope: str | None = None) -> SeedResult:
+    def seed(
+        self,
+        path: Path | None = None,
+        *,
+        scope: str | None = None,
+        mcp_keys: set[str] | None = None,
+    ) -> SeedResult:
+        """Upsert the catalog. ``mcp_keys`` limits it to those servers (no models)."""
         catalog = load_seed_catalog(path)
         source_type = catalog.get("source_type") or "SEEDED_TEMPLATE"
         scope = (scope or CatalogScope.PLATFORM.value).upper()
@@ -116,6 +123,8 @@ class MCPSeedCatalogService:
             canonical_key = str(mcp_def["canonical_key"]).strip()
             if not canonical_key:
                 raise ValueError("MCP canonical_key is required")
+            if mcp_keys is not None and canonical_key not in mcp_keys:
+                continue
             aliases = [
                 str(a).strip()
                 for a in (mcp_def.get("native_aliases") or [canonical_key])
@@ -170,7 +179,8 @@ class MCPSeedCatalogService:
                     result,
                     scope=scope,
                 )
-        for model_def in catalog.get("models") or []:
+        models = catalog.get("models") or [] if mcp_keys is None else []
+        for model_def in models:
             self._upsert_model(
                 model_def,
                 result,

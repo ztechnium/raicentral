@@ -49,6 +49,16 @@ describe("dashboard setup action", () => {
     });
   });
 
+  it("offers Resume setup after a skip, until setup completes", () => {
+    expect(setupAction({ access: "manage", welcomeComplete: false, skipped: true })).toEqual({
+      label: "Resume setup",
+      href: "/welcome",
+    });
+    expect(setupAction({ access: "manage", welcomeComplete: true, skipped: true })?.label).toBe(
+      "Continue setup",
+    );
+  });
+
   it("offers Continue setup once welcome is complete", () => {
     expect(setupAction({ access: "manage", welcomeComplete: true })).toEqual({
       label: "Continue setup",
@@ -79,7 +89,7 @@ describe("routing policy", () => {
     expect(postLoginPath()).toBe("/dashboard");
   });
 
-  it("never forces anyone through /welcome", () => {
+  it("does not redirect other routes while setup is incomplete", () => {
     for (const welcomeCompleted of [false, null]) {
       for (const pathname of ["/dashboard", "/governance/registry", "/welcome"]) {
         expect(welcomeDestination({ welcomeCompleted, pathname })).toBeNull();
