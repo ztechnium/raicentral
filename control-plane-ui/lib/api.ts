@@ -987,6 +987,25 @@ export async function downloadCatalogTemplate(): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/** Authenticated multipart POST. The browser sets the multipart content type itself. */
+export async function apiUpload<T>(path: string, body: FormData): Promise<ApiResponse<T>> {
+  const doFetch = () => {
+    const headers = buildHeaders();
+    delete headers["Content-Type"];
+    return fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers,
+      body,
+      cache: "no-store",
+    });
+  };
+  let response = await doFetch();
+  if (response.status === 401 && (await refreshAccessTokenIfNeeded())) {
+    response = await doFetch();
+  }
+  return parseResponse<T>(response);
+}
+
 export async function importCatalogWorkbook(file: File): Promise<{
   created: number;
   updated: number;

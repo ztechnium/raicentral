@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { SystemsResult } from "@/lib/first-run";
+import type { CreatedRule } from "@/lib/first-run-policies";
 
 const apiBaseUrl = () => process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001";
+
+const FAMILY_LABELS = { content: "Content", tool: "Tool", budget: "Budget" };
 
 function CopyRow({ label, value, secret }: { label: string; value: string; secret?: boolean }) {
   const [shown, setShown] = useState(!secret);
@@ -58,20 +61,14 @@ function CopyRow({ label, value, secret }: { label: string; value: string; secre
 
 export function SetupSummary({
   result,
+  rules,
   onFinish,
 }: {
   result: SystemsResult;
+  rules: CreatedRule[];
   onFinish: () => void;
 }) {
-  // Leaving the page loses the secrets for good.
-  useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, []);
+  const rulesOf = (systemId: string) => rules.filter((r) => r.ai_system_id === systemId);
 
   function download() {
     const payload = {
@@ -84,6 +81,11 @@ export function SetupSummary({
         runtime_identity: s.runtime_identity.identity_key,
         integration_id: s.integration_id,
         agent_key: s.credential.secret,
+        policies: rulesOf(s.ai_system_id).map((r) => ({
+          type: r.family,
+          title: r.title,
+          active: r.enabled,
+        })),
       })),
     };
     const url = URL.createObjectURL(
@@ -110,7 +112,7 @@ export function SetupSummary({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-ink-500">
           Created {count} AI {count === 1 ? "system" : "systems"} in the {result.environment}{" "}
-          environment.
+          environment, with {rules.length} policy {rules.length === 1 ? "rule" : "rules"}.
         </p>
         <Button variant="secondary" onClick={download}>
           <Download className="size-4" aria-hidden />
@@ -133,6 +135,30 @@ export function SetupSummary({
           </div>
           <CopyRow label="Integration ID" value={system.integration_id} />
           <CopyRow label="Agent key" value={system.credential.secret} secret />
+          <div className="space-y-1">
+            <h3 className="text-xs font-semibold text-ink-600">Policies</h3>
+            {rulesOf(system.ai_system_id).length ? (
+              <ul className="divide-y divide-base-200 rounded-md border border-base-200">
+                {rulesOf(system.ai_system_id).map((rule) => (
+                  <li
+                    key={`${rule.family}-${rule.rule_id}`}
+                    className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
+                  >
+                    <span className="w-16 text-ink-400">{FAMILY_LABELS[rule.family]}</span>
+                    <span className="text-ink-900">{rule.title}</span>
+                    <span
+                      className={`ml-auto font-semibold ${rule.enabled ? "text-accent-700" : "text-ink-400"}`}
+                    >
+                      {rule.enabled ? "Active" : "Off"}
+                      {rule.status === "existing" ? " · already existed" : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-ink-500">No rules of its own yet.</p>
+            )}
+          </div>
         </section>
       ))}
       <div className="flex justify-end">

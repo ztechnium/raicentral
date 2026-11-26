@@ -1,14 +1,15 @@
 "use client";
 
-import { CircleAlert, CircleCheck, Circle, LoaderCircle } from "lucide-react";
+import { CircleAlert, CircleCheck, CircleMinus, Circle, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export type StageStatus = "pending" | "running" | "done" | "failed";
-export type StageId = "resources" | "systems";
+export type StageStatus = "pending" | "running" | "done" | "failed" | "skipped";
+export type StageId = "resources" | "systems" | "policies";
 
 export const STAGES: { id: StageId; label: string }[] = [
   { id: "resources", label: "Resource catalog" },
   { id: "systems", label: "AI systems, agents, versions, runtimes and credentials" },
+  { id: "policies", label: "Policies" },
 ];
 
 const ICONS = {
@@ -16,6 +17,7 @@ const ICONS = {
   running: <LoaderCircle className="size-5 animate-spin text-accent-600" aria-hidden />,
   done: <CircleCheck className="size-5 text-accent-600" aria-hidden />,
   failed: <CircleAlert className="size-5 text-danger-600" aria-hidden />,
+  skipped: <CircleMinus className="size-5 text-ink-300" aria-hidden />,
 };
 
 const STATUS_LABELS: Record<StageStatus, string> = {
@@ -23,6 +25,7 @@ const STATUS_LABELS: Record<StageStatus, string> = {
   running: "Creating",
   done: "Created",
   failed: "Failed",
+  skipped: "No rules",
 };
 
 export function CreationProgress({
@@ -30,11 +33,14 @@ export function CreationProgress({
   error,
   onRetry,
   onBack,
+  onFinishWithoutRules,
 }: {
   stages: Record<StageId, StageStatus>;
   error: string | null;
   onRetry: () => void;
   onBack: () => void;
+  /** Offered once the AI systems exist and only their rules failed. */
+  onFinishWithoutRules?: () => void;
 }) {
   return (
     <div className="space-y-4">
@@ -62,11 +68,16 @@ export function CreationProgress({
             The failed stage saved nothing. Stages marked Created are kept, and trying again will
             not duplicate them.
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button onClick={onRetry}>Try again</Button>
             <Button variant="secondary" onClick={onBack}>
-              Back to edit
+              {onFinishWithoutRules ? "Edit rules" : "Back to edit"}
             </Button>
+            {onFinishWithoutRules ? (
+              <Button variant="ghost" onClick={onFinishWithoutRules}>
+                Finish without rules and show credentials
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : null}

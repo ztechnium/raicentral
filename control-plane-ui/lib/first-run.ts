@@ -6,6 +6,7 @@
  */
 
 import { apiGet, apiPost } from "@/lib/api";
+import type { RuleDraft } from "@/lib/first-run-policies";
 
 const BASE = "/v1/productization/first-run";
 const DRAFT_KEY = "rai_first_run_draft_v1";
@@ -21,6 +22,9 @@ export interface FirstRunStatus {
   missing_permissions: string[];
   should_redirect: boolean;
   email_verified: boolean;
+  can_add_policies: boolean;
+  /** False when no model is configured to judge content rules. */
+  content_rules_enforced: boolean;
   ai: {
     configured: boolean;
     provider: string | null;
@@ -89,6 +93,7 @@ export interface Draft {
   requestId: string;
   systems: SystemDraft[];
   resources: ResourceDraft[];
+  rules: RuleDraft[];
 }
 
 export interface ResourcesRequest {
@@ -108,7 +113,7 @@ export interface ResourcesResult {
   models: (ModelRef & { id: string })[];
   resources: {
     ref: string;
-    items: { resource_type: CustomKind; id: string; name: string }[];
+    items: { resource_type: CustomKind; id: string; key: string; name: string }[];
   }[];
 }
 
@@ -184,6 +189,7 @@ export const newDraft = (): Draft => ({
   requestId: newId(),
   systems: [newSystem()],
   resources: [],
+  rules: [],
 });
 
 export const splitTools = (value: string) => value.split(/[,\n]/).map(cleanName).filter(Boolean);
@@ -212,11 +218,14 @@ export function resourcesProblem(resources: ResourceDraft[]): string | null {
     const key = `${resource.kind}/${name.toLowerCase()}`;
     if (names.has(key)) return `The resource "${name}" is listed twice.`;
     names.add(key);
+    if (resource.kind !== "mcp_server") continue;
+    const tools = splitTools(resource.tools).map((t) => t.toLowerCase());
+    if (new Set(tools).size !== tools.length) return `"${name}" lists the same tool twice.`;
   }
   return null;
 }
 
-const resourceRef = (resource: ResourceDraft) =>
+export const resourceRef = (resource: ResourceDraft) =>
   resource.type === "seed" ? `seed:${resource.key}` : resource.id;
 
 export function buildResourcesRequest(draft: Draft, catalog: FirstRunCatalog): ResourcesRequest {
@@ -284,7 +293,8 @@ export function loadDraft(): Draft {
         parsed.systems.every((s) => Array.isArray(s.models) && Array.isArray(s.providers)) &&
         Array.isArray(parsed.resources)
       ) {
-        return parsed;
+        // Drafts saved before the policy step have no rules.
+        return { ...parsed, rules: Array.isArray(parsed.rules) ? parsed.rules : [] };
       }
     }
   } catch {

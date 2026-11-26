@@ -284,6 +284,23 @@ def test_selected_tools_only_and_unknown_choice_rejected(client, db_session, hea
     assert bad.status_code == 400, bad.text
 
 
+def test_tool_names_with_the_same_letters_stay_separate(client, headers):
+    body = _resources_body("slug")
+    body["custom"] = [
+        {
+            "ref": "orders",
+            "kind": "mcp_server",
+            "name": "Orders slug",
+            "tools": ["Create order", "Create-order", "طلب A", "حذف A"],
+        }
+    ]
+    result = client.post(f"{BASE}/apply/resources", json=body, headers=headers)
+    assert result.status_code == 200, result.text
+    entry = next(r for r in result.json()["resources"] if r["ref"] == "orders")
+    names = [i["name"] for i in entry["items"] if i["resource_type"] == "tool"]
+    assert names == body["custom"][0]["tools"]
+
+
 def test_platform_templates_are_left_untouched(client, db_session, headers):
     seeded = client.post("/v1/registry/mcp-servers/seed-catalog", headers=headers)
     assert seeded.status_code == 200, seeded.text

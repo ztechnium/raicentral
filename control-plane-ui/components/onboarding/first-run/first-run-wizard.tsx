@@ -8,8 +8,11 @@ import {
   type StageId,
   type StageStatus,
 } from "@/components/onboarding/first-run/creation-progress";
+import {
+  PoliciesStep,
+  type ExtractionFeedback,
+} from "@/components/onboarding/first-run/policies-step";
 import { ResourcesStep } from "@/components/onboarding/first-run/resources-step";
-import { ReviewStep } from "@/components/onboarding/first-run/review-step";
 import { SetupSummary } from "@/components/onboarding/first-run/setup-summary";
 import { SystemsStep } from "@/components/onboarding/first-run/systems-step";
 import { Button } from "@/components/ui/button";
@@ -30,8 +33,16 @@ import {
   type Draft,
   type FirstRunCatalog,
   type FirstRunStatus,
+  type ResourcesResult,
   type SystemsResult,
 } from "@/lib/first-run";
+import {
+  applyFirstRunPolicies,
+  buildPoliciesRequest,
+  policiesProblem,
+  type CreatedRule,
+  type PolicyDocument,
+} from "@/lib/first-run-policies";
 import { useAuth } from "@/lib/hooks/use-auth";
 import { completeWelcome } from "@/lib/public-api";
 import { markWelcomeDoneLocally, welcomeDestination } from "@/lib/welcome-gate";
@@ -40,10 +51,21 @@ import { cn } from "@/lib/utils";
 const STEPS = [
   { title: "AI systems", help: "Define your first AI systems and the models they may use." },
   { title: "Resources", help: "Select the tools and data your AI systems use. Optional." },
-  { title: "Review", help: "Check what will be created." },
+  { title: "Policies", help: "Set the content, tool and budget rules for your AI systems." },
 ] as const;
+const POLICY_STEP = 2;
 
-const IDLE: Record<StageId, StageStatus> = { resources: "pending", systems: "pending" };
+const IDLE: Record<StageId, StageStatus> = {
+  resources: "pending",
+  systems: "pending",
+  policies: "pending",
+};
+
+/** What earlier attempts already created. Holds secrets: memory only. */
+interface Created {
+  resources?: ResourcesResult;
+  systems?: SystemsResult;
+}
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "Something went wrong.";
@@ -59,9 +81,15 @@ export function FirstRunWizard() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const [documents, setDocuments] = useState<PolicyDocument[]>([]);
+  const [feedback, setFeedback] = useState<ExtractionFeedback | null>(null);
+  const [extracting, setExtracting] = useState(false);
   const [stages, setStages] = useState<Record<StageId, StageStatus> | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [result, setResult] = useState<SystemsResult | null>(null);
+  const [created, setCreated] = useState<Created>({});
+  const [result, setResult] = useState<{ systems: SystemsResult; rules: CreatedRule[] } | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -94,6 +122,18 @@ export function FirstRunWizard() {
     if (draft && !result) saveDraft(draft);
   }, [draft, result]);
 
+  // Once credentials exist, leaving the page loses them for good.
+  const holdsSecrets = Boolean(created.systems);
+  useEffect(() => {
+    if (!holdsSecrets) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [holdsSecrets]);
+
   async function skip() {
     setSkipping(true);
     setError(null);
@@ -123,30 +163,9 @@ export function FirstRunWizard() {
     if (!problem) setStep(step + 1);
   }
 
-  async function create() {
-    if (!draft || !catalog) return;
-    const problem = systemsProblem(draft.systems) ?? resourcesProblem(draft.resources);
-    if (problem) {
-      setError(problem);
-      return;
-    }
-    setError(null);
-    setCreateError(null);
-    let current: StageId = "resources";
-    setStages({ resources: "running", systems: "pending" });
-    try {
-      const resources = await applyFirstRunResources(buildResourcesRequest(draft, catalog));
-      current = "systems";
-      setStages({ resources: "done", systems: "running" });
-      const systems = await applyFirstRunSystems(buildSystemsRequest(draft, resources.data));
-      setStages({ resources: "done", systems: "done" });
-      setResult(systems.data);
-      clearDraft();
-    } catch (err) {
-      setStages((previous) => ({ ...(previous ?? IDLE), [current]: "failed" }));
-      setCreateError(message(err));
-      return;
-    }
+  async function finish(systems: SystemsResult, rules: CreatedRule[]) {
+    setResult({ systems, rules });
+    clearDraft();
     // The records exist; a failure to mark setup finished must not hide the secrets.
     try {
       await completeWelcome();
@@ -156,8 +175,64 @@ export function FirstRunWizard() {
     }
   }
 
+  async function create() {
+    if (!draft || !catalog) return;
+    const problem =
+      systemsProblem(draft.systems) ??
+      resourcesProblem(draft.resources) ??
+      policiesProblem(draft, catalog);
+    if (problem) {
+      setStages(null);
+      setError(problem);
+      return;
+    }
+    setError(null);
+    setCreateError(null);
+    // Stages that already succeeded are not run again.
+    let { resources, systems } = created;
+    let current: StageId = "resources";
+    const progress: Record<StageId, StageStatus> = {
+      ...IDLE,
+      resources: resources ? "done" : "pending",
+      systems: systems ? "done" : "pending",
+    };
+    const mark = (stage: StageId, state: StageStatus) => {
+      current = stage;
+      progress[stage] = state;
+      setStages({ ...progress });
+    };
+    try {
+      if (!resources) {
+        mark("resources", "running");
+        resources = (await applyFirstRunResources(buildResourcesRequest(draft, catalog))).data;
+        mark("resources", "done");
+        setCreated({ resources });
+      }
+      if (!systems) {
+        mark("systems", "running");
+        systems = (await applyFirstRunSystems(buildSystemsRequest(draft, resources))).data;
+        mark("systems", "done");
+        setCreated({ resources, systems });
+      }
+      let rules: CreatedRule[] = [];
+      if (draft.rules.length) {
+        mark("policies", "running");
+        const body = buildPoliciesRequest(draft, catalog, resources, systems, documents);
+        rules = (await applyFirstRunPolicies(body)).data.rules;
+        mark("policies", "done");
+      } else {
+        mark("policies", "skipped");
+      }
+      await finish(systems, rules);
+    } catch (err) {
+      mark(current, "failed");
+      setCreateError(message(err));
+    }
+  }
+
   const creating = stages !== null && !result;
   const title = result ? "Setup complete" : creating ? "Creating your setup" : null;
+  const ruleCount = draft?.rules.length ?? 0;
 
   return (
     <div className="min-h-screen bg-base-100 text-ink-900" data-testid="first-run-wizard">
@@ -167,7 +242,7 @@ export function FirstRunWizard() {
           <span className="text-base font-semibold tracking-tight">
             Rai<span className="text-accent-500">Central</span>
           </span>
-          {!result ? (
+          {!result && !holdsSecrets ? (
             <Button
               variant="ghost"
               className="ml-auto"
@@ -203,15 +278,6 @@ export function FirstRunWizard() {
           </div>
         )}
 
-        {error ? (
-          <p
-            role="alert"
-            className="rounded-lg border border-danger-600/30 bg-danger-50 p-3 text-sm text-danger-700"
-          >
-            {error}
-          </p>
-        ) : null}
-
         {loadError ? (
           <div role="alert" className="space-y-3">
             <p className="text-sm text-danger-700">Setup could not be loaded. {loadError}</p>
@@ -230,7 +296,11 @@ export function FirstRunWizard() {
         ) : !catalog || !draft ? (
           <p className="text-sm text-ink-500">Loading setup…</p>
         ) : result ? (
-          <SetupSummary result={result} onFinish={() => router.replace("/dashboard")} />
+          <SetupSummary
+            result={result.systems}
+            rules={result.rules}
+            onFinish={() => router.replace("/dashboard")}
+          />
         ) : stages ? (
           <CreationProgress
             stages={stages}
@@ -239,8 +309,17 @@ export function FirstRunWizard() {
             onBack={() => {
               setStages(null);
               setCreateError(null);
-              setStep(0);
+              setStep(holdsSecrets ? POLICY_STEP : 0);
+              // Anything not yet turned into AI systems is rebuilt from the edit.
+              if (!holdsSecrets) setCreated({});
             }}
+            onFinishWithoutRules={
+              created.systems
+                ? () => {
+                    if (created.systems) void finish(created.systems, []);
+                  }
+                : undefined
+            }
           />
         ) : (
           <>
@@ -264,6 +343,12 @@ export function FirstRunWizard() {
                 {notice ? <span className="ml-2">{notice}</span> : null}
               </div>
             ) : null}
+            {holdsSecrets ? (
+              <div className="rounded-lg border border-warn-600/30 bg-warn-50 p-3 text-sm text-warn-700">
+                Your AI systems are created. Finish the rules to see their credentials, and keep
+                this page open until you do.
+              </div>
+            ) : null}
 
             {step === 0 ? (
               <SystemsStep
@@ -279,13 +364,50 @@ export function FirstRunWizard() {
                 onChange={(resources) => setDraft({ ...draft, resources })}
               />
             ) : (
-              <ReviewStep catalog={catalog} systems={draft.systems} resources={draft.resources} />
+              <PoliciesStep
+                status={status}
+                catalog={catalog}
+                draft={draft}
+                documents={documents}
+                feedback={feedback}
+                onRules={(rules) => {
+                  setError(null);
+                  setDraft({ ...draft, rules });
+                }}
+                onExtracted={(rules, added, next) => {
+                  setError(null);
+                  setDraft((current) => (current ? { ...current, rules } : current));
+                  setDocuments((current) => [...current, ...added]);
+                  setFeedback(next);
+                }}
+                onBusy={setExtracting}
+              />
             )}
 
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-lg border border-danger-600/30 bg-danger-50 p-3 text-sm text-danger-700"
+              >
+                {error}
+              </p>
+            ) : null}
+
+            {step === POLICY_STEP ? (
+              <p className="text-xs text-ink-500">
+                Creating also approves each AI system, agent and version in your name, creates a{" "}
+                <strong>development</strong> runtime for each system, issues its credential
+                {ruleCount
+                  ? ` and adds ${ruleCount} ${ruleCount === 1 ? "rule" : "rules"}`
+                  : ""}. These actions are written to the audit log.
+              </p>
+            ) : null}
+
             <div className="flex justify-between gap-2 border-t border-base-200 pt-4">
-              {step > 0 ? (
+              {step > 0 && !holdsSecrets ? (
                 <Button
                   variant="secondary"
+                  disabled={extracting}
                   onClick={() => {
                     setError(null);
                     setStep(step - 1);
@@ -293,14 +415,26 @@ export function FirstRunWizard() {
                 >
                   Back
                 </Button>
+              ) : holdsSecrets && created.systems ? (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    if (created.systems) void finish(created.systems, []);
+                  }}
+                >
+                  Finish without rules
+                </Button>
               ) : (
                 <span />
               )}
-              {step < STEPS.length - 1 ? (
+              {step < POLICY_STEP ? (
                 <Button onClick={next}>Continue</Button>
               ) : (
-                <Button disabled={!status.email_verified} onClick={() => void create()}>
-                  Create
+                <Button
+                  disabled={!status.email_verified || extracting}
+                  onClick={() => void create()}
+                >
+                  {ruleCount ? "Create" : "Create without rules"}
                 </Button>
               )}
             </div>

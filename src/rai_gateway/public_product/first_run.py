@@ -1,7 +1,8 @@
 """First-run setup for a new instance: status, choices, and creation.
 
-Creation runs in two stages, ``apply_resources`` then ``apply_systems``. Each stage is
-one database transaction and is safe to retry. The registry, identity and SDK services
+Creation runs in three stages: ``apply_resources``, ``apply_systems`` and then
+``first_run_policies.apply_policies``. Each stage is one database transaction and is
+safe to retry. The registry, identity and SDK services
 commit internally, so a stage runs them on a session whose commits only release
 savepoints; nothing is durable until the whole stage succeeds.
 """
@@ -48,12 +49,14 @@ from rai_gateway.registry.seed_mcp_catalog import (
     load_seed_catalog,
 )
 from rai_gateway.registry.service import RegistryService
+from rai_gateway.risk_intelligence.repository import RiskIntelligenceRepository
 from rai_gateway.sdk.errors import SdkError
 from rai_gateway.sdk.service import SdkService
 
 # Everything first-run creates runs here. Registry approval is not environment-scoped.
 ENVIRONMENT = "development"
 SETUP_PERMISSIONS = ("sdk:read", "sdk:manage", "registry:write")
+POLICY_PERMISSIONS = ("policies:write", "risk:manage")
 _SOURCE = "first_run"
 # Catalog templates that choosing them turns on. Disabled or deprecated stays so.
 _ACTIVATABLE_STATUSES = frozenset({"", "SEEDED", "DISCOVERED", "UNCLASSIFIED"})
@@ -232,6 +235,9 @@ def get_status(db: Session, tenant: TenantContext) -> dict[str, Any]:
         "missing_permissions": missing,
         "should_redirect": state == "REQUIRED" and not missing,
         "email_verified": is_email_verified_for_mutation(db, tenant.principal),
+        "can_add_policies": all(tenant.has_permission(p) for p in POLICY_PERMISSIONS),
+        # Content rules are judged by a model; without one they are only stored.
+        "content_rules_enforced": _content_evaluator_ready(db),
         "ai": {
             "configured": config is not None,
             "provider": config.provider if config else None,
@@ -239,6 +245,11 @@ def get_status(db: Session, tenant: TenantContext) -> dict[str, Any]:
             "problem": problem,
         },
     }
+
+
+def _content_evaluator_ready(db: Session) -> bool:
+    config = RiskIntelligenceRepository(db).get_evaluator_config(None)
+    return bool(config and config.enabled)
 
 
 def skip_setup(db: Session) -> None:
@@ -350,7 +361,13 @@ def _apply_models(
 
 
 def _item(resource_type: str, row: Any) -> dict[str, str]:
-    return {"resource_type": resource_type, "id": str(row.id), "name": row.name}
+    _, key_field = _CUSTOM_KINDS[resource_type]
+    return {
+        "resource_type": resource_type,
+        "id": str(row.id),
+        "key": getattr(row, key_field),
+        "name": row.name,
+    }
 
 
 def _apply_seed_servers(
@@ -486,14 +503,11 @@ def _apply_custom(
         if not name:
             continue
         tool_key = f"{key}.{derive_key(name, prefix='tool')}"
-        tool = (
-            session.query(ToolResource)
-            .filter(
-                ToolResource.tool_key == tool_key,
-                ToolResource.mcp_server_id == row.id,
-            )
-            .first()
-        )
+        tool = _server_tool(session, row.id, tool_key)
+        if tool is not None and tool.name.casefold() != name.casefold():
+            # Two different names, one slug.
+            tool_key = f"{tool_key}-{_digest(name)}"
+            tool = _server_tool(session, row.id, tool_key)
         if tool is None:
             tool = registry.create_tool_resource(
                 tool_key=tool_key,
@@ -505,6 +519,17 @@ def _apply_custom(
         if all(item["id"] != str(tool.id) for item in items):
             items.append(_item("tool", tool))
     return items
+
+
+def _server_tool(session: Session, server_id: UUID, tool_key: str) -> Any:
+    return (
+        session.query(ToolResource)
+        .filter(
+            ToolResource.tool_key == tool_key,
+            ToolResource.mcp_server_id == server_id,
+        )
+        .first()
+    )
 
 
 # --------------------------------------------------------------- stage: systems
