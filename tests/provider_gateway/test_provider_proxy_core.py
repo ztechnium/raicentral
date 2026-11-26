@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 
 import httpx
 import pytest
 
 from provider_gateway.fakes import UPSTREAM_KEY, FakeAdapter, StaticResolver
+from rai_gateway.approval.authorization import STEP_UP_VERIFIED, ApproverContext
+from rai_gateway.approval.service import ApprovalService
 from rai_gateway.provider_gateway import errors
 from rai_gateway.provider_gateway.adapters.base import ProviderProtocolAdapter
 from rai_gateway.provider_gateway.auth import extract_runtime_secret
@@ -173,6 +176,45 @@ async def test_receipt_finalized_on_success_with_digest_and_usage(
 
 
 # ---- deny / identity ----------------------------------------------------
+
+
+async def test_approved_request_forwarded_once_when_resent(
+    db_session, model_stack, make_proxy
+) -> None:
+    model_stack["version"].risk_tier = "HIGH"
+    db_session.commit()
+    proxy, upstream = make_proxy(_ok)
+    body = {"model": model_stack["model_name"], "p": "approve me"}
+
+    blocked = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert blocked.status_code == 409
+    approval_id = json.loads(blocked.body)["rai"]["approval_request_id"]
+    ApprovalService(db_session).approve(
+        uuid.UUID(approval_id),
+        approver=ApproverContext(
+            actor="manager",
+            role="admin",
+            authentication_assurance=STEP_UP_VERIFIED,
+        ),
+    )
+
+    other = await proxy.handle(
+        _req(model_stack, body={**body, "p": "different"}), db=db_session
+    )
+    assert other.status_code == 409
+    assert upstream.requests == []
+
+    resent = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert resent.status_code == 200
+    assert len(upstream.requests) == 1
+    receipt = _receipt(db_session, resent)
+    assert receipt.approval_consumed is True
+    assert str(receipt.approval_request_id) == approval_id
+
+    again = await proxy.handle(_req(model_stack, body=body), db=db_session)
+    assert again.status_code == 409
+    assert json.loads(again.body)["rai"]["approval_request_id"] != approval_id
+    assert len(upstream.requests) == 1
 
 
 async def test_unregistered_model_denied_before_upstream(

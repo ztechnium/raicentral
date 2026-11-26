@@ -813,30 +813,22 @@ class RuntimeEnforcementService:
         approval_request_id = request.approval_request_id
 
         if needs_approval and execute_downstream:
-            if not request.approval_request_id:
-                return self._approval_required(
-                    request,
-                    authority=authority,
-                    action=action,
-                    action_digest=action_digest,
-                    policy_decision=policy_dict,
-                    correlation_id=correlation_id,
-                    trace_id=trace_id,
-                    human_explanation=requirement.reason
-                    or policy_decision.human_explanation
-                    or "Human approval required before execution",
-                    monitor=monitor,
-                    monitoring_instruction=monitoring_instruction
-                    or requirement.monitoring_instruction,
-                    enforcement_mode=EnforcementMode.PROXY_ENFORCED.value,
-                )
             try:
-                consumption = self._consumption.consume(
-                    authority,
-                    action,
-                    approval_request_id=request.approval_request_id,
-                    correlation_id=correlation_id,
-                )
+                if request.approval_request_id:
+                    consumption = self._consumption.consume(
+                        authority,
+                        action,
+                        approval_request_id=request.approval_request_id,
+                        correlation_id=correlation_id,
+                    )
+                else:
+                    # The provider proxy cannot send an approval id, so a resent
+                    # action redeems an approval of that exact action.
+                    consumption = self._consume_approved_match(
+                        authority,
+                        action,
+                        correlation_id=correlation_id,
+                    )
             except Exception as exc:
                 from rai_gateway.core.config import settings
 
@@ -857,6 +849,25 @@ class RuntimeEnforcementService:
                         monitoring_instruction="Approval control unavailable",
                     )
                 raise
+            if not request.approval_request_id and (
+                consumption is None or not consumption.allowed
+            ):
+                return self._approval_required(
+                    request,
+                    authority=authority,
+                    action=action,
+                    action_digest=action_digest,
+                    policy_decision=policy_dict,
+                    correlation_id=correlation_id,
+                    trace_id=trace_id,
+                    human_explanation=requirement.reason
+                    or policy_decision.human_explanation
+                    or "Human approval required before execution",
+                    monitor=monitor,
+                    monitoring_instruction=monitoring_instruction
+                    or requirement.monitoring_instruction,
+                    enforcement_mode=EnforcementMode.PROXY_ENFORCED.value,
+                )
             if not consumption.allowed:
                 reason = consumption.reason or ApprovalDenialCode.APPROVAL_NOT_FOUND
                 return self._deny(
@@ -1413,9 +1424,9 @@ class RuntimeEnforcementService:
     ):
         """Consume an already-approved exact action, if one is still valid.
 
-        Hook clients retry authorize on the next turn without sending
-        ``approval_request_id``. Digest match is enough; a missing match must
-        not write an approval-denied audit.
+        Callers that resend an action without ``approval_request_id`` (hooks,
+        SDK, provider proxy) are matched on digest and runtime identity. A
+        missing match must not write an approval-denied audit.
         """
         from rai_gateway.models.approval import ApprovalRequest
 

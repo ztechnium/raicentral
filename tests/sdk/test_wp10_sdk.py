@@ -397,6 +397,68 @@ def test_expired_approval_releases_idempotency_for_new_approval(sdk_stack, db_se
     assert exc.value.code.value == "INVALID_REQUEST"
 
 
+def test_approval_used_when_retried_with_same_idempotency_key(
+    sdk_stack, db_session, monkeypatch
+):
+    from rai_gateway.approval.authorization import ApproverContext
+    from rai_gateway.approval.service import ApprovalService
+
+    svc: SdkService = sdk_stack["svc"]
+    auth = svc.authenticate(secret=sdk_stack["credential_secret"], token=None)
+    suffix = uuid.uuid4().hex[:8]
+    integration = svc.create_integration(
+        integration_key=f"sales-enforced-{suffix}",
+        name="Sales AI enforced",
+        runtime_identity_id=sdk_stack["identity"].id,
+        created_by="tester",
+        enforcement_mode="HOOK_ENFORCED",
+        fail_closed=True,
+    )
+    session = svc.start_session(auth, integration_id=UUID(integration["id"]))
+    key = f"idem-approved-{suffix}"
+
+    def authorize() -> dict:
+        return svc.authorize_action(
+            auth,
+            session_id=UUID(session["rai_session_id"]),
+            credential_secret=sdk_stack["credential_secret"],
+            tool=sdk_stack["tool"].tool_key,
+            parameters={"amount": 50},
+            idempotency_key=key,
+        )
+
+    first = authorize()
+    assert first["decision"] == SdkDecision.REQUIRE_APPROVAL.value
+    assert authorize()["decision_id"] == first["decision_id"]
+
+    approvals = ApprovalService(db_session)
+    approval_id = UUID(first["approval_request_id"])
+    approver = ApproverContext(actor="manager", role="admin")
+    approvals.approve(approval_id, approver=approver)
+
+    # A failed attempt neither uses the approval nor takes over the key.
+    with monkeypatch.context() as patch:
+
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("unavailable")
+
+        patch.setattr(svc._enforcement, "authorize", unavailable)
+        assert authorize()["decision"] == SdkDecision.DENY.value
+    assert approvals.get_request(approval_id).status == "APPROVED"
+
+    allowed = authorize()
+    assert allowed["decision"] == SdkDecision.ALLOW.value
+    assert allowed["decision_id"] != first["decision_id"]
+    assert allowed["approval_request_id"] == str(approval_id)
+    assert approvals.get_request(approval_id).status == "CONSUMED"
+
+    replay = authorize()
+    assert replay["decision_id"] == allowed["decision_id"]
+    assert (
+        len(approvals.list_requests(runtime_identity_id=sdk_stack["identity"].id)) == 1
+    )
+
+
 def test_idempotency_digest_mismatch_denied(sdk_stack):
     svc: SdkService = sdk_stack["svc"]
     auth = svc.authenticate(secret=sdk_stack["credential_secret"], token=None)

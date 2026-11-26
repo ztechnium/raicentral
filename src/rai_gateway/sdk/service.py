@@ -722,6 +722,9 @@ class SdkService:
             parameters=params,
         )
 
+        # A REQUIRE_APPROVAL decision whose approval has since been granted:
+        # evaluate again instead of replaying it, so the approval can be used.
+        resumed: SdkDecisionRecord | None = None
         if idempotency_key:
             existing = (
                 self._db.query(SdkDecisionRecord)
@@ -744,7 +747,9 @@ class SdkService:
                             "request_digest": action_digest,
                         },
                     )
-                return self._decision_from_record(existing)
+                if not self._approval_ready_to_use(existing):
+                    return self._decision_from_record(existing)
+                resumed = existing
 
         action_target = None
         if target:
@@ -771,6 +776,7 @@ class SdkService:
                 idempotency_key=idempotency_key,
                 action_digest=action_digest,
                 receipt_id=None,
+                supersedes=resumed,
             )
             decision.decision_id = str(record.id)
             return decision.to_dict()
@@ -825,7 +831,8 @@ class SdkService:
                     integration=integration,
                     decision=decision,
                     tool_key=tool,
-                    idempotency_key=idempotency_key,
+                    # A failed attempt to use an approval must stay retryable.
+                    idempotency_key=None if resumed else idempotency_key,
                     action_digest=action_digest,
                     receipt_id=None,
                 )
@@ -838,15 +845,19 @@ class SdkService:
             ) from exc
 
         public = self._map_enforcement_result(result)
+        # The key moves to the new decision only once the action is allowed. A
+        # blocked attempt leaves it on the approved one, so a retry re-evaluates.
+        keep_binding = resumed is not None and not result.allowed
         record = self._persist_decision(
             session=session,
             integration=integration,
             decision=public,
             tool_key=tool,
-            idempotency_key=idempotency_key,
+            idempotency_key=None if keep_binding else idempotency_key,
             action_digest=action_digest,
             receipt_id=result.receipt_id,
             approval_request_id=result.approval_request_id,
+            supersedes=None if keep_binding else resumed,
         )
         public.decision_id = str(record.id)
         if onboarding_dispatch_id and onboarding_challenge:
@@ -1531,7 +1542,12 @@ class SdkService:
         receipt_id: UUID | None,
         approval_request_id: UUID | None = None,
         action_digest: str | None = None,
+        supersedes: SdkDecisionRecord | None = None,
     ) -> SdkDecisionRecord:
+        if supersedes is not None:
+            # Free the unique (integration, key) pair for the new record.
+            supersedes.idempotency_key = None
+            self._db.flush()
         record = SdkDecisionRecord(
             session_id=session.id,
             integration_id=integration.id,
@@ -1553,6 +1569,23 @@ class SdkService:
         self._db.commit()
         self._db.refresh(record)
         return record
+
+    def _approval_ready_to_use(self, record: SdkDecisionRecord) -> bool:
+        """True when the record still asks for an approval that is now granted."""
+        if (
+            record.decision != SdkDecision.REQUIRE_APPROVAL.value
+            or not record.approval_request_id
+        ):
+            return False
+        from rai_gateway.approval.domain import ApprovalStatus
+        from rai_gateway.approval.errors import ApprovalNotFoundError
+        from rai_gateway.approval.service import ApprovalService
+
+        try:
+            request = ApprovalService(self._db).get_request(record.approval_request_id)
+        except ApprovalNotFoundError:
+            return False
+        return request.status == ApprovalStatus.APPROVED.value
 
     def _release_expired_approval_idempotency(
         self, existing: SdkDecisionRecord
