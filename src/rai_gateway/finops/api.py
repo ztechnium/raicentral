@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 import rai_gateway.models.finops  # noqa: F401
 from rai_gateway.core.authorization import (
+    INSTANCE_ADMIN_ROLES,
     Principal,
     require_any_permission,
     require_permission,
@@ -256,7 +257,9 @@ def create_reservation(
     principal: Principal = Depends(require_user),
 ) -> dict[str, Any]:
     """Create cost reservation. Validates active membership for non-platform users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
 

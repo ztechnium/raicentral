@@ -1,0 +1,48 @@
+# Production override. Layer it on the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml in .env.
+# It removes the PostgreSQL and Redis host ports, requires real secrets and public
+# URLs, and pins the development-only switches off whatever .env says.
+# Requires Docker Compose 2.24 or newer (`!reset`).
+
+x-production-secrets: &production-secrets
+  ENVIRONMENT: production
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env}
+  EVIDENCE_ENCRYPTION_KEY: ${EVIDENCE_ENCRYPTION_KEY:?set EVIDENCE_ENCRYPTION_KEY in .env}
+  ADMIN_TOKEN: ""
+  ADMIN_BOOTSTRAP_ENABLED: "false"
+  ADMIN_BOOTSTRAP_PASSWORD: ""
+  ALLOW_SHARED_SECRET_STEP_UP: "false"
+  STEP_UP_TOKEN: ""
+
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  rai-gateway:
+    environment:
+      <<: *production-secrets
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:?set APP_PUBLIC_URL to the public console URL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?set CORS_ALLOWED_ORIGINS to the console origin}
+      AUTH_SET_COOKIES: ${AUTH_SET_COOKIES:-true}
+      AUTH_COOKIE_SECURE: "true"
+      MCP_ADAPTER_MODE: PRODUCTION
+      MCP_ALLOW_HTTP: ${MCP_ALLOW_HTTP:-false}
+      MCP_ALLOW_PRIVATE_HOSTS: ${MCP_ALLOW_PRIVATE_HOSTS:-false}
+      MTLS_ALLOW_INSECURE_IDENTITY_HEADER: "false"
+      EVIDENCE_USE_DEMO_CONTENT_DEFAULTS: ${EVIDENCE_USE_DEMO_CONTENT_DEFAULTS:-false}
+
+  rai-onboarding-worker:
+    environment: *production-secrets
+
+  control-plane-ui:
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?set NEXT_PUBLIC_API_BASE_URL to the public API URL}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?set NEXT_PUBLIC_API_BASE_URL to the public API URL}

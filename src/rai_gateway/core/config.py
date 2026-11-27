@@ -1,6 +1,7 @@
 """Configuration management for RAI Gateway."""
 
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -112,12 +113,16 @@ class Settings(BaseSettings):
     rai_ai_api_key: Optional[str] = None
     rai_ai_base_url: Optional[str] = None
     rai_ai_gcp_project_id: Optional[str] = None  # defaults to GCP_PROJECT_ID
-    rai_ai_location: Optional[str] = None  # defaults to GCP_LOCATION (Gemini 3.x: global)
+    rai_ai_location: Optional[str] = (
+        None  # defaults to GCP_LOCATION (Gemini 3.x: global)
+    )
     rai_ai_gcp_service_account_json: Optional[str] = None
     rai_ai_timeout_seconds: float = 30.0
     rai_ai_temperature: float = 0.0
     rai_ai_max_output_tokens: int = 8192
-    rai_ai_structured_mode: Optional[str] = None  # JSON_SCHEMA | JSON_OBJECT | JSON_PROMPT
+    rai_ai_structured_mode: Optional[str] = (
+        None  # JSON_SCHEMA | JSON_OBJECT | JSON_PROMPT
+    )
     rai_ai_allow_private_network: bool = False
 
     # Observability
@@ -226,10 +231,16 @@ class Settings(BaseSettings):
     # Allow http:// endpoints (dev only; production should use https).
     mcp_allow_http: bool = False
 
+    # Externally visible base URL of this API, including any reverse proxy path prefix
+    # (https://rai.example.com/api). The proxy is expected to strip that prefix. Drives
+    # SDK setup URLs, the refresh cookie path, the API docs and MCP discovery.
+    api_public_base_url: str = ""
+
     # RAI management MCP server (Streamable HTTP + OAuth for Cursor and other MCP hosts)
     mcp_server_enabled: bool = True
-    # Public base URL of the API (no trailing slash). Used for OAuth issuer/resource metadata.
-    mcp_server_public_base_url: str = "http://127.0.0.1:8001"
+    # Public base URL used for OAuth issuer/resource metadata. Empty: api_public_base_url
+    # when it is HTTPS (or loopback), else http://127.0.0.1:8001.
+    mcp_server_public_base_url: str = ""
     mcp_server_mount_path: str = "/mcp"
     mcp_oauth_enable_dcr: bool = True
     mcp_oauth_scopes: str = "rai:read,rai:manage"
@@ -257,6 +268,28 @@ class Settings(BaseSettings):
     auth_refresh_cookie_name: str = "rai_refresh"
     app_public_url: str = "http://localhost:3000"
 
+    @model_validator(mode="after")
+    def _resolve_public_urls(self) -> "Settings":
+        api = self.api_public_base_url.strip().rstrip("/")
+        mcp = self.mcp_server_public_base_url.strip().rstrip("/")
+        if not mcp:
+            # OAuth issuers must be HTTPS or loopback; anything else would stop startup.
+            parsed = urlsplit(api)
+            usable = (parsed.scheme == "https" and bool(parsed.netloc)) or (
+                parsed.scheme == "http"
+                and parsed.hostname in ("localhost", "127.0.0.1", "::1")
+            )
+            mcp = api if usable else "http://127.0.0.1:8001"
+        self.api_public_base_url = api
+        self.mcp_server_public_base_url = mcp
+        return self
+
+    @property
+    def api_public_path_prefix(self) -> str:
+        """Path the reverse proxy strips before requests arrive ('' at the root)."""
+        path = urlsplit(self.api_public_base_url).path.rstrip("/")
+        return path if path.startswith("/") else ""
+
     # CORS Configuration (Phase 23)
     # Comma-separated list of allowed origins (exact match)
     # Example: https://app.example.com,https://admin.example.com
@@ -269,9 +302,7 @@ class Settings(BaseSettings):
     # Include X-RAI-Agent-Key — the enforcement test console sends the runtime
     # credential from the browser; omitting it fails that preflight (400).
     # Include Idempotency-Key — onboarding writes (AI test, sources) send it directly from the browser.
-    cors_allow_headers: str = (
-        "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key,Idempotency-Key"
-    )
+    cors_allow_headers: str = "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key,Idempotency-Key"
     cors_max_age: int = 600
 
     # Transactional email (Resend SMTP by default; provider-agnostic transport)

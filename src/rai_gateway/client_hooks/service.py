@@ -26,6 +26,7 @@ from rai_gateway.client_hooks.payload import (
     extract_generic_tool_fields,
 )
 from rai_gateway.client_hooks.resource_mapping import HookResourceMapper
+from rai_gateway.core.config import settings
 from rai_gateway.core.observability import generate_trace_id, log_admin_audit
 from rai_gateway.identity.resolver import RuntimeAuthorityResolver
 from rai_gateway.models.client_hooks import RuntimeClientIntegration
@@ -713,8 +714,11 @@ class ClientHookService:
             },
         }
 
+        public_url = settings.api_public_base_url
+        if not public_url.startswith(("http://", "https://")):
+            public_url = "http://localhost:8001"
         env_template = {
-            "RAI_BASE_URL": "http://localhost:8001",
+            "RAI_BASE_URL": public_url,
             "RAI_AGENT_KEY": "<issue-runtime-credential-and-set-locally>",
         }
 

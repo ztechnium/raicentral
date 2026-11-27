@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import rai_gateway.models.data_access  # noqa: F401
-from rai_gateway.core.authorization import Principal, require_user
+from rai_gateway.core.authorization import INSTANCE_ADMIN_ROLES, Principal, require_user
 from rai_gateway.core.database import get_db
 from rai_gateway.data_access.service import DataAccessService
 from rai_gateway.governance.domain import MembershipStatus
@@ -78,7 +78,9 @@ def create_policy(
     principal: Principal = Depends(require_user),
 ) -> dict[str, Any]:
     """Create data access policy. Validates AI system ownership if provided."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if body.ai_system_id and not is_platform:
         _get_ai_system(db, body.ai_system_id)
         _require_membership(db, principal.user_id)

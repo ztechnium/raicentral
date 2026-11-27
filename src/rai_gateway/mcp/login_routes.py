@@ -30,7 +30,8 @@ _LOGIN_FORM = """<!DOCTYPE html>
   <h1>Sign in to RAI MCP</h1>
   <p>Authorize your MCP client to manage this RAI organization.</p>
   {error_block}
-  <form method="post" action="{action}">
+  <!-- Relative action: stays correct behind a proxy that adds a path prefix. -->
+  <form method="post" action="login">
     <input type="hidden" name="pending_id" value="{pending_id}" />
     <label>Email<input name="email" type="email" required autocomplete="username" /></label>
     <label>Password<input name="password" type="password" required autocomplete="current-password" /></label>
@@ -51,7 +52,6 @@ def register_mcp_login_routes(
         if pending_id not in provider._pending:
             return HTMLResponse(
                 _LOGIN_FORM.format(
-                    action=mount,
                     pending_id=escape(pending_id, quote=True),
                     error_block='<p class="error">Authorization request expired. Restart MCP OAuth.</p>',
                 ),
@@ -59,7 +59,6 @@ def register_mcp_login_routes(
             )
         return HTMLResponse(
             _LOGIN_FORM.format(
-                action=mount,
                 pending_id=escape(pending_id, quote=True),
                 error_block="",
             )
@@ -86,7 +85,6 @@ def register_mcp_login_routes(
         except AuthorizeError as exc:
             return HTMLResponse(
                 _LOGIN_FORM.format(
-                    action=mount,
                     pending_id=escape(pending_id, quote=True),
                     error_block=f'<p class="error">{escape(exc.error_description or exc.error)}</p>',
                 ),
@@ -95,7 +93,6 @@ def register_mcp_login_routes(
         except Exception:
             return HTMLResponse(
                 _LOGIN_FORM.format(
-                    action=mount,
                     pending_id=escape(pending_id, quote=True),
                     error_block='<p class="error">Invalid email or password.</p>',
                 ),

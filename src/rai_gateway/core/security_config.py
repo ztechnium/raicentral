@@ -7,8 +7,12 @@ Fails fast on startup if insecure settings are detected.
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
+
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from rai_gateway.core.config import settings
 
@@ -17,6 +21,15 @@ class SecurityConfigError(Exception):
     """Raised when insecure configuration is detected in production."""
 
     pass
+
+
+def _database_password() -> str | None:
+    """The password libpq will use: from DATABASE_URL, else PGPASSWORD."""
+    try:
+        password = make_url(settings.database_url).password
+    except ArgumentError:
+        password = None
+    return str(password) if password else os.environ.get("PGPASSWORD")
 
 
 def validate_production_security() -> tuple[list[str], list[str]]:
@@ -74,11 +87,21 @@ def validate_production_security() -> tuple[list[str], list[str]]:
         "password",
         "Password123!",
     }
-    if settings.admin_bootstrap_password in default_passwords:
+    # The password is only ever used when bootstrap is enabled.
+    if settings.admin_bootstrap_enabled and (
+        not settings.admin_bootstrap_password
+        or settings.admin_bootstrap_password in default_passwords
+    ):
         errors.append(
-            "Default bootstrap admin password detected. "
-            "Set RAI_ADMIN_BOOTSTRAP_PASSWORD to a strong unique password "
-            "or disable bootstrap (RAI_ADMIN_BOOTSTRAP_ENABLED=false)."
+            "Default or empty bootstrap admin password detected. "
+            "Set ADMIN_BOOTSTRAP_PASSWORD to a strong unique password "
+            "or disable bootstrap (ADMIN_BOOTSTRAP_ENABLED=false)."
+        )
+
+    if _database_password() == "rai_password":
+        warnings.append(
+            "The development database password is in use. "
+            "Set POSTGRES_PASSWORD to a generated secret."
         )
 
     # 4. Admin Token Validation (should be disabled in production)

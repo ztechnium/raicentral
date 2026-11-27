@@ -14,10 +14,10 @@ services:
       uvicorn rai_gateway.main:app --host 0.0.0.0 --port 8000 --app-dir src --reload"
     environment:
       - PYTHONUNBUFFERED=1
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-change-me}
+      - ADMIN_TOKEN=${ADMIN_TOKEN-}
       - REQUIRE_STEP_UP=${REQUIRE_STEP_UP:-true}
-      - STEP_UP_TOKEN=${STEP_UP_TOKEN:-change-me-step-up}
-      - ALLOW_SHARED_SECRET_STEP_UP=${ALLOW_SHARED_SECRET_STEP_UP:-true}
+      - STEP_UP_TOKEN=${STEP_UP_TOKEN-}
+      - ALLOW_SHARED_SECRET_STEP_UP=${ALLOW_SHARED_SECRET_STEP_UP:-false}
       - REQUIRE_API_KEY=true
       - ENABLE_CACHE=true
       - ENABLE_CASES=true
@@ -46,7 +46,7 @@ services:
     environment:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
-      - NEXT_PUBLIC_ADMIN_TOKEN=${ADMIN_TOKEN:-change-me}
+      - NEXT_PUBLIC_ADMIN_TOKEN=
     depends_on:
       rai-gateway:
         condition: service_healthy

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 import rai_gateway.models.governance  # noqa: F401
 from rai_gateway.core.authorization import (
+    INSTANCE_ADMIN_ROLES,
     PLATFORM_ROLES,
     require_organization_member,
     require_platform_permission,
@@ -365,7 +366,9 @@ def patch_governance_profile(
     svc: GovernanceService = Depends(_svc),
 ):
     """Patch governance profile. Validates organization admin membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         membership = _require_active_membership(db, principal.user_id)
         # Tenant users must be organization admin to patch profile
@@ -395,7 +398,9 @@ def create_membership(
     svc: GovernanceService = Depends(_svc),
 ):
     """Create membership. Validates organization admin for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         membership = _require_active_membership(db, principal.user_id)
         from rai_gateway.governance.domain import GovernanceRole
@@ -635,7 +640,9 @@ def link_ai_system(
     svc: GovernanceService = Depends(_svc),
 ):
     """Link AI system to organization. Validates org admin for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         membership = _require_active_membership(db, principal.user_id)
         from rai_gateway.governance.domain import GovernanceRole
@@ -685,7 +692,9 @@ def upsert_accountability(
     """Upsert accountability. Validates org admin for tenant users."""
     data = payload.model_dump()
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         membership = _require_active_membership(db, principal.user_id)
         from rai_gateway.governance.domain import GovernanceRole
@@ -734,7 +743,9 @@ def upsert_classification(
     """Upsert classification. Validates org admin for tenant users."""
     data = payload.model_dump(exclude_unset=True)
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         membership = _require_active_membership(db, principal.user_id)
         from rai_gateway.governance.domain import GovernanceRole
@@ -825,7 +836,9 @@ def refresh_control_assessments(
     svc: GovernanceService = Depends(_svc),
 ):
     """Refresh control assessments. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -848,7 +861,9 @@ def create_control_assessment(
     """Create control assessment. Validates membership for tenant users."""
     data = payload.model_dump()
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -896,7 +911,9 @@ def create_review(
     data = payload.model_dump()
     ai_system_id = data.pop("ai_system_id")
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -931,7 +948,9 @@ def decide_review(
     svc: GovernanceService = Depends(_svc),
 ):
     """Decide governance review. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -955,7 +974,9 @@ def assign_review(
     svc: GovernanceService = Depends(_svc),
 ):
     """Assign reviewers. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -976,7 +997,9 @@ def create_periodic_schedule(
     svc: GovernanceService = Depends(_svc),
 ):
     """Create periodic review schedule. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -996,7 +1019,9 @@ def process_due_periodic_reviews(
     svc: GovernanceService = Depends(_svc),
 ):
     """Process due periodic reviews. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1036,7 +1061,9 @@ def create_attestation(
     """Create attestation. Validates membership for tenant users."""
     data = payload.model_dump()
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1079,7 +1106,9 @@ def request_exception(
     data = payload.model_dump()
     ai_system_id = data.pop("ai_system_id")
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1114,7 +1143,9 @@ def approve_exception(
     svc: GovernanceService = Depends(_svc),
 ):
     """Approve exception. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1137,7 +1168,9 @@ def reject_exception(
     svc: GovernanceService = Depends(_svc),
 ):
     """Reject exception. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1159,7 +1192,9 @@ def revoke_exception(
     svc: GovernanceService = Depends(_svc),
 ):
     """Revoke exception. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1179,7 +1214,9 @@ def expire_exceptions(
     svc: GovernanceService = Depends(_svc),
 ):
     """Expire exceptions. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1228,7 +1265,9 @@ def create_incident(
     data = payload.model_dump()
     ai_system_id = data.pop("ai_system_id")
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1263,7 +1302,9 @@ def transition_incident(
     svc: GovernanceService = Depends(_svc),
 ):
     """Transition incident. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1287,7 +1328,9 @@ def contain_incident(
     svc: GovernanceService = Depends(_svc),
 ):
     """Contain incident. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1311,7 +1354,9 @@ def add_corrective_action(
     svc: GovernanceService = Depends(_svc),
 ):
     """Add corrective action. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1354,7 +1399,9 @@ def create_evidence_package(
     """Create evidence package. Validates membership for tenant users."""
     data = payload.model_dump()
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1431,7 +1478,9 @@ def create_pilot(
     """Create pilot. Validates membership for tenant users."""
     data = payload.model_dump()
 
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1466,7 +1515,9 @@ def add_pilot_ai_system(
     svc: GovernanceService = Depends(_svc),
 ):
     """Add AI system to pilot. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1486,7 +1537,9 @@ def transition_pilot(
     svc: GovernanceService = Depends(_svc),
 ):
     """Transition pilot. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:
@@ -1539,7 +1592,9 @@ def evaluate_pilot_readiness_endpoint(
     svc: GovernanceService = Depends(_svc),
 ):
     """Evaluate pilot readiness. Validates membership for tenant users."""
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _require_active_membership(db, principal.user_id)
     try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -40,9 +41,12 @@ async def management_api_request(
     normalized_path = path if path.startswith("/") else f"/{path}"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
+    # In-process call: keep the public host but drop any proxy path prefix, which
+    # the proxy would have stripped before the request reached this app.
+    public = urlsplit(settings.mcp_server_public_base_url)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_gateway_app),  # type: ignore[arg-type]
-        base_url=settings.mcp_server_public_base_url,
+        base_url=f"{public.scheme}://{public.netloc}",
     ) as client:
         response = await client.request(
             method.upper(),

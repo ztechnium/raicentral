@@ -148,9 +148,13 @@ def load_ai_config() -> AIConfig | None:
         try:
             info = json.loads(service_account)
         except ValueError as exc:
-            raise AIConfigError("RAI_AI_GCP_SERVICE_ACCOUNT_JSON is not valid JSON") from exc
-        if not isinstance(info, dict) or not info.get("client_email") or not info.get(
-            "private_key"
+            raise AIConfigError(
+                "RAI_AI_GCP_SERVICE_ACCOUNT_JSON is not valid JSON"
+            ) from exc
+        if (
+            not isinstance(info, dict)
+            or not info.get("client_email")
+            or not info.get("private_key")
         ):
             raise AIConfigError(
                 "RAI_AI_GCP_SERVICE_ACCOUNT_JSON needs client_email and private_key"
@@ -202,7 +206,11 @@ def api_base(
     """Scheme + host (+ fixed prefix) that every request path is appended to."""
     if provider == "vertex":
         loc = location or "global"
-        host = "aiplatform.googleapis.com" if loc == "global" else f"{loc}-aiplatform.googleapis.com"
+        host = (
+            "aiplatform.googleapis.com"
+            if loc == "global"
+            else f"{loc}-aiplatform.googleapis.com"
+        )
         return f"https://{host}"
     if provider == "openai_compatible":
         return (base_url or "").rstrip("/")
@@ -278,7 +286,11 @@ def build_body(
                 raise AIProviderError("request_rejected", "JSON_SCHEMA needs a schema")
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": schema_name, "strict": True, "schema": dict(schema)},
+                "json_schema": {
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": dict(schema),
+                },
             }
         elif structured_mode == "JSON_OBJECT":
             body["response_format"] = {"type": "json_object"}
@@ -312,13 +324,19 @@ class Extracted:
     usage: dict[str, int] | None
 
 
-def _int_usage(src: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, int] | None:
+def _int_usage(
+    src: Mapping[str, Any], names: Mapping[str, str]
+) -> dict[str, int] | None:
     out = {
         dest: int(src[name])
         for dest, name in names.items()
         if isinstance(src.get(name), int) and not isinstance(src.get(name), bool)
     }
-    if out and "total_tokens" not in out and {"prompt_tokens", "completion_tokens"} <= set(out):
+    if (
+        out
+        and "total_tokens" not in out
+        and {"prompt_tokens", "completion_tokens"} <= set(out)
+    ):
         out["total_tokens"] = out["prompt_tokens"] + out["completion_tokens"]
     return out or None  # missing usage is unknown, never zero
 
@@ -347,7 +365,9 @@ def extract_response(provider: str, payload: Any) -> Extracted:
         if provider == "anthropic":
             blocks = payload["content"]
             text = "".join(
-                b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+                b.get("text", "")
+                for b in blocks
+                if isinstance(b, dict) and b.get("type") == "text"
             )
             usage = payload.get("usage")
             return Extracted(
@@ -356,7 +376,10 @@ def extract_response(provider: str, payload: Any) -> Extracted:
                 refused=payload.get("stop_reason") == "refusal",
                 usage=_int_usage(
                     usage if isinstance(usage, dict) else {},
-                    {"prompt_tokens": "input_tokens", "completion_tokens": "output_tokens"},
+                    {
+                        "prompt_tokens": "input_tokens",
+                        "completion_tokens": "output_tokens",
+                    },
                 ),
             )
         feedback = payload.get("promptFeedback") or {}
@@ -375,7 +398,9 @@ def extract_response(provider: str, payload: Any) -> Extracted:
         finish = candidate.get("finishReason")
         parts = (candidate.get("content") or {}).get("parts") or []
         text = "".join(
-            p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought")
+            p.get("text", "")
+            for p in parts
+            if isinstance(p, dict) and not p.get("thought")
         )
         return Extracted(
             text=text or None,
@@ -384,7 +409,9 @@ def extract_response(provider: str, payload: Any) -> Extracted:
             usage=usage_out,
         )
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
-        raise AIProviderError("invalid_response", f"Unexpected {provider} response shape") from exc
+        raise AIProviderError(
+            "invalid_response", f"Unexpected {provider} response shape"
+        ) from exc
 
 
 # ------------------------------------------------------------------ credentials
@@ -399,10 +426,14 @@ def resolve_credential(cfg: AIConfig) -> str | None:
 
     try:
         if cfg.service_account_json:
-            return gcp_token_provider.get_token_for_info(json.loads(cfg.service_account_json))
+            return gcp_token_provider.get_token_for_info(
+                json.loads(cfg.service_account_json)
+            )
         return gcp_token_provider.get_token()
     except (GcpTokenError, ValueError) as exc:
-        raise AIProviderError("credential_unavailable", f"Vertex credential unavailable: {exc}") from exc
+        raise AIProviderError(
+            "credential_unavailable", f"Vertex credential unavailable: {exc}"
+        ) from exc
 
 
 # --------------------------------------------------------------- generic caller
@@ -465,17 +496,25 @@ def generate_json_text(
     except httpx.TimeoutException as exc:
         raise AIProviderError("timeout", f"{cfg.provider} request timed out") from exc
     except httpx.HTTPError as exc:
-        raise AIProviderError("unavailable", f"{cfg.provider} unavailable: {type(exc).__name__}") from exc
+        raise AIProviderError(
+            "unavailable", f"{cfg.provider} unavailable: {type(exc).__name__}"
+        ) from exc
     if response.status_code in (401, 403):
-        raise AIProviderError("auth", f"{cfg.provider} rejected the credential (HTTP {response.status_code})")
+        raise AIProviderError(
+            "auth",
+            f"{cfg.provider} rejected the credential (HTTP {response.status_code})",
+        )
     if response.status_code >= 400:
         raise AIProviderError(
-            "unavailable", f"{cfg.provider} HTTP {response.status_code}: {response.text[:300]}"
+            "unavailable",
+            f"{cfg.provider} HTTP {response.status_code}: {response.text[:300]}",
         )
     try:
         payload = response.json()
     except ValueError as exc:
-        raise AIProviderError("invalid_response", f"{cfg.provider} returned non-JSON") from exc
+        raise AIProviderError(
+            "invalid_response", f"{cfg.provider} returned non-JSON"
+        ) from exc
     extracted = extract_response(cfg.provider, payload)
     if extracted.refused:
         raise AIProviderError("refusal", f"{cfg.provider} refused the request")

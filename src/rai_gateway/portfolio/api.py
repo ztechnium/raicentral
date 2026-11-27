@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 import rai_gateway.models.portfolio  # noqa: F401
-from rai_gateway.core.authorization import Principal, require_user
+from rai_gateway.core.authorization import INSTANCE_ADMIN_ROLES, Principal, require_user
 from rai_gateway.core.database import get_db
 from rai_gateway.governance.domain import MembershipStatus
 from rai_gateway.models.governance import OrganizationMembership
@@ -362,7 +362,9 @@ def create_portfolio_report(
     principal: Principal = Depends(require_user),
     svc: PortfolioService = Depends(_svc),
 ) -> dict[str, Any]:
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
     try:
@@ -421,7 +423,9 @@ def create_report_schedule(
     principal: Principal = Depends(require_user),
     svc: PortfolioService = Depends(_svc),
 ) -> dict[str, Any]:
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
     try:
@@ -445,7 +449,9 @@ def patch_report_schedule(
     principal: Principal = Depends(require_user),
     svc: PortfolioService = Depends(_svc),
 ) -> dict[str, Any]:
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
     try:
@@ -486,7 +492,9 @@ def create_decision(
     principal: Principal = Depends(require_user),
     svc: PortfolioService = Depends(_svc),
 ) -> dict[str, Any]:
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
     try:
@@ -510,7 +518,9 @@ def refresh_projection(
     principal: Principal = Depends(require_user),
     svc: PortfolioService = Depends(_svc),
 ) -> dict[str, Any]:
-    is_platform = any(principal.has_platform_role(role) for role in PLATFORM_ROLES)
+    is_platform = any(
+        principal.has_platform_role(role) for role in INSTANCE_ADMIN_ROLES
+    )
     if not is_platform:
         _validate_org_membership(db, principal.user_id)
     try:
