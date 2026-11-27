@@ -104,6 +104,7 @@ app.include_router(security_router)
 register_assistant(app)
 integrate_management_mcp(app)
 
+
 # Setup CORS (Phase 23: Environment-driven configuration)
 def _split_cors_list(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]

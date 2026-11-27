@@ -64,7 +64,9 @@ def _lookup(provider: str | None, model: str | None) -> PublishedPrice | None:
     return _INDEX.get((key, name))
 
 
-def published_entry(provider: str | None, model: str | None) -> PricingCatalogEntry | None:
+def published_entry(
+    provider: str | None, model: str | None
+) -> PricingCatalogEntry | None:
     """Detached catalog row for a published price, or None when the model is unknown."""
     price = _lookup(provider, model)
     if price is None:
@@ -107,5 +109,7 @@ def estimate_cost_usd(
     fresh = max(input_tokens, 0) - cached
     cached_rate = price.cached_input if price.cached_input is not None else price.input
     return (
-        fresh * price.input + cached * cached_rate + max(output_tokens, 0) * price.output
+        fresh * price.input
+        + cached * cached_rate
+        + max(output_tokens, 0) * price.output
     ) / PRICING_UNIT

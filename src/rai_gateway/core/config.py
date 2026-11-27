@@ -113,12 +113,16 @@ class Settings(BaseSettings):
     rai_ai_api_key: Optional[str] = None
     rai_ai_base_url: Optional[str] = None
     rai_ai_gcp_project_id: Optional[str] = None  # defaults to GCP_PROJECT_ID
-    rai_ai_location: Optional[str] = None  # defaults to GCP_LOCATION (Gemini 3.x: global)
+    rai_ai_location: Optional[str] = (
+        None  # defaults to GCP_LOCATION (Gemini 3.x: global)
+    )
     rai_ai_gcp_service_account_json: Optional[str] = None
     rai_ai_timeout_seconds: float = 30.0
     rai_ai_temperature: float = 0.0
     rai_ai_max_output_tokens: int = 8192
-    rai_ai_structured_mode: Optional[str] = None  # JSON_SCHEMA | JSON_OBJECT | JSON_PROMPT
+    rai_ai_structured_mode: Optional[str] = (
+        None  # JSON_SCHEMA | JSON_OBJECT | JSON_PROMPT
+    )
     rai_ai_allow_private_network: bool = False
 
     # Observability
@@ -298,9 +302,7 @@ class Settings(BaseSettings):
     # Include X-RAI-Agent-Key — the enforcement test console sends the runtime
     # credential from the browser; omitting it fails that preflight (400).
     # Include Idempotency-Key — onboarding writes (AI test, sources) send it directly from the browser.
-    cors_allow_headers: str = (
-        "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key,Idempotency-Key"
-    )
+    cors_allow_headers: str = "Content-Type,Authorization,X-CSRF-Token,X-Admin-Token,X-RAI-Agent-Key,Idempotency-Key"
     cors_max_age: int = 600
 
     # Transactional email (Resend SMTP by default; provider-agnostic transport)
