@@ -1,6 +1,15 @@
 # Contributing
 
-Thanks for helping improve the RaiCentral community edition. The project is licensed under the Apache License 2.0. By submitting a contribution, you agree that your work is licensed under those terms.
+Thanks for helping improve the RaiCentral community edition. New platform changes
+are offered under PolyForm Noncommercial License 1.0.0; see [LICENSING.md](LICENSING.md).
+Existing Apache-licensed code and the separately licensed SDK mirrors retain their
+original terms.
+
+New external platform code contributions are paused until Ztechnium and the
+contributor agree written terms permitting both noncommercial distribution and
+Ztechnium's commercial licensing. Opening a pull request does not itself assign
+copyright or grant additional commercial relicensing rights. Issues and feedback
+are welcome. SDK contributions follow each upstream SDK's contribution policy.
 
 This tree is a single-organization product. Do not add company registration, a public marketing site, an organization switcher, `X-Organization-ID`, or a second tenant key. People belong to the instance through memberships and departments. Platform roles stay separate and only authorize the admin console.
 
