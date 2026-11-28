@@ -171,4 +171,11 @@ More detail is in [examples/developer_lab/README.md](examples/developer_lab/READ
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+New platform changes are source available under **PolyForm Noncommercial License
+1.0.0**. Commercial use outside its permitted purposes requires a separate written
+agreement with Ztechnium. The license expressly permits use by government,
+educational, charitable and certain other organizations.
+
+Previously published Apache 2.0 code retains its existing permissions. The SDK
+mirrors retain their separate Apache 2.0 licenses. See [LICENSE](LICENSE),
+[NOTICE](NOTICE) and [Licensing and commercial use](LICENSING.md).

@@ -1,6 +1,14 @@
 RaiCentral Community Edition
 Powered by Ztechnium
-Copyright 2026 Ztechnium
+Required Notice: Copyright 2026 Ztechnium (https://ztechnium.com)
 
-This product includes software developed by Ztechnium and licensed under the
-Apache License, Version 2.0. See the LICENSE file for the full terms.
+New platform changes covered by the prospective licensing transition are
+licensed under PolyForm Noncommercial License 1.0.0; see LICENSE and LICENSING.md.
+Commercial use outside that license's permitted purposes requires a separate
+written commercial agreement with Ztechnium.
+
+Code already published under Apache License 2.0 retains those rights.
+The Apache baseline is commit 102a900573f89f21ee2af4e32c0e8fe702b4eba3.
+The earlier license and attribution text is preserved in LICENSES/Apache-2.0.txt.
+The SDK mirrors in packages/python-sdk and packages/typescript-sdk retain their
+own Apache License 2.0 files. Third-party components retain their own licenses.
